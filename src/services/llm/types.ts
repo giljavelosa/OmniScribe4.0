@@ -1,0 +1,47 @@
+/**
+ * LLM abstraction types (spec §A).
+ *
+ * Anti-regression rule 6: all AI calls go through src/services/llm/. No
+ * direct @aws-sdk/client-bedrock-runtime or openai imports outside this
+ * folder (ESLint enforces from PR #1).
+ *
+ * PHI guard: when `phi: true`, the wrapper in index.ts asserts the active
+ * provider is in PHI_ALLOWED_PROVIDERS before any call lands at the model.
+ */
+
+export type Provider = 'bedrock' | 'vllm' | 'openai' | 'openrouter' | 'anthropic-direct';
+
+export interface GenerateOptions {
+  /** Marks the call as carrying PHI. Triggers assertProviderAllowedForPHI. */
+  phi: boolean;
+  /** Default 0 — clinical generation is deterministic. */
+  temperature?: number;
+  maxTokens?: number;
+  /** sonnet (default) or haiku (faster + cheaper; used on retry / fast paths). */
+  model?: 'sonnet' | 'haiku';
+  /** Hint to the provider to return strict JSON when supported. */
+  jsonMode?: boolean;
+  /** Correlation id surfaced in inferenceLog for traceability. */
+  requestId?: string;
+}
+
+export interface GenerateResult {
+  text: string;
+  model: string;
+  region?: string;
+  latencyMs: number;
+  tokensIn: number;
+  tokensOut: number;
+  /** Indicates whether the provider was the stub fallback (no key configured). */
+  stub?: boolean;
+}
+
+export interface GenerateChunk {
+  delta: string;
+  done?: boolean;
+}
+
+export interface LLMService {
+  generate(systemPrompt: string, userPrompt: string, opts?: GenerateOptions): Promise<GenerateResult>;
+  generateStream(systemPrompt: string, userPrompt: string, opts?: GenerateOptions): AsyncIterable<GenerateChunk>;
+}
