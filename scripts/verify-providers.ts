@@ -105,26 +105,48 @@ async function verifyBedrock(): Promise<Result> {
       detail: `BEDROCK_MODEL_ID does not start with "us." (got ${model}). Sonnet 4.5 / Haiku 4.5 require the cross-region inference profile prefix.`,
     };
   }
-  // Cheap call: GET https://bedrock.${region}.amazonaws.com/foundation-models with the
-  // bearer token. 200 = the token is valid and authorized; 403 = token works but model
-  // list isn't allowed; 401 = wrong token. We accept any 2xx and surface 4xx/5xx.
+  // Two endpoints check the model:
+  //  - /foundation-models holds base models (e.g. anthropic.claude-sonnet-4-5-...)
+  //  - /inference-profiles holds cross-region routes (the "us." prefixed IDs)
+  // Sonnet/Haiku 4.5 use cross-region inference profiles per the kit, so the
+  // `us.` ID lives in the latter — checking both keeps the diagnostic honest.
   try {
-    const res = await fetch(`https://bedrock.${region}.amazonaws.com/foundation-models`, {
+    const fmRes = await fetch(`https://bedrock.${region}.amazonaws.com/foundation-models`, {
       method: 'GET',
       headers: { Authorization: `Bearer ${token}` },
     });
-    if (res.ok) {
-      const body = (await res.json()) as { modelSummaries?: Array<{ modelId: string }> };
-      const hasModel = body.modelSummaries?.some((m) => m.modelId === model);
-      return {
-        provider,
-        ok: true,
-        detail: `bearer token authorized; ${body.modelSummaries?.length ?? 0} models visible; ${
-          hasModel ? `target model ${model} VISIBLE` : `target model ${model} NOT in list — may still be invokable`
-        }`,
-      };
+    if (!fmRes.ok) {
+      return { provider, ok: false, detail: `Bedrock list-foundation-models returned ${fmRes.status} ${fmRes.statusText}` };
     }
-    return { provider, ok: false, detail: `Bedrock list-foundation-models returned ${res.status} ${res.statusText}` };
+    const fmBody = (await fmRes.json()) as { modelSummaries?: Array<{ modelId: string }> };
+    const baseId = model.startsWith('us.') ? model.slice(3) : model;
+    const baseHit = fmBody.modelSummaries?.some((m) => m.modelId === baseId) ?? false;
+
+    let profileHit = false;
+    let profileCount = 0;
+    if (model.startsWith('us.')) {
+      const ipRes = await fetch(`https://bedrock.${region}.amazonaws.com/inference-profiles`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (ipRes.ok) {
+        const ipBody = (await ipRes.json()) as { inferenceProfileSummaries?: Array<{ inferenceProfileId: string }> };
+        profileCount = ipBody.inferenceProfileSummaries?.length ?? 0;
+        profileHit =
+          ipBody.inferenceProfileSummaries?.some((p) => p.inferenceProfileId === model) ?? false;
+      }
+    }
+    const visible = baseHit || profileHit;
+    const where = profileHit
+      ? 'cross-region inference profiles'
+      : baseHit
+        ? `foundation models (as base id ${baseId})`
+        : 'neither list';
+    return {
+      provider,
+      ok: true,
+      detail: `bearer token authorized; ${fmBody.modelSummaries?.length ?? 0} foundation models + ${profileCount} inference profiles; target ${model} ${visible ? '✓ VISIBLE in ' : '✗ NOT FOUND in '}${where}`,
+    };
   } catch (e) {
     return { provider, ok: false, detail: e instanceof Error ? e.message : String(e) };
   }
