@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
 import { writeAuditLog } from '@/lib/audit/log';
 import { isExpired, verifyDobAgainst } from '@/lib/telehealth/magic-link';
+import { setPatientSessionCookie } from '@/lib/telehealth/patient-session';
 
 export const runtime = 'nodejs';
 
@@ -87,7 +88,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
     metadata: { scheduleId: session.scheduleId },
   });
 
-  return NextResponse.json({
+  const response = NextResponse.json({
     data: { scheduleId: updated.scheduleId, status: updated.status },
   });
+  // Move the magic token out of the URL into an httpOnly cookie so the
+  // waiting room never has to handle it client-side. /me/status + /me/consent
+  // resolve it from the cookie.
+  setPatientSessionCookie(response, token);
+  return response;
 }
