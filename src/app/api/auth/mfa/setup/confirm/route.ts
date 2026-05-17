@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { verifyTotpToken, newRecoveryCodes } from '@/lib/mfa';
+import { writeAuditLog } from '@/lib/audit/log';
 
 export const runtime = 'nodejs';
 
@@ -26,8 +27,10 @@ export async function POST(req: Request) {
 
   const ok = await verifyTotpToken({ secret, token });
   if (!ok) {
-    await prisma.auditLog.create({
-      data: { userId: session.user.id, action: 'MFA_ENROLL_FAILED', metadata: { reason: 'invalid_token' } },
+    await writeAuditLog({
+      userId: session.user.id,
+      action: 'MFA_ENROLL_FAILED',
+      metadata: { reason: 'invalid_token' },
     });
     return NextResponse.json({ error: { code: 'invalid_token' } }, { status: 400 });
   }
@@ -42,9 +45,7 @@ export async function POST(req: Request) {
     },
   });
 
-  await prisma.auditLog.create({
-    data: { userId: session.user.id, action: 'MFA_ENROLLED' },
-  });
+  await writeAuditLog({ userId: session.user.id, action: 'MFA_ENROLLED' });
 
   // Returning plain codes ONCE — never persisted in plaintext, never returned again.
   return NextResponse.json({ data: { mfaEnabled: true, recoveryCodes: codes.plain } });

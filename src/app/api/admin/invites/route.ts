@@ -6,6 +6,7 @@ import { prisma } from '@/lib/prisma';
 import { requireAdminOrgRole } from '@/lib/authz/server';
 import { sendTransactional } from '@/lib/email/transport';
 import { buildInviteEmail } from '@/lib/email/templates/invite';
+import { writeAuditLog } from '@/lib/audit/log';
 import { OrgRole, Division } from '@prisma/client';
 
 export const runtime = 'nodejs';
@@ -73,15 +74,13 @@ export async function POST(req: Request) {
     }),
   );
 
-  await prisma.auditLog.create({
-    data: {
-      userId: user.id,
-      orgId: orgUser.orgId,
-      action: 'INVITE_SENT',
-      resourceType: 'Invite',
-      resourceId: invite.id,
-      metadata: { role: data.role, division: data.division },
-    },
+  await writeAuditLog({
+    userId: user.id,
+    orgId: orgUser.orgId,
+    action: 'INVITE_SENT',
+    resourceType: 'Invite',
+    resourceId: invite.id,
+    metadata: { role: data.role, division: data.division },
   });
 
   return NextResponse.json({ data: { inviteId: invite.id, onboardUrl } });

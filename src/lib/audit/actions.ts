@@ -1,0 +1,35 @@
+/**
+ * Typed action union for AuditLog.action.
+ * Append new actions as new units add behavior. Never rename — historical
+ * AuditLog rows reference these strings.
+ *
+ * Unit 01 surface area:
+ *   - Auth: USER_SIGNED_IN / _FAILED, MFA_VERIFIED / _FAILED, MFA_ENROLLED /
+ *     _FAILED, PASSWORD_RESET_REQUESTED / _COMPLETED / _INITIATED_BY_ADMIN,
+ *     MFA_RESET (admin), INVITE_SENT / _CONSUMED, USER_CREATED, USER_UPDATED,
+ *     USER_DEACTIVATED
+ *   - Owner: ORG_CREATED, ORG_BAA_UPDATED, PLATFORM_ORG_CREATED
+ *   - Onboarding: ONBOARDING_COMPLETED
+ */
+export type AuditAction =
+  | 'USER_SIGNED_IN'
+  | 'USER_SIGNED_IN_FAILED'
+  | 'MFA_VERIFIED'
+  | 'MFA_VERIFY_FAILED'
+  | 'MFA_ENROLLED'
+  | 'MFA_ENROLL_FAILED'
+  | 'MFA_DISABLED_BY_USER'
+  | 'MFA_RESET'
+  | 'PASSWORD_RESET_REQUESTED'
+  | 'PASSWORD_RESET_COMPLETED'
+  | 'PASSWORD_RESET_INITIATED_BY_ADMIN'
+  | 'INVITE_SENT'
+  | 'INVITE_CONSUMED'
+  | 'USER_CREATED'
+  | 'USER_UPDATED'
+  | 'USER_DEACTIVATED'
+  | 'ORG_CREATED'
+  | 'ORG_BAA_UPDATED'
+  | 'PLATFORM_ORG_CREATED'
+  | 'PLATFORM_BAA_UPDATED'
+  | 'ONBOARDING_COMPLETED';

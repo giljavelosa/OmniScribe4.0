@@ -6,6 +6,7 @@ import { randomBytes } from 'node:crypto';
 import { prisma } from '@/lib/prisma';
 import { sendTransactional } from '@/lib/email/transport';
 import { buildPasswordResetEmail } from '@/lib/email/templates/password-reset';
+import { writeAuditLog } from '@/lib/audit/log';
 
 export const runtime = 'nodejs';
 
@@ -43,14 +44,10 @@ export async function POST(req: Request) {
       buildPasswordResetEmail({ to: user.email, resetUrl, expiresInHours: TOKEN_TTL_HOURS }),
     );
 
-    await prisma.auditLog.create({
-      data: { userId: user.id, action: 'PASSWORD_RESET_REQUESTED', metadata: { method: 'self' } },
-    });
+    await writeAuditLog({ userId: user.id, action: 'PASSWORD_RESET_REQUESTED', metadata: { method: 'self' } });
   } else {
     // Still log the attempt (without raw email) so SOC can see request volume.
-    await prisma.auditLog.create({
-      data: { action: 'PASSWORD_RESET_REQUESTED', metadata: { method: 'self', unknown_email: true } },
-    });
+    await writeAuditLog({ action: 'PASSWORD_RESET_REQUESTED', metadata: { method: 'self', unknown_email: true } });
   }
 
   return NextResponse.json({ data: { ok: true } });

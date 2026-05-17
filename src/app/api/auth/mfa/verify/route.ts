@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { verifyTotpToken, consumeRecoveryCode } from '@/lib/mfa';
+import { writeAuditLog } from '@/lib/audit/log';
 
 export const runtime = 'nodejs';
 
@@ -47,12 +48,10 @@ export async function POST(req: Request) {
     ok = await verifyTotpToken({ secret: user.mfaSecret, token });
   }
 
-  await prisma.auditLog.create({
-    data: {
-      userId: user.id,
-      action: ok ? 'MFA_VERIFIED' : 'MFA_VERIFY_FAILED',
-      metadata: { method: useRecoveryCode ? 'recovery_code' : 'totp' },
-    },
+  await writeAuditLog({
+    userId: user.id,
+    action: ok ? 'MFA_VERIFIED' : 'MFA_VERIFY_FAILED',
+    metadata: { method: useRecoveryCode ? 'recovery_code' : 'totp' },
   });
 
   if (!ok) {

@@ -3,6 +3,7 @@ import Credentials from 'next-auth/providers/credentials';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
+import { writeAuditLog } from '@/lib/audit/log';
 import { PlatformRole } from '@prisma/client';
 
 const credentialsSchema = z.object({
@@ -144,22 +145,15 @@ export const authConfig = {
   },
   events: {
     async signIn({ user }) {
-      // Audit best-effort: writeAuditLog (with PHI denylist) lands in Commit 12,
-      // refactored from this inline call.
-      try {
-        await prisma.auditLog.create({
-          data: {
-            userId: user.id,
-            action: 'USER_SIGNED_IN',
-            metadata: { method: 'credentials' },
-          },
-        });
-      } catch (e) {
-        // Rule 8 wants this to fail loudly — and Commit 12 will replace this
-        // inline call with the writer that throws. For now, log and continue
-        // so a transient DB hiccup doesn't lock everyone out before Commit 12.
-        console.error('audit USER_SIGNED_IN failed:', e);
-      }
+      // Rule 8: audit writes never wrapped in swallowing try-catch. If audit
+      // fails, the sign-in event fails — the user is left signed in (NextAuth
+      // already minted the JWT before this event), but the next API call that
+      // depends on a healthy DB will surface the underlying problem.
+      await writeAuditLog({
+        userId: user.id,
+        action: 'USER_SIGNED_IN',
+        metadata: { method: 'credentials' },
+      });
     },
   },
 } satisfies NextAuthConfig;
