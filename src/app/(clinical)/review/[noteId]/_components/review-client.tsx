@@ -12,6 +12,7 @@ import { useSseStream } from '@/lib/sse/use-sse-stream';
 import { SectionAccordion } from './section-accordion';
 import { ReadinessPanel } from './readiness-panel';
 import { FailureRecoveryBanner } from './failure-recovery-banner';
+import { FlagReviewPanel } from './flag-review-panel';
 import {
   deriveProgressStrip,
   isReadyForSign,
@@ -137,6 +138,12 @@ export function ReviewClient({ noteId, initial, copilotFollowUps }: Props) {
           <FailureRecoveryBanner noteId={noteId} failedSections={failed} />
         ) : null;
       })()}
+
+      <FlagReviewPanel
+        noteId={noteId}
+        sections={snap.sections.map((s) => ({ id: s.id, label: s.label }))}
+        isSigned={isSigned}
+      />
 
       <Card>
         <CardContent className="py-3 flex items-center justify-between gap-3">
