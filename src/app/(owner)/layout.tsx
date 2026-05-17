@@ -23,10 +23,10 @@ export default async function OwnerLayout({ children }: { children: ReactNode })
             <StatusBadge variant="violet" noIcon>Owner</StatusBadge>
             <nav className="text-sm flex items-center gap-4">
               <Link href="/owner/orgs" className="text-muted-foreground hover:text-foreground">Orgs</Link>
-              <span className="text-muted-foreground/40">Users · Unit 09</span>
-              <span className="text-muted-foreground/40">Audit · Unit 09</span>
-              <span className="text-muted-foreground/40">Announcements · Unit 09</span>
-              <span className="text-muted-foreground/40">Health · Unit 09</span>
+              <Link href="/owner/users" className="text-muted-foreground hover:text-foreground">Users</Link>
+              <Link href="/owner/audit" className="text-muted-foreground hover:text-foreground">Audit</Link>
+              <Link href="/owner/announcements" className="text-muted-foreground hover:text-foreground">Announcements</Link>
+              <Link href="/owner/health" className="text-muted-foreground hover:text-foreground">Health</Link>
             </nav>
           </div>
           <Link href="/home" className="text-xs text-muted-foreground hover:text-foreground">
