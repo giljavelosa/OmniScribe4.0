@@ -210,6 +210,44 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     });
   }
 
+  // Visit-counter hook (Unit 11). If the note's encounter has an episode,
+  // increment EpisodeOfCare.visitsCompleted. The signing transaction has
+  // already committed; this happens outside it so a counter failure doesn't
+  // roll back the sign. We use `increment` so the write is atomic at the
+  // DB level (no read-modify-write race if two notes for the same episode
+  // sign in close succession — rare but possible).
+  if (note.encounterId) {
+    try {
+      const encounter = await prisma.encounter.findUnique({
+        where: { id: note.encounterId },
+        select: { episodeOfCareId: true },
+      });
+      const episodeId = encounter?.episodeOfCareId ?? null;
+      if (episodeId) {
+        const updated = await prisma.episodeOfCare.update({
+          where: { id: episodeId },
+          data: { visitsCompleted: { increment: 1 } },
+          select: { visitsCompleted: true, visitsAuthorized: true },
+        });
+        await writeAuditLog({
+          userId: user.id,
+          orgId: orgUser.orgId,
+          action: 'EPISODE_VISIT_COUNT_INCREMENTED',
+          resourceType: 'EpisodeOfCare',
+          resourceId: episodeId,
+          metadata: {
+            noteId,
+            visitsCompleted: updated.visitsCompleted,
+            visitsAuthorized: updated.visitsAuthorized,
+          },
+        });
+      }
+    } catch (err) {
+      // Counter failure is non-fatal — the sign already committed. Log + move on.
+      console.warn('[sign] visit-counter increment failed:', err);
+    }
+  }
+
   // Post-sign enqueues — outside the transaction so a Redis hiccup doesn't
   // roll back the signed note.
   await enqueueNoteBriefJob({ noteId, orgId: orgUser.orgId });
