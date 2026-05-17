@@ -4,11 +4,11 @@
 
 ## Current Phase
 
-- **Wave 3 in flight — Unit 17 shipped.** PR #18 (branch `feat/unit-17-telehealth-clinician-room`, stacked on `feat/unit-16-telehealth-audio`). The clinician-facing `/telehealth/room/[scheduleId]` surface lights up the live telehealth experience: Daily iframe + live transcript driven by Unit 16's `TelehealthAudioPipeline` + mic mute + End-call handoff that closes the loop with the existing `/api/notes/[id]/complete-stream` → `/processing/[noteId]` pipeline. Reuses the WAV encoder (extracted from the in-person capture flow) so end-of-call upload is byte-identical to in-person finish. Patient track is null in v1 (clinician-only transcript) — Daily SDK wiring is the one-line swap when DAILY_API_KEY is set.
+- **Wave 3 COMPLETE — Unit 18 shipped.** PR #19 (branch `feat/unit-18-telehealth-polish`, stacked on `feat/unit-17-telehealth-clinician-room`). Hardens the rough edges Units 15–17 left for polish: clinicians get a pre-call diagnostic (mic + network RTT + browser compat) at `/telehealth/preflight/[scheduleId]` before they enter the room; the room shell now surfaces reconnect state inline + offers a manual retry after the pipeline's 3-attempt auto exhausts; page reload mid-call shows a "Resuming session" banner so the audio gap is honest; quality metrics (sample count + reconnect count + duration + transcript length) ride into the /end audit row so the auditor lens can see call quality post-hoc. Daily SDK swap + TitaNet voice-ID + "Start telehealth visit" CTA explicitly deferred — they're sized as their own units.
 
 ## Current Goal
 
-- Await user confirmation before starting Unit 18 — Wave 3 polish: pre-call diagnostic (mic/cam/network), Daily SDK swap for the patient track, network-quality indicator on the patient tile, mid-call rejoin if disconnected within the active window. Per Prompt B's stop-between-units contract.
+- Await user confirmation before starting Wave 4 opener (FHIR / EHR integration — Unit 19, SMART OAuth2 auth foundations). Wave 3 closing puts telehealth at v1 parity with the in-person flow; Wave 4 begins the read-only EHR sync long pole. Per Prompt B's stop-between-units contract.
 
 ## Completed
 
@@ -236,6 +236,23 @@
     5. `router.push('/processing/[noteId]')` — same post-call screen in-person uses
   - 144 tests pass (was 138); build/lint/typecheck clean; new tests: 3 WAV encoder shape, 2 pipeline retainSamples on/off, 1 pipeline clinician-only-when-patientTrack-null.
 
+- **2026-05-17 — Unit 18: Telehealth polish (Wave 3 closing)** (PR #19 — `feat(unit-18): telehealth polish`).
+  - Spec at `context/specs/18-telehealth-polish.md`.
+  - 1 new AuditAction value: `TELEHEALTH_PRECALL_CHECK_FAILED` (emitted by the preflight surface when mic / network / browser_compat fails).
+  - Schema: `TelehealthSession.qualityMetrics Json?` — PHI-free counters block written by /end. Migration adds nullable column.
+  - `src/lib/telehealth/preflight.ts` — two pure helpers: `checkBrowserCompat(globals?)` returns per-API details so the UI can call out which is missing (Safari users lack MediaStreamTrackProcessor specifically); `measureRoundTrip({ fetchImpl, timeoutMs, ... })` returns a discriminated union (`ok+rttMs | timeout | http | fetch_failed`). 7 vitest cases.
+  - `GET /api/telehealth/preflight/ping` — NextAuth-gated, returns `{ ok, t }`, no DB. Server timestamp lets the client detect clock skew.
+  - `/telehealth/preflight/[scheduleId]` page (under `(clinical)/`) — server gate is intentionally looser than the room page's (preflight runs before consent / session start; useful "set up gear during a five-minute gap"). Three-check shell: browser compat (sync) + mic permission with live VU meter from an AnalyserNode at ~60 fps + network RTT chip. Each check has its own retry; failures fire the new audit action; continue-button disabled until all three pass; on click it tears down mic stream and navigates to the room.
+  - `TelehealthAudioPipeline` gains `getQualityMetrics()`: `{ sampleChunksProcessed, reconnectCount }`. Tracked in `#pump` and `#handleSocketClose`. Surfaces for the room shell to package into the /end POST.
+  - Room shell upgrades:
+    - Pipeline construction factored into `startPipeline()` so initial mount and manual retry path share one code path.
+    - Inline "Connection lost — reconnecting…" banner while `connState === 'reconnecting'`.
+    - "Audio disconnected" banner + "Retry connection" button when `connState === 'failed'` (auto-retries exhausted). Retry constructs a fresh pipeline — transcript state survives.
+    - Rejoin banner on page reload mid-call ("We couldn't recover audio from the previous tab"). Detected via sessionStorage flag keyed by sessionId; cleared on clean End-call.
+    - End-call packages `getQualityMetrics()` + `callDurationMs` (start-to-end elapsed) + `transcript.length` into the /end POST body.
+  - `POST /api/admin/telehealth/sessions/[id]/end` extended to accept optional `qualityMetrics` (Zod: all fields `int >= 0` so PHI can't be smuggled). Persists on `TelehealthSession.qualityMetrics` + spreads into TELEHEALTH_SESSION_ENDED audit metadata.
+  - 152 tests pass (was 144); build/lint/typecheck clean. New tests: 7 preflight (compat + RTT), 1 pipeline quality metrics. 1 new client surface + 1 new API + 1 schema migration ship.
+
 ## In Progress
 
 None.
@@ -244,7 +261,12 @@ None.
 
 In priority order:
 
-1. **Unit 18 — Telehealth polish (Wave 3 closing)** — pre-call diagnostic (mic/cam/network), Daily.co SDK swap for the patient track (the one-line change Unit 17 documented), network-quality indicator on the patient tile, mid-call rejoin if the clinician disconnects within the active window, TitaNet voice-ID on the post-call review surface for clinician-vs-patient labeling.
+1. **Unit 19 — Wave 4 opener: SMART OAuth2 auth foundations** ([`context/specs/00-build-plan.md`](specs/00-build-plan.md) Wave 4). SMART on FHIR OAuth2 flow; encrypted token storage; refresh handling; NextGen sandbox config; per-clinician vs per-org launch model (open question 5). v1 is read-only, provider-launched. Foundation for Units 20–24 (patient identity matching → resource sync → brief FHIR enrichment → provenance UI → multi-EHR adapter).
+
+Wave 3.5 (deferred polish, can land alongside Wave 4):
+- Daily.co SDK swap for the patient audio track (one-line change in the room shell + token-mint endpoint).
+- TitaNet voice-ID on post-call review for clinician-vs-patient speaker labeling.
+- "Start telehealth visit" CTA on the schedule list (currently a clinician hits /telehealth/preflight/[scheduleId] directly).
 8. **Unit 07 — Encounter Copilot Watch v0** ([`context/specs/07-encounter-copilot-watch-v0.md`](specs/07-encounter-copilot-watch-v0.md)) — beacon + open-follow-ups + plan-for-today cards.
 9. **Unit 08 — Admin & Compliance Ready** ([`context/specs/08-admin-and-compliance-ready.md`](specs/08-admin-and-compliance-ready.md)) — Sites + Rooms CRUD, admin-initiated MFA reset + password reset, customer self-onboarding wizard, BAA admin UI.
 
@@ -426,6 +448,15 @@ These need user/PM decision before the depending unit can ship. Quote the source
 - **2026-05-17 — Copy-to-clipboard fires SECTION_COPIED_TO_CLIPBOARD via the copilot-event endpoint with itemCount = char count.** PHI-free at the audit layer (content never leaves the client beyond the clipboard write). The cap raise (1000 → 100_000) accommodates real section sizes; the prior cap was sized for "items in a list" not "characters in a section."
 - **2026-05-17 — Accordion animation polish ships data-state + transition-duration classes only — no CSS keyframes.** The simplest cross-browser solution that works inside Tailwind v4 without custom @keyframes. Future polish (CSS-only height animation for collapse/expand) can hook the data-state attribute when the design asks for it.
 - **2026-05-17 — Wave 2 COMPLETE.** Units 10–14 close the clinical-surface trust gaps. /review now has: SSE reconnect indicator (10), section regenerate with diff (10), failure-recovery banner (10), per-section observability (10), inline goal progression on the patient panel (11), snapshot strip + override-wins on /patients/[id] (12), templates authoring with version history (13), and AI compliance flags with severity-grouped review (14). The clinical surfaces are no longer "works" — they're "trusted daily."
+
+### Unit 18 (2026-05-17)
+
+- **2026-05-17 — Preflight gate is intentionally LOOSER than the room page's.** A clinician can preflight before the patient has consented or before the admin starts the session. The use case is "set up my gear during a five-minute gap, walk away, return when the patient is in the waiting room." Gating preflight on session state would force the clinician to wait until the very moment of entry, which is the worst time to discover their mic is broken.
+- **2026-05-17 — sessionStorage flag for the rejoin banner instead of a server-side `lastEnteredAt` column.** Originally drafted as a schema change; sessionStorage achieves the same UX (page-reload-mid-call → "Resuming session" banner) without a migration. The "different browser / device" case isn't recoverable anyway (browser memory is destroyed) so client-only detection is honest about what it actually covers.
+- **2026-05-17 — Manual reconnect tears down + restarts the whole pipeline instead of re-opening just the WS.** Implementing a finer-grained "just reopen the WS" path inside the pipeline would require exposing pipeline internals or adding a `reconnect()` method that bypasses the close-handler counters. A full pipeline restart is cheap (mic stream is re-acquired in milliseconds in practice; AudioContext is fresh), and the transcript state lives in the room shell so it survives. Less code, fewer state-machine corners.
+- **2026-05-17 — Quality metrics ride into the existing /end POST instead of a dedicated metrics endpoint.** All four metrics (sample count, reconnect count, duration, transcript length) are computed at end-of-call AND need to be persisted on the session row. One POST is cleaner than two; the audit row already exists; the Zod schema's `int >= 0` constraint fences off PHI smuggling. Future metrics (e.g., audio level histogram) follow the same shape.
+- **2026-05-17 — Audit ingress reuses /api/audit/copilot-event with `noteId: scheduleId` as the resource anchor.** The preflight runs before a Note exists; the audit row's resourceType still resolves as Note but the resourceId is the schedule. Acceptable compromise to avoid forking the audit ingress for one new action — the auditor can join via Schedule.id ↔ TelehealthSession.scheduleId ↔ Note.id when they need to.
+- **2026-05-17 — Wave 3 COMPLETE.** Units 15–18 ship telehealth at v1 parity with in-person capture. /telehealth/preflight (clinician setup) → /telehealth/room (live call + transcript) → /processing → /review is the same shape as the in-person flow. The remaining telehealth work (Daily SDK swap, TitaNet voice-ID, schedule-list CTA) is non-blocking polish that can land alongside Wave 4.
 
 ### Unit 17 (2026-05-17)
 
