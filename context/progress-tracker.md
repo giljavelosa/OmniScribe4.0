@@ -4,11 +4,11 @@
 
 ## Current Phase
 
-- **Wave 1 — closing.** Unit 08 shipped (PR #9 — branch `feat/unit-08-admin-compliance-ready`). Unit 07 shipped (PR #8). Unit 06 shipped (PR #7). Wave 0 complete (PRs #1–#6). Commercial-readiness gates closed: Sites + Rooms CRUD, /admin/audit log surface (filters + CSV export), /admin/org-settings, audit-log enrichment for high-severity mutations (MFA reset, role changes). OmniScribe is now sellable to and operable for a first paying customer.
+- **Wave 1 — COMPLETE.** Unit 09 shipped (PR #10 — branch `feat/unit-09-owner-console-v1`). Unit 08 shipped (PR #9). Unit 07 shipped (PR #8). Unit 06 shipped (PR #7). Wave 0 complete (PRs #1–#6). Wave 1 (Units 06–09) closes commercial-readiness gates: prior-context brief precomputed on sign, copilot Watch v0 surfaces, sites/rooms/audit/org-settings admin surfaces, full owner console (cross-org users + audit, system announcements, system health, Stripe-stub seat allocation). End of Wave 1: first paying customer can be provisioned, onboarded, recorded, signed, AND paid (Stripe real-mode wiring lands the day the first paying customer signs).
 
 ## Current Goal
 
-- Await user confirmation before starting Unit 09 — Owner Console v1, per Prompt B's stop-between-units contract.
+- Await user confirmation before starting Unit 10 — Section-regenerate UX maturity (Wave 2's opening unit), per Prompt B's stop-between-units contract.
 
 ## Completed
 
@@ -129,6 +129,18 @@
   - Admin nav: Users · Sites · Audit · Org settings (replaced "Unit 08" placeholders).
   - Test: `test/api/onboarding-expired-invite.test.ts` verifies `POST /api/onboarding/[token]/password` returns 410 Gone for expired AND unknown tokens (no enumeration distinction). Runs against the real local Postgres via Prisma; cleans up its own fixtures.
 
+- **2026-05-17 — Unit 09: Owner Console v1** (PR #10 — `feat(unit-09): owner console v1`).
+  - Spec doc authored at `context/specs/09-owner-console-v1.md` (spec wasn't in the kit; build plan said "write spec on start").
+  - 11 new AuditAction values: PLATFORM_USERS_VIEWED, PLATFORM_AUDIT_VIEWED, PLATFORM_AUDIT_EXPORTED, PLATFORM_HEALTH_CHECKED, ANNOUNCEMENT_CREATED / _UPDATED / _DELETED, SEAT_ALLOCATED / _REVOKED, STRIPE_SUBSCRIPTION_UPDATED / _STUB.
+  - `/owner/users` — `GET /api/owner/users?q=...&cursor=...` joins User + OrgUser + Organization; cross-org email search; PlatformAuditLog audits with filter SHAPE only (no resource ids leaked).
+  - `/owner/audit` + `/api/owner/audit/export` — same filter shape as `/admin/audit` plus `orgId`; joins Organization for org-name column; PHI-free per the writeAuditLog denylist; PlatformAuditLog records every read + export.
+  - `/owner/announcements` — full SystemAnnouncement CRUD (severity / target-orgs / schedule window). Banner-render across the app deferred to Unit 33; v1 surface is the management UI only. AlertDialog delete (rule 22).
+  - `/owner/health` — `runAllHealthChecks()` exercises postgres / redis / s3 / bedrock / soniox / resend in parallel with a 5s per-check timeout. Each check is PHI-free and never throws — failures return `{ ok: false, detail }` with the error class. Stub-mode providers count as healthy (configured) but are flagged with ◐ so production deploys can't miss the gap.
+  - `src/services/billing/stripe.ts` — stub-mode wrapper mirroring Soniox/S3/Bedrock pattern. When STRIPE_SECRET_KEY is unset, `upsertSubscription` returns a synthetic `{ stub: true, subscriptionId: 'stub-{orgId}-{ts}', status: 'active' }` so the seat-allocation flow works end-to-end in dev. Real Stripe SDK path is wired but throws explicit-gap error today.
+  - Seat APIs — atomic with Stripe: `POST /api/admin/seats` (org-scoped) + `POST /api/owner/orgs/[id]/seats` (cross-org) both run prisma.$transaction over [seat-create-loop, upsertSubscription]. If Stripe throws, the seat rows roll back. Stub mode never throws so allocation always commits. Owner-side path writes to BOTH per-org `AuditLog` AND `PlatformAuditLog` so cross-org actions are visible from both directions.
+  - `/admin/seats` (full SeatsClient: list / allocate / revoke) + `/owner/orgs/[id]` gains an `OwnerSeatsCard` (per-org list + allocate).
+  - Admin nav: Users · Sites · Seats · Audit · Org settings. Owner nav: Orgs · Users · Audit · Announcements · Health.
+
 ## In Progress
 
 None.
@@ -137,7 +149,7 @@ None.
 
 In priority order:
 
-1. **Unit 09 — Owner Console v1** — full owner-mode surfaces: cross-org user list, platform-wide audit, announcements, health monitoring, impersonation, seat allocation UI. (Stripe seat allocation deferred from Unit 08 per scope decision below.)
+1. **Unit 10 — Section-regenerate UX maturity** — final polish of `<SectionProgressStrip>` + `<SectionProgressCell>` + `<SectionRegenerateConfirmDialog>`, per-section diff view, failure-recovery UX, SSE reconnect handling, observability around regeneration latency + failure rate.
 8. **Unit 07 — Encounter Copilot Watch v0** ([`context/specs/07-encounter-copilot-watch-v0.md`](specs/07-encounter-copilot-watch-v0.md)) — beacon + open-follow-ups + plan-for-today cards.
 9. **Unit 08 — Admin & Compliance Ready** ([`context/specs/08-admin-and-compliance-ready.md`](specs/08-admin-and-compliance-ready.md)) — Sites + Rooms CRUD, admin-initiated MFA reset + password reset, customer self-onboarding wizard, BAA admin UI.
 
@@ -255,6 +267,17 @@ These need user/PM decision before the depending unit can ship. Quote the source
 - **2026-05-17 — BAA enrichment uses full-snapshot pattern, not diffForAudit.** PATCH `/api/owner/orgs/[id]/baa` writes the full 3-field BAA posture (`{ baaVersion, baaExecutedAt, complianceProfile }`) on both before+after sides, even when only one moved. Reasoning: auditors want the complete compliance posture at the moment of change, not just the delta — "what version was active when this was signed" beats "what changed." Other enrichment (Site/Room/OrgUser) uses diffForAudit because those are non-compliance fields where the delta IS what auditors need.
 - **2026-05-17 — `defaultNoteStyle` accepted on org settings PATCH but stored in audit log only.** The Organization schema doesn't have the field yet. We accept the input + write `ORG_SETTINGS_UPDATED` with the requested value so the audit trail captures intent, but the data layer doesn't gain a column until a customer actually requests an org-wide default note style. Schema bloat-aversion — wait for the use case.
 - **2026-05-17 — USER_ROLE_CHANGED emits as a separate row in addition to USER_UPDATED.** Role changes are higher-severity than `canManagePatients` toggles or `isActive` deactivations (which also produce USER_UPDATED / USER_DEACTIVATED). Compliance dashboards filtering for "who became an admin and when" shouldn't have to scan every USER_UPDATED row.
+
+### Unit 09 (2026-05-17)
+
+- **2026-05-17 — Impersonation deliberately deferred.** Build plan called for `/owner/orgs/[id]` to include "impersonation (audited)" — high blast radius (audit must capture `actingUserId` vs `onBehalfOfUserId`; session-mint requires care to never grant ambient PHI access). Defer to a dedicated Ops Console unit (likely part of Unit 33) with hardened session-mint controls + per-impersonation reason capture + cross-org permission checks. The /owner/orgs/[id] page renders an italic note acknowledging the deferral so future agents see the rationale before reaching for an impersonation shortcut.
+- **2026-05-17 — Stripe stub-mode mirrors the Soniox/S3/Bedrock pattern.** `src/services/billing/stripe.ts` exports `stripeConfig.isStubMode` (true when STRIPE_SECRET_KEY is unset) + a single `upsertSubscription()` entry point. Stub returns `{ stub: true, subscriptionId, status: 'active' }` synchronously; real-mode path throws an explicit error today so anyone who sets the key without finishing the integration sees the gap immediately rather than getting silent wrong behavior. Health surface flags stub mode with the ◐ glyph (distinct from ✓ healthy) so production deploys can't miss the gap.
+- **2026-05-17 — Seat allocation runs Stripe + Prisma inside one $transaction.** If `upsertSubscription` throws, the just-created Seat rows roll back. Stub mode never throws → always commits. The pattern means dev never sees orphan Seat rows, and production deploys (once real Stripe wires in) get the same atomic guarantee. The trade-off: a `prisma.$transaction` callback holds a DB connection while Stripe runs — acceptable because Stripe's typical latency is sub-second.
+- **2026-05-17 — Seat revoke does NOT trigger Stripe re-count in v1.** The DELETE /api/admin/seats/[id] route just removes the row + audits. Stripe sees the new count on the NEXT allocation. Reasoning: v1's seat surface is read-mostly; the revoke path is administrative and infrequent enough that a lazy reconcile is fine. When the first paying customer downgrades, we'll add a dedicated `recountSubscription` call (or rely on Stripe's "report usage" pattern). Documented so future agents don't add the call inline without understanding the trade-off.
+- **2026-05-17 — Owner audit + admin audit are two endpoints, not one.** They share schema and 90% of code, but the access guard is different (`requirePlatformOwner` vs `requireFeatureAccess('TEAM_MEMBERS_MANAGE')`) AND the metadata fields differ (owner version includes orgId + orgName). DRYing them would require runtime branching on session, which is harder to audit than two clean endpoints. The CSV-export endpoints follow the same split for the same reason.
+- **2026-05-17 — Health checks use Promise.race for the 5s timeout, not AbortController.** AbortController would be cleaner but the providers we check (postgres / redis / s3 / bedrock / soniox / resend) all use different abort-signal idioms; wrapping each correctly was more code than the Promise.race pattern + an explicit cleanup. The trade-off: a timed-out check may still complete in the background; that's harmless because the result is dropped at the surface layer. If a real provider goes haywire on connection-leak, revisit.
+- **2026-05-17 — SystemAnnouncement banner-render deferred.** The CRUD lands here; the actual "show banner across the app for matching orgs" surface lands in Unit 33+. Reasoning: render needs to gate on `(targetOrgIds.length === 0 || targetOrgIds.includes(currentOrgId))` AND on the schedule window AND on a per-user dismissal store — that's a separate UI workstream that doesn't gate first-paying-customer onboarding. Logging the rows is enough for v1.
+- **2026-05-17 — Wave 1 COMPLETE.** First paying customer can now be: provisioned (owner provisioning form, Unit 01), onboarded (self-onboarding wizard, Unit 01), recorded (capture, Unit 03), transcribed (Unit 04), AI-drafted (Unit 05), reviewed (Unit 05), signed (Unit 05), patient-instructed (Unit 05 post-sign artifacts), brought-back-with-context (Unit 06 brief), commitments-tracked-across-visits (Unit 06 follow-ups), copilot-assisted (Unit 07 Watch v0), admin-managed (Unit 08 sites/audit/org-settings), and BILLED (Unit 09 Stripe-stub seat allocation; real-mode wiring lands the day a real Stripe account is created).
 
 ### Pre-existing (foundational, from spec)
 
