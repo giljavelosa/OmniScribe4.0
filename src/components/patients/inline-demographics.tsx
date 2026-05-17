@@ -1,0 +1,194 @@
+'use client';
+
+import { useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
+import { Pencil } from 'lucide-react';
+
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { StatusBanner } from '@/components/ui/status-banner';
+
+type Patient = {
+  id: string;
+  firstName: string;
+  lastName: string;
+  mrn: string;
+  dob: string; // ISO
+  sex: string;
+  phone: string | null;
+  email: string | null;
+  preferredLanguage: string | null;
+};
+
+const SEX_OPTIONS = [
+  { value: 'MALE', label: 'Male' },
+  { value: 'FEMALE', label: 'Female' },
+  { value: 'OTHER', label: 'Other' },
+  { value: 'UNKNOWN', label: 'Unknown' },
+];
+
+/**
+ * InlineDemographics — Unit 12 replacement for the launcher-style
+ * demographics block. Click "Edit" → fields become inputs; Save commits
+ * via PATCH /api/patients/[id] → server emits PATIENT_DEMOGRAPHICS_EDITED
+ * audit when any of the 8 demographic fields move.
+ *
+ * No full-page form swap (founder rule from spec: inline editable).
+ */
+export function InlineDemographics({ patient }: { patient: Patient }) {
+  const router = useRouter();
+  const [editing, setEditing] = useState(false);
+  const [firstName, setFirstName] = useState(patient.firstName);
+  const [lastName, setLastName] = useState(patient.lastName);
+  const [mrn, setMrn] = useState(patient.mrn);
+  const [dob, setDob] = useState(patient.dob.slice(0, 10));
+  const [sex, setSex] = useState(patient.sex);
+  const [phone, setPhone] = useState(patient.phone ?? '');
+  const [email, setEmail] = useState(patient.email ?? '');
+  const [preferredLanguage, setPreferredLanguage] = useState(patient.preferredLanguage ?? '');
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  function cancel() {
+    setFirstName(patient.firstName);
+    setLastName(patient.lastName);
+    setMrn(patient.mrn);
+    setDob(patient.dob.slice(0, 10));
+    setSex(patient.sex);
+    setPhone(patient.phone ?? '');
+    setEmail(patient.email ?? '');
+    setPreferredLanguage(patient.preferredLanguage ?? '');
+    setError(null);
+    setEditing(false);
+  }
+
+  function save() {
+    setError(null);
+    startTransition(async () => {
+      const res = await fetch(`/api/patients/${patient.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          firstName: firstName.trim(),
+          lastName: lastName.trim(),
+          mrn: mrn.trim(),
+          dob: dob || undefined,
+          sex,
+          phone: phone.trim() || null,
+          email: email.trim() || null,
+          preferredLanguage: preferredLanguage.trim() || null,
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        setError(body?.error?.message ?? `Save failed (${res.status}).`);
+        return;
+      }
+      setEditing(false);
+      router.refresh();
+    });
+  }
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-start justify-between gap-3">
+        <div>
+          <CardTitle className="text-md">Demographics</CardTitle>
+          <CardDescription>
+            Edits audit-log under PATIENT_DEMOGRAPHICS_EDITED with changed-field names only.
+          </CardDescription>
+        </div>
+        {!editing && (
+          <Button type="button" variant="ghost" size="sm" onClick={() => setEditing(true)}>
+            <Pencil className="size-3" aria-hidden="true" />
+            Edit
+          </Button>
+        )}
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {!editing ? (
+          <dl className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
+            <Field label="Name" value={`${patient.firstName} ${patient.lastName}`} />
+            <Field label="MRN" value={patient.mrn} mono />
+            <Field label="DOB" value={new Date(patient.dob).toLocaleDateString()} />
+            <Field label="Sex" value={patient.sex} />
+            <Field label="Phone" value={patient.phone ?? '—'} mono />
+            <Field label="Email" value={patient.email ?? '—'} mono />
+            <Field label="Preferred language" value={patient.preferredLanguage ?? '—'} />
+          </dl>
+        ) : (
+          <form
+            className="grid grid-cols-2 md:grid-cols-3 gap-3"
+            onSubmit={(e) => {
+              e.preventDefault();
+              save();
+            }}
+          >
+            <div className="space-y-1.5">
+              <Label htmlFor="firstName">First name</Label>
+              <Input id="firstName" value={firstName} onChange={(e) => setFirstName(e.target.value)} disabled={pending} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="lastName">Last name</Label>
+              <Input id="lastName" value={lastName} onChange={(e) => setLastName(e.target.value)} disabled={pending} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="mrn">MRN</Label>
+              <Input id="mrn" value={mrn} onChange={(e) => setMrn(e.target.value)} disabled={pending} className="font-mono" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="dob">DOB</Label>
+              <Input id="dob" type="date" value={dob} onChange={(e) => setDob(e.target.value)} disabled={pending} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Sex</Label>
+              <Select value={sex} onValueChange={setSex}>
+                <SelectTrigger disabled={pending}><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {SEX_OPTIONS.map((s) => (
+                    <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="phone">Phone</Label>
+              <Input id="phone" value={phone} onChange={(e) => setPhone(e.target.value)} disabled={pending} className="font-mono" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="email">Email</Label>
+              <Input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={pending} className="font-mono" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="pref-lang">Preferred language</Label>
+              <Input id="pref-lang" value={preferredLanguage} onChange={(e) => setPreferredLanguage(e.target.value)} disabled={pending} />
+            </div>
+
+            {error && (
+              <div className="col-span-full">
+                <StatusBanner variant="danger">{error}</StatusBanner>
+              </div>
+            )}
+
+            <div className="col-span-full flex justify-end gap-2 pt-1">
+              <Button type="button" variant="ghost" onClick={cancel} disabled={pending}>Cancel</Button>
+              <Button type="submit" disabled={pending}>{pending ? 'Saving…' : 'Save'}</Button>
+            </div>
+          </form>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function Field({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="space-y-0.5">
+      <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</dt>
+      <dd className={mono ? 'font-mono' : undefined}>{value}</dd>
+    </div>
+  );
+}

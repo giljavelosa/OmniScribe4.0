@@ -8,6 +8,12 @@ import { StatusBadge } from '@/components/ui/status-badge';
 import { PatientIdentityHeader } from '@/components/patients/patient-identity-header';
 import { StartVisitButton } from './_components/start-visit-button';
 import { EpisodesPanel } from './_components/episodes-panel';
+import { PatientSnapshotStrip } from '@/components/patients/snapshot-strip';
+import { VisitHistoryList } from '@/components/patients/visit-history-list';
+import { InlineDemographics } from '@/components/patients/inline-demographics';
+import { buildSnapshotStrip } from '@/lib/snapshots/build-snapshot-strip';
+import { deriveAssessmentSnippet } from '@/lib/notes/note-text';
+import type { FinalJsonShape } from '@/lib/notes/build-artifact-prompt';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Patient' };
@@ -22,17 +28,47 @@ export default async function PatientDetailPage({ params }: { params: Promise<{ 
     include: {
       addresses: true,
       coverages: true,
-      // Unit 11: include DISCHARGED so the panel can offer Reopen + show
-      // close history. CANCELLED still hidden.
+      // Unit 11 — include DISCHARGED so the panel can Reopen + show close history.
       episodes: {
         where: { status: { in: ['ACTIVE', 'RECERT_DUE', 'DISCHARGED'] } },
         include: { department: true, goals: { orderBy: { createdAt: 'asc' } } },
         orderBy: [{ status: 'asc' }, { startedAt: 'desc' }],
       },
-      encounters: { orderBy: { startedAt: 'desc' }, take: 5 },
     },
   });
   if (!patient) notFound();
+
+  // Unit 12 — snapshot strip + visit history with snippets, server-fetched
+  // so the first paint has real content.
+  const [snapshotStrip, recentVisits] = await Promise.all([
+    buildSnapshotStrip({ orgId: session.user.orgId, patientId: patient.id }),
+    prisma.note.findMany({
+      where: {
+        patientId: patient.id,
+        orgId: session.user.orgId,
+        status: { in: ['SIGNED', 'TRANSFERRED'] },
+      },
+      orderBy: { signedAt: 'desc' },
+      take: 10,
+      select: {
+        id: true,
+        signedAt: true,
+        division: true,
+        finalJson: true,
+        template: { select: { name: true } },
+      },
+    }),
+  ]);
+
+  const visits = recentVisits.map((n) => ({
+    id: n.id,
+    signedAt: n.signedAt?.toISOString() ?? null,
+    division: n.division,
+    templateName: n.template?.name ?? null,
+    assessmentSnippet: deriveAssessmentSnippet(
+      (n.finalJson as unknown as FinalJsonShape) ?? null,
+    ),
+  }));
 
   const episodesForPanel = patient.episodes.map((ep) => ({
     id: ep.id,
@@ -58,84 +94,83 @@ export default async function PatientDetailPage({ params }: { params: Promise<{ 
   }));
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-6 space-y-6">
+    <div className="mx-auto max-w-6xl px-4 py-6 space-y-6">
       <PatientIdentityHeader patient={patient} />
 
-      <div className="flex justify-between items-center">
-        <p className="text-sm text-muted-foreground">
-          Full patient detail (snapshot strip + visit history + reference cards) ships in Unit 12.
-        </p>
+      <div className="flex justify-end">
         <StartVisitButton patientId={patient.id} />
       </div>
 
-      <EpisodesPanel
-        patientId={patient.id}
-        patientDivision={patient.division}
-        episodes={episodesForPanel}
-      />
+      {/* Snapshot strip — first visual after identity, full-width. */}
+      <PatientSnapshotStrip patientId={patient.id} strip={snapshotStrip} />
 
-      <div className="grid md:grid-cols-2 gap-4">
-        <Card>
-          <CardHeader><CardTitle className="text-md">Recent visits</CardTitle></CardHeader>
-          <CardContent className="space-y-2">
-            {patient.encounters.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No visits yet.</p>
-            ) : (
-              <ul className="space-y-2 text-sm">
-                {patient.encounters.map((e) => (
-                  <li key={e.id} className="rounded-md border border-border p-2 flex items-center justify-between">
-                    <span>{e.startedAt?.toLocaleDateString() ?? 'unscheduled'}</span>
-                    <StatusBadge variant="neutral" noIcon>{e.status}</StatusBadge>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
+      {/* Two-column desktop / single-column mobile:
+            primary content (episodes + visits + demographics) left
+            reference cards right slot reserved for future watch/goals roll-up */}
+      <div className="grid lg:grid-cols-[1fr_20rem] gap-4">
+        <div className="space-y-4 min-w-0">
+          <EpisodesPanel
+            patientId={patient.id}
+            patientDivision={patient.division}
+            episodes={episodesForPanel}
+          />
 
-        <Card className="md:col-span-2">
-          <CardHeader><CardTitle className="text-md">Demographics + addresses + coverage</CardTitle></CardHeader>
-          <CardContent className="space-y-3 text-sm">
-            <div className="grid grid-cols-3 gap-2">
-              <div><p className="text-xs text-muted-foreground uppercase">Phone</p><p>{patient.phone ?? '—'}</p></div>
-              <div><p className="text-xs text-muted-foreground uppercase">Email</p><p>{patient.email ?? '—'}</p></div>
-              <div><p className="text-xs text-muted-foreground uppercase">Site</p><p>{patient.siteId ?? '—'}</p></div>
-            </div>
-            {patient.addresses.length === 0 ? (
-              <p className="text-muted-foreground">No addresses on file.</p>
-            ) : (
-              <ul className="space-y-1">
-                {patient.addresses.map((a) => (
-                  <li key={a.id} className="text-muted-foreground">
-                    <StatusBadge variant="neutral" noIcon className="mr-2">{a.kind}</StatusBadge>
-                    {a.line1}{a.line2 ? `, ${a.line2}` : ''}, {a.city}, {a.state} {a.postalCode}
-                  </li>
-                ))}
-              </ul>
-            )}
-            {patient.coverages.length === 0 ? (
-              <p className="text-muted-foreground">No coverage on file.</p>
-            ) : (
-              <ul className="space-y-1">
-                {patient.coverages.map((c) => (
-                  <li key={c.id} className="text-muted-foreground">
-                    <StatusBadge
-                      variant={c.status === 'ACTIVE' ? 'success' : c.status === 'TERMINATED' ? 'danger' : 'warning'}
-                      noIcon
-                      className="mr-2"
-                    >
-                      {c.status}
-                    </StatusBadge>
-                    {c.carrier} · member {c.memberId}{c.planName ? ` (${c.planName})` : ''}
-                  </li>
-                ))}
-              </ul>
-            )}
-            <p className="pt-3 text-xs italic text-muted-foreground">
-              Full inline-editable demographics + PatientEditSheet arrive in Unit 12.
-            </p>
-          </CardContent>
-        </Card>
+          <VisitHistoryList visits={visits} />
+
+          <InlineDemographics
+            patient={{
+              id: patient.id,
+              firstName: patient.firstName,
+              lastName: patient.lastName,
+              mrn: patient.mrn,
+              dob: patient.dob.toISOString(),
+              sex: patient.sex,
+              phone: patient.phone,
+              email: patient.email,
+              preferredLanguage: patient.preferredLanguage,
+            }}
+          />
+        </div>
+
+        <aside className="space-y-4 lg:sticky lg:top-4 self-start">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-md">Addresses + coverage</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3 text-sm">
+              {patient.addresses.length === 0 ? (
+                <p className="text-muted-foreground">No addresses on file.</p>
+              ) : (
+                <ul className="space-y-1">
+                  {patient.addresses.map((a) => (
+                    <li key={a.id} className="text-muted-foreground">
+                      <StatusBadge variant="neutral" noIcon className="mr-2">{a.kind}</StatusBadge>
+                      {a.line1}{a.line2 ? `, ${a.line2}` : ''}, {a.city}, {a.state} {a.postalCode}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {patient.coverages.length === 0 ? (
+                <p className="text-muted-foreground">No coverage on file.</p>
+              ) : (
+                <ul className="space-y-1">
+                  {patient.coverages.map((c) => (
+                    <li key={c.id} className="text-muted-foreground">
+                      <StatusBadge
+                        variant={c.status === 'ACTIVE' ? 'success' : c.status === 'TERMINATED' ? 'danger' : 'warning'}
+                        noIcon
+                        className="mr-2"
+                      >
+                        {c.status}
+                      </StatusBadge>
+                      {c.carrier} · member {c.memberId}{c.planName ? ` (${c.planName})` : ''}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </CardContent>
+          </Card>
+        </aside>
       </div>
     </div>
   );
