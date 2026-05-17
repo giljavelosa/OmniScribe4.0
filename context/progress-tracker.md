@@ -4,11 +4,11 @@
 
 ## Current Phase
 
-- **Wave 1 — COMPLETE.** Unit 09 shipped (PR #10 — branch `feat/unit-09-owner-console-v1`). Unit 08 shipped (PR #9). Unit 07 shipped (PR #8). Unit 06 shipped (PR #7). Wave 0 complete (PRs #1–#6). Wave 1 (Units 06–09) closes commercial-readiness gates: prior-context brief precomputed on sign, copilot Watch v0 surfaces, sites/rooms/audit/org-settings admin surfaces, full owner console (cross-org users + audit, system announcements, system health, Stripe-stub seat allocation). End of Wave 1: first paying customer can be provisioned, onboarded, recorded, signed, AND paid (Stripe real-mode wiring lands the day the first paying customer signs).
+- **Wave 2 — opening.** Unit 10 shipped (PR #11 — branch `feat/unit-10-section-regen-maturity`). Wave 1 complete (PRs #6–#10). Wave 0 complete (PRs #1–#5). Wave 2 polishes the clinical surfaces: Unit 10 closes the trust gaps on the regenerate flow (SSE reconnect with backoff + visible connection status, per-section diff dialog with "show what changed", failure-recovery banner with retry-all-failed, regeneration observability via `_sectionStats` rolling-window p50/p95).
 
 ## Current Goal
 
-- Await user confirmation before starting Unit 10 — Section-regenerate UX maturity (Wave 2's opening unit), per Prompt B's stop-between-units contract.
+- Await user confirmation before starting Unit 11 — Episode-of-care maturity (Wave 2 / unit 2), per Prompt B's stop-between-units contract.
 
 ## Completed
 
@@ -141,6 +141,15 @@
   - `/admin/seats` (full SeatsClient: list / allocate / revoke) + `/owner/orgs/[id]` gains an `OwnerSeatsCard` (per-org list + allocate).
   - Admin nav: Users · Sites · Seats · Audit · Org settings. Owner nav: Orgs · Users · Audit · Announcements · Health.
 
+- **2026-05-17 — Unit 10: Section-regenerate UX maturity** (PR #11 — `feat(unit-10): section-regenerate ux maturity`).
+  - Spec at `context/specs/10-section-regenerate-ux-maturity.md` (kit said "write spec on start").
+  - 2 new AuditAction values: `SECTION_DIFF_VIEWED`, `SECTION_REGEN_RETRY_BATCH`. No schema changes; all polish lives in `Note.inferenceLog` Json + new components on `/review`.
+  - SSE reconnect: `src/lib/sse/use-sse-stream.ts` wraps EventSource with exponential backoff (1s → 2s → 4s → 8s → 16s, capped at 6 attempts). First successful 'open' resets retry counter. `SseStatusChip` (● live / ◐ connecting / ↻ reconnecting / ⚠ offline) renders next to the SectionProgressStrip; offline state surfaces a banner. SSE disabled once status === SIGNED (no point watching an immutable artifact).
+  - Per-section diff: worker's regenerate-section path snapshots existing `draftJson[sectionId].content` into `_regenerations[].previousContent` BEFORE overwriting. `REGENERATION_HISTORY_CAP_PER_SECTION = 10` — per-section cap drops `previousContent` off older entries while preserving the audit-trail metadata. `GET /api/notes/[id]/sections/[sectionId]/diff?regenIndex=N` returns `{ previous, current, regeneratedAt, overwroteEdited, regenCount }`. `SectionDiffDialog` (shadcn Dialog) renders a token-colored line-level diff with a "+N −M" summary chip; hand-rolled LCS in `src/lib/diff/line-diff.ts` (8 unit tests; no new package). "Show what changed" link visible only when `sectionHasRegenHistory[sectionId]` flag is true (computed in `/api/notes/[id]` + `/review` server-side from the inferenceLog).
+  - Failure-recovery banner: `FailureRecoveryBanner` at top of `/review` (above strip) when ≥1 section is `failed`. Lists each failed section + error; "Retry all failed" fires regenerate POSTs sequentially with per-row error feedback. Audits `SECTION_REGEN_RETRY_BATCH` once up front via the copilot-event endpoint (extended its allowlist) + each individual retry's POST writes its own `SECTION_REGENERATED` row. Hidden on SIGNED notes (rule 3).
+  - Regeneration observability: `inferenceLog._sectionStats` aggregate (`totalAttempts`, `successCount`, `failureCount`, `latencyP50Ms`, `latencyP95Ms`, `lastUpdatedAt`, `recentLatenciesMs` rolling window capped at 50). `recordSectionAttempt()` helper called from both the generate-note loop and the regenerate-section path. `GET /api/notes/[id]/regen-stats` admin-scoped read for ops dashboards (5 unit tests on the percentile helper).
+  - 17 new tests total (8 line-diff + 5 percentile + 4 existing + extensions); 102 tests across 15 files pass.
+
 ## In Progress
 
 None.
@@ -149,7 +158,7 @@ None.
 
 In priority order:
 
-1. **Unit 10 — Section-regenerate UX maturity** — final polish of `<SectionProgressStrip>` + `<SectionProgressCell>` + `<SectionRegenerateConfirmDialog>`, per-section diff view, failure-recovery UX, SSE reconnect handling, observability around regeneration latency + failure rate.
+1. **Unit 11 — Episode-of-care maturity** — recert cycles (90-day default, customizable), visit counters + auth limits, goal-progression UX (clinician marks goal Met / Modified / Discontinued), episode close + reopen workflows, per-episode division override surfaced cleanly.
 8. **Unit 07 — Encounter Copilot Watch v0** ([`context/specs/07-encounter-copilot-watch-v0.md`](specs/07-encounter-copilot-watch-v0.md)) — beacon + open-follow-ups + plan-for-today cards.
 9. **Unit 08 — Admin & Compliance Ready** ([`context/specs/08-admin-and-compliance-ready.md`](specs/08-admin-and-compliance-ready.md)) — Sites + Rooms CRUD, admin-initiated MFA reset + password reset, customer self-onboarding wizard, BAA admin UI.
 
@@ -278,6 +287,17 @@ These need user/PM decision before the depending unit can ship. Quote the source
 - **2026-05-17 — Health checks use Promise.race for the 5s timeout, not AbortController.** AbortController would be cleaner but the providers we check (postgres / redis / s3 / bedrock / soniox / resend) all use different abort-signal idioms; wrapping each correctly was more code than the Promise.race pattern + an explicit cleanup. The trade-off: a timed-out check may still complete in the background; that's harmless because the result is dropped at the surface layer. If a real provider goes haywire on connection-leak, revisit.
 - **2026-05-17 — SystemAnnouncement banner-render deferred.** The CRUD lands here; the actual "show banner across the app for matching orgs" surface lands in Unit 33+. Reasoning: render needs to gate on `(targetOrgIds.length === 0 || targetOrgIds.includes(currentOrgId))` AND on the schedule window AND on a per-user dismissal store — that's a separate UI workstream that doesn't gate first-paying-customer onboarding. Logging the rows is enough for v1.
 - **2026-05-17 — Wave 1 COMPLETE.** First paying customer can now be: provisioned (owner provisioning form, Unit 01), onboarded (self-onboarding wizard, Unit 01), recorded (capture, Unit 03), transcribed (Unit 04), AI-drafted (Unit 05), reviewed (Unit 05), signed (Unit 05), patient-instructed (Unit 05 post-sign artifacts), brought-back-with-context (Unit 06 brief), commitments-tracked-across-visits (Unit 06 follow-ups), copilot-assisted (Unit 07 Watch v0), admin-managed (Unit 08 sites/audit/org-settings), and BILLED (Unit 09 Stripe-stub seat allocation; real-mode wiring lands the day a real Stripe account is created).
+
+### Unit 10 (2026-05-17)
+
+- **2026-05-17 — SSE reconnect lives in a reusable hook, not bespoke in `/review`.** `useSseStream` exports the connection-status state machine + the exponential-backoff reconnect loop. The browser's built-in EventSource reconnect is opaque (no visibility into retry timing, no programmatic "give up" signal); the explicit close-and-recreate pattern gives us debuggable status states for surface chips. `/processing` is NOT migrated to the hook because that surface is short-lived (typically <90s) — the browser's built-in reconnect handles that fine. The hook is reserved for long-lived surfaces like `/review` where the clinician is editing for many minutes and a silently dropped channel is a real risk.
+- **2026-05-17 — Per-section diff captures `previousContent` in the worker, not server-side on the GET.** The diff endpoint can't reconstruct the previous content from anywhere else (the regenerate has already overwritten `draftJson[sectionId]`). The worker writes the snapshot into `_regenerations[].previousContent` at the moment of regenerate, so the diff endpoint is a pure read.
+- **2026-05-17 — `REGENERATION_HISTORY_CAP_PER_SECTION = 10`.** Keep ALL regeneration metadata indefinitely (the audit trail is small), but drop `previousContent` off entries older than the per-section cap. A long visit with many regenerates would otherwise accumulate large content snapshots in `inferenceLog`'s Json column. The cap is per-section so a single very-active section doesn't crowd out other sections' history. The diff endpoint returns explicit `previous_trimmed` 404 when an entry exists but its previousContent was dropped — the dialog surfaces a friendly empty state so the clinician sees "this was trimmed by the cap" instead of a generic error.
+- **2026-05-17 — Hand-rolled LCS line diff over the `diff` package.** ~50 lines of code vs. a 30 KB+ dependency for a surface that produces simple line-level segments. The package adds value when we need word- or character-level diff (Unit 14+ TipTap diff might warrant it); for the v1 paragraph-style sections, line diff is sufficient.
+- **2026-05-17 — FailureRecoveryBanner reuses the copilot-event endpoint instead of standing up a new audit ingress.** The endpoint's allowlist is shape-locked — extending it with `SECTION_REGEN_RETRY_BATCH` is a single-line change that preserves the PHI-free-by-construction posture (the metadata fields are still `surface | noteId | itemCount`). New audit endpoint would have duplicated all the schema-guard plumbing for one action.
+- **2026-05-17 — Batch retry is sequential, not parallel.** Bedrock rate limits + the LLM-cost model both favor serial. Per-row inline error feedback gives the clinician visibility into which retries failed without blocking the queue of remaining ones — a 503 on section 2 doesn't stop sections 3-5 from going through.
+- **2026-05-17 — `_sectionStats` is per-NOTE, not per-org.** v1 ships note-level observability; per-org/per-template aggregation is a Wave 3 ops console concern. The single-note grain is enough to spot a single visit's pipeline failure pattern; cross-visit trends need a different data shape (probably a separate `SectionAttempt` table indexed by orgId + day) and that's not Wave 2's problem.
+- **2026-05-17 — RECENT_LATENCY_CAP = 50 for the rolling window.** Smaller than a typical-visit attempt count (~20-30) means short-visit p50/p95 reflects the full visit; larger means cross-visit smoothing for high-volume notes. 50 is the compromise — single source of truth, easy to tune later. The window IS the data — once recentLatenciesMs[0] rotates out, the original timing is gone (totalAttempts/successCount/failureCount cumulative counters retain the long-horizon view).
 
 ### Pre-existing (foundational, from spec)
 
