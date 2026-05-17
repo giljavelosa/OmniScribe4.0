@@ -1,11 +1,13 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Loader2, Mic, MicOff, PhoneOff, Video } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { StatusBanner } from '@/components/ui/status-banner';
+import { encodeWavBlob } from '@/lib/audio/wav-encoder';
 import {
   TELEHEALTH_AUDIO_SAMPLE_RATE,
   TelehealthAudioPipeline,
@@ -46,8 +48,8 @@ type Props = {
  */
 export function TelehealthRoomShell({ noteId, scheduleId, sessionId, roomUrl, patient, brief }: Props) {
   void scheduleId;
-  void sessionId;
   void brief;
+  const router = useRouter();
 
   const [stage, setStage] = useState<Stage>('idle');
   const [error, setError] = useState<string | null>(null);
@@ -158,12 +160,64 @@ export function TelehealthRoomShell({ noteId, scheduleId, sessionId, roomUrl, pa
     setMuted(!track.enabled);
   }
 
-  function endCall() {
-    // Commit 5 fills in: complete-stream → end-session → router.push.
-    // For now: tear down the pipeline + mark stage so the UI shows
-    // "ending". The full handoff lands next.
+  async function endCall() {
+    if (stage === 'ending' || stage === 'ended') return;
     setStage('ending');
-    void pipelineRef.current?.stop();
+    setError(null);
+    const pipeline = pipelineRef.current;
+    try {
+      if (!pipeline) throw new Error('audio pipeline missing');
+
+      // 1. Stop pipeline first — closes WS, tears down audio, prevents
+      //    new samples from being retained while we're encoding.
+      await pipeline.stop();
+
+      // 2. Encode retained samples to a WAV. Note: if the call ended
+      //    before any audio flowed (mic denied, immediate end-click),
+      //    the WAV is header-only (44 bytes) which is still a valid
+      //    submission — complete-stream's empty-blob check is
+      //    `size === 0`, and 44 > 0.
+      const chunks = pipeline.drainRetainedSamples();
+      const wav = encodeWavBlob(chunks, TELEHEALTH_AUDIO_SAMPLE_RATE);
+
+      // 3. Hand the audio + transcript to the existing post-recording
+      //    pipeline (same endpoint the in-person flow uses). Flips Note
+      //    RECORDING → TRANSCRIBING and enqueues the transcription
+      //    worker; the rest of the note-generation flow takes over.
+      const form = new FormData();
+      form.append('audio', wav, 'telehealth.wav');
+      form.append('finalTranscript', JSON.stringify({ segments: transcript, partial }));
+      const completeRes = await fetch(`/api/notes/${noteId}/complete-stream`, {
+        method: 'POST',
+        body: form,
+      });
+      if (!completeRes.ok) {
+        throw new Error(`Saving the visit audio failed (${completeRes.status}). Please try ending the call again.`);
+      }
+
+      // 4. Flip the session to COMPLETED + destroy the Daily room. If
+      //    this fails after a successful complete-stream, the audio is
+      //    already durable — we navigate to /processing and surface a
+      //    background banner instead of blocking the clinician on the
+      //    end-call modal.
+      const endRes = await fetch(`/api/admin/telehealth/sessions/${sessionId}/end`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: 'clinician_ended' }),
+      });
+      if (!endRes.ok) {
+        // Best-effort log; don't fail the user-facing flow.
+        console.warn(`telehealth: end-session returned ${endRes.status}`);
+      }
+
+      // 5. Hand off to the standard post-call screen.
+      setStage('ended');
+      router.push(`/processing/${noteId}`);
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setStage('error');
+    }
   }
 
   return (
