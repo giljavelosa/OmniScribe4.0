@@ -340,6 +340,34 @@ describe('TelehealthAudioPipeline', () => {
     expect(pipeline.drainRetainedSamples()).toEqual([]);
   });
 
+  it('tracks sampleChunksProcessed + reconnectCount for the quality-metrics block', async () => {
+    const fetchImpl = vi.fn(async () =>
+      new Response(JSON.stringify({ data: realtimeKeyResponse() }), { status: 200 }),
+    ) as unknown as typeof fetch;
+    const wiring = fakeAudioWiring();
+    const pipeline = new TelehealthAudioPipeline({
+      fetchImpl,
+      wsConstructor: mockWebSocket(),
+      audioWiring: wiring,
+    });
+    await pipeline.start({ noteId: 'n1', ...fakeTracks() });
+    const ws = FakeSocket.instances[0]!;
+    ws.simulate({ open: () => {} });
+
+    wiring.pumps[0]!(new Int16Array([1, 2]));
+    wiring.pumps[1]!(new Int16Array([3]));
+    wiring.pumps[0]!(new Int16Array([4]));
+    expect(pipeline.getQualityMetrics()).toEqual({
+      sampleChunksProcessed: 3,
+      reconnectCount: 0,
+    });
+
+    // Force a reconnect cycle.
+    ws.close();
+    await vi.advanceTimersByTimeAsync(600);
+    expect(pipeline.getQualityMetrics().reconnectCount).toBe(1);
+  });
+
   it('wires only the clinician source when patientTrack is null', async () => {
     const fetchImpl = vi.fn(async () =>
       new Response(JSON.stringify({ data: realtimeKeyResponse() }), { status: 200 }),
