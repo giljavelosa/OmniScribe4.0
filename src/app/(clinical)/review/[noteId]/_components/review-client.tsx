@@ -1,12 +1,14 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Card, CardContent } from '@/components/ui/card';
 import { StatusBanner } from '@/components/ui/status-banner';
 import { PatientIdentityHeader } from '@/components/patients/patient-identity-header';
 import { SectionProgressStrip } from '@/components/notes/section-progress-strip';
 import { OpenFollowUpsCard, type CopilotFollowUp } from '@/components/copilot/cards/open-followups-card';
+import { SseStatusChip } from '@/components/ui/sse-status-chip';
+import { useSseStream } from '@/lib/sse/use-sse-stream';
 import { SectionAccordion } from './section-accordion';
 import { ReadinessPanel } from './readiness-panel';
 import {
@@ -62,27 +64,28 @@ export function ReviewClient({ noteId, initial, copilotFollowUps }: Props) {
   const router = useRouter();
   const [snap, setSnap] = useState<ReviewSnapshot>(initial);
 
-  // Live section + status updates from SSE (?include=sections — Unit 04's
-  // SSE diffs Note.inferenceLog._sectionStatus → SECTIONS event).
-  useEffect(() => {
-    const src = new EventSource(`/api/notes/${noteId}/stream?include=sections`);
-    let inFlight = false;
-    async function refetch() {
-      if (inFlight) return;
-      inFlight = true;
-      try {
-        const res = await fetch(`/api/notes/${noteId}`);
-        if (!res.ok) return;
-        const body = await res.json();
-        if (body?.data) setSnap((s) => mergeSnapshot(s, body.data));
-      } finally {
-        inFlight = false;
-      }
+  // Live section + status updates from SSE — uses useSseStream so transient
+  // disconnects don't silently freeze the surface (Unit 10).
+  const inFlightRef = useRef(false);
+  async function refetch() {
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
+    try {
+      const res = await fetch(`/api/notes/${noteId}`);
+      if (!res.ok) return;
+      const body = await res.json();
+      if (body?.data) setSnap((s) => mergeSnapshot(s, body.data));
+    } finally {
+      inFlightRef.current = false;
     }
-    src.addEventListener('STATUS', () => void refetch());
-    src.addEventListener('SECTIONS', () => void refetch());
-    return () => src.close();
-  }, [noteId]);
+  }
+  const { status: sseStatus } = useSseStream(`/api/notes/${noteId}/stream?include=sections`, {
+    enabled: snap.status !== 'SIGNED',
+    handlers: {
+      STATUS: () => void refetch(),
+      SECTIONS: () => void refetch(),
+    },
+  });
 
   // If status flips to SIGNED while we're on review, route the clinician to
   // /sign (or back to /review of the signed note depending on flow).
@@ -118,10 +121,17 @@ export function ReviewClient({ noteId, initial, copilotFollowUps }: Props) {
       )}
 
       <Card>
-        <CardContent className="py-3">
+        <CardContent className="py-3 flex items-center justify-between gap-3">
           <SectionProgressStrip cells={progress} />
+          <SseStatusChip status={sseStatus} />
         </CardContent>
       </Card>
+
+      {sseStatus === 'offline' && (
+        <StatusBanner variant="warning" title="Live updates offline">
+          Reconnect attempts failed. Refresh the page to reconnect — saved edits aren&apos;t lost.
+        </StatusBanner>
+      )}
 
       <div className="grid lg:grid-cols-[1fr_18rem] gap-4">
         <div className="space-y-3">
