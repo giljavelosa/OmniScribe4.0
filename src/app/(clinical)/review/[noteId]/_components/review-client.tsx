@@ -11,6 +11,7 @@ import { SseStatusChip } from '@/components/ui/sse-status-chip';
 import { useSseStream } from '@/lib/sse/use-sse-stream';
 import { SectionAccordion } from './section-accordion';
 import { ReadinessPanel } from './readiness-panel';
+import { FailureRecoveryBanner } from './failure-recovery-banner';
 import {
   deriveProgressStrip,
   isReadyForSign,
@@ -122,6 +123,20 @@ export function ReviewClient({ noteId, initial, copilotFollowUps }: Props) {
           content into each section manually, or tap Regenerate to retry.
         </StatusBanner>
       )}
+
+      {!isSigned && (() => {
+        const failed = snap.sections
+          .map((s) => ({
+            sectionId: s.id,
+            label: s.label,
+            status: snap.sectionStatus[s.id]?.status,
+            errorMessage: snap.sectionStatus[s.id]?.error?.message,
+          }))
+          .filter((s) => s.status === 'failed');
+        return failed.length > 0 ? (
+          <FailureRecoveryBanner noteId={noteId} failedSections={failed} />
+        ) : null;
+      })()}
 
       <Card>
         <CardContent className="py-3 flex items-center justify-between gap-3">
