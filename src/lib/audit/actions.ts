@@ -153,4 +153,10 @@ export type AuditAction =
   | 'TEMPLATE_UPDATED'
   | 'TEMPLATE_CLONED'
   | 'TEMPLATE_ARCHIVED'
-  | 'TEMPLATE_UNARCHIVED';
+  | 'TEMPLATE_UNARCHIVED'
+  // ---- Unit 14: Review screen polish + AI compliance flags ----
+  | 'FLAGS_ANALYZER_ENQUEUED'
+  | 'FLAGS_ANALYZED'
+  | 'FLAG_RESOLVED'
+  | 'FLAG_DISMISSED'
+  | 'SECTION_COPIED_TO_CLIPBOARD';

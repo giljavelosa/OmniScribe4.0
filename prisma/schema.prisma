@@ -816,6 +816,9 @@ model Note {
   originFollowUps  FollowUp[]  @relation("FollowUpOrigin")
   closingFollowUps FollowUp[]  @relation("FollowUpClosing")
 
+  // Unit 14 — AI compliance flags surfaced on /review.
+  reviewFlags ReviewFlag[]
+
   @@index([orgId, status])
   @@index([patientId, createdAt])
   @@index([patientId, status])
@@ -1020,4 +1023,64 @@ model SnapshotOverride {
   @@index([patientId, measureKey, supersededAt])
   @@index([episodeId, measureKey, supersededAt])
   @@index([orgId, supersededAt])
+}
+
+// =============================================================================
+// Unit 14 — AI compliance-flag system for /review.
+//
+// Flag severity (canonical):
+//   RED    — contradicts transcript (must resolve before sign)
+//   BLUE   — added specifics (clinician confirms or removes)
+//   YELLOW — inferred (clinician confirms or rephrases)
+//   GREEN  — verified by analyzer; surfaces as resolved-count only
+//
+// Lifecycle: OPEN → RESOLVED (with action) | DISMISSED. PHI-bearing fields
+// (claim / rationale / evidence / suggestion) are clinical content; only the
+// analyzer worker + the resolve route + the read endpoint touch them, all
+// org-scoped via assertOrgScoped.
+// =============================================================================
+
+enum ReviewFlagSeverity {
+  RED
+  BLUE
+  YELLOW
+  GREEN
+}
+
+enum ReviewFlagStatus {
+  OPEN
+  RESOLVED
+  DISMISSED
+}
+
+model ReviewFlag {
+  id                  String             @id @default(cuid())
+  noteId              String
+  note                Note               @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  orgId               String
+  sectionId           String
+  severity            ReviewFlagSeverity
+  status              ReviewFlagStatus   @default(OPEN)
+  /** AI-extracted claim from the draft section that triggered the flag. */
+  claim               String
+  /** Why the AI flagged it — short rationale. */
+  rationale           String
+  /** Transcript evidence snippet supporting (GREEN) or contradicting (RED)
+   *  the claim. May be null for BLUE/YELLOW. */
+  evidence            String?
+  /** Suggested replacement text (RED especially). */
+  suggestion          String?
+  /** AI confidence 0..1 — surfaces in UI as small percent. */
+  confidence          Float              @default(0.5)
+  /** Set when status flips to RESOLVED or DISMISSED. */
+  resolvedAt          DateTime?
+  resolvedByOrgUserId String?
+  /** 'ACCEPT_EDIT' | 'DISMISS_KEEP' | 'REGENERATE_SECTION' | 'AUTO_VERIFIED' */
+  resolutionAction    String?
+  resolutionNote      String?
+  createdAt           DateTime           @default(now())
+
+  @@index([noteId, status])
+  @@index([noteId, sectionId])
+  @@index([orgId, createdAt])
 }
