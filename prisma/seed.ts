@@ -383,6 +383,113 @@ async function main() {
     });
   }
 
+  // ---------------- Preset NoteTemplates (Unit 05) ----------------
+  // Four platform-level presets (orgId: null) — one per division except MEDICAL
+  // which gets two so the "General SOAP" + "Acute Care" pair shows the
+  // template picker working. The ai-generation worker auto-selects the first
+  // preset by createdAt when a note has no template assigned, so the SOAP
+  // template is intentionally created first within MEDICAL.
+  console.log('Seeding preset NoteTemplates …');
+
+  await prisma.noteTemplate.upsert({
+    where: { id: 'seed-tmpl-medical-soap' },
+    update: {},
+    create: {
+      id: 'seed-tmpl-medical-soap',
+      orgId: null,
+      name: 'General SOAP Note',
+      description: 'Classic Subjective / Objective / Assessment / Plan structure suitable for any general medical visit.',
+      division: Division.MEDICAL,
+      visibility: 'PUBLIC',
+      isPreset: true,
+      version: 1,
+      sectionSchema: {
+        sections: [
+          { id: 'subjective', label: 'Subjective', required: true, promptHint: 'Patient-reported history of present illness, symptoms, timeline, relevant context. Quote the patient sparingly.' },
+          { id: 'objective', label: 'Objective', required: true, promptHint: 'Vitals, exam findings, in-room measurements, observable behavior. No interpretation.' },
+          { id: 'assessment', label: 'Assessment', required: true, promptHint: 'Clinical impression and differential. Tie to documented findings.' },
+          { id: 'plan', label: 'Plan', required: true, promptHint: 'Medications, orders, education, follow-up. Be specific.' },
+        ],
+      },
+    },
+  });
+
+  await prisma.noteTemplate.upsert({
+    where: { id: 'seed-tmpl-medical-acute' },
+    update: {},
+    create: {
+      id: 'seed-tmpl-medical-acute',
+      orgId: null,
+      name: 'Acute Care Visit',
+      description: 'Focused acute-care template for urgent / same-day visits with a single presenting complaint.',
+      division: Division.MEDICAL,
+      visibility: 'PUBLIC',
+      isPreset: true,
+      version: 1,
+      sectionSchema: {
+        sections: [
+          { id: 'chief_complaint', label: 'Chief Complaint', required: true, promptHint: 'One sentence in the patient’s words or close paraphrase.' },
+          { id: 'hpi', label: 'History of Present Illness', required: true, promptHint: 'OPQRST when applicable. Relevant negatives.' },
+          { id: 'exam', label: 'Physical Exam', required: true, promptHint: 'Targeted exam to the chief complaint. Document pertinent negatives.' },
+          { id: 'assessment', label: 'Assessment', required: true, promptHint: 'Working impression. Differential if relevant.' },
+          { id: 'plan', label: 'Plan', required: true, promptHint: 'Treatment, return precautions, follow-up.' },
+          { id: 'patient_education', label: 'Patient Education', required: false, promptHint: 'What was explained to the patient and any handouts given.' },
+        ],
+      },
+    },
+  });
+
+  await prisma.noteTemplate.upsert({
+    where: { id: 'seed-tmpl-bh-session' },
+    update: {},
+    create: {
+      id: 'seed-tmpl-bh-session',
+      orgId: null,
+      name: 'Behavioral Health Session Note',
+      description: 'Therapy session note with risk assessment and intervention tracking.',
+      division: Division.BEHAVIORAL_HEALTH,
+      visibility: 'PUBLIC',
+      isPreset: true,
+      version: 1,
+      sensitivityDefault: 'STANDARD_CLINICAL',
+      sectionSchema: {
+        sections: [
+          { id: 'presenting_concern', label: 'Presenting Concern', required: true, promptHint: 'What the client brought into session today. Their words where useful; brief, non-interpretive.' },
+          { id: 'mental_status', label: 'Mental Status Exam', required: true, promptHint: 'Appearance, behavior, mood/affect, speech, thought process/content, perception, cognition, insight/judgment.' },
+          { id: 'risk_assessment', label: 'Risk Assessment', required: true, promptHint: 'SI/HI screening. If denied, document explicitly. If endorsed, document plan/means/intent + safety plan.' },
+          { id: 'interventions', label: 'Interventions', required: true, promptHint: 'Therapeutic interventions used this session (modality, techniques, client response).' },
+          { id: 'plan', label: 'Plan', required: true, promptHint: 'Between-session work, next session focus, referrals, medication coordination.' },
+          { id: 'collateral', label: 'Collateral / Coordination', required: false, promptHint: 'Communication with family, other providers, school/work, only if documented in session.' },
+        ],
+      },
+    },
+  });
+
+  await prisma.noteTemplate.upsert({
+    where: { id: 'seed-tmpl-rehab-daily' },
+    update: {},
+    create: {
+      id: 'seed-tmpl-rehab-daily',
+      orgId: null,
+      name: 'PT/OT Daily Note',
+      description: 'Outpatient rehab daily note with objective measures and goal-progress reporting.',
+      division: Division.REHAB,
+      visibility: 'PUBLIC',
+      isPreset: true,
+      version: 1,
+      sectionSchema: {
+        sections: [
+          { id: 'subjective', label: 'Subjective', required: true, promptHint: 'Pain rating, functional changes since last visit, patient report.' },
+          { id: 'objective_measures', label: 'Objective Measures', required: true, promptHint: 'ROM, MMT, special tests, outcome measures, gait/functional observations with quantitative values.' },
+          { id: 'treatment_performed', label: 'Treatment Performed', required: true, promptHint: 'Therapeutic exercises, manual techniques, modalities, education — with sets/reps/duration where applicable.' },
+          { id: 'patient_response', label: 'Patient Response', required: true, promptHint: 'How the patient tolerated treatment, immediate response, any adverse reactions.' },
+          { id: 'goal_progress', label: 'Goal Progress', required: true, promptHint: 'Update on each active LTG/STG — met / partially met / unchanged / regressed, with brief rationale.' },
+          { id: 'plan', label: 'Plan', required: true, promptHint: 'Next visit focus, HEP updates, frequency/duration changes, referrals.' },
+        ],
+      },
+    },
+  });
+
   // Sanity: generate a TOTP token against the seeded secret so devs know
   // their authenticator app will accept it.
   const token = await generateTotp({ secret: DEMO_ADMIN_MFA_SECRET });
