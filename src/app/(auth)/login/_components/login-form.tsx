@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { signIn, getSession } from 'next-auth/react';
 
@@ -59,12 +60,12 @@ export function LoginForm() {
       <div className="space-y-2">
         <div className="flex items-center justify-between">
           <Label htmlFor="password">Password</Label>
-          <a
+          <Link
             href="/password-reset/request"
             className="text-xs text-muted-foreground underline-offset-4 hover:underline"
           >
             Forgot password?
-          </a>
+          </Link>
         </div>
         <Input
           id="password"

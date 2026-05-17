@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useTransition } from 'react';
+import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -64,7 +65,7 @@ export function PasswordResetConfirmForm() {
     return (
       <StatusBanner variant="danger" title="Link expired">
         This password-reset link is no longer valid. Request a new one from{' '}
-        <a className="underline" href="/password-reset/request">password reset</a>.
+        <Link className="underline" href="/password-reset/request">password reset</Link>.
       </StatusBanner>
     );
   }
