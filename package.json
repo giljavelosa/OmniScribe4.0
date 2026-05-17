@@ -9,7 +9,7 @@
   "scripts": {
     "preflight": "node scripts/check-dev-deps.mjs",
     "dev": "next dev",
-    "dev:workers": "tsx watch src/workers/index.ts",
+    "dev:workers": "node --env-file=.env --import=tsx --watch src/workers/index.ts",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
