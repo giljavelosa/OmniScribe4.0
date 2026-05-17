@@ -4,11 +4,11 @@
 
 ## Current Phase
 
-- **Wave 0 — Foundation.** Unit 03 shipped (PR #4). Unit 02 shipped (PR #3). Unit 01 shipped (PR #2). Scaffold (PR #1).
+- **Wave 0 — Foundation.** Unit 04 shipped (PR #5). Unit 03 shipped (PR #4). Unit 02 shipped (PR #3). Unit 01 shipped (PR #2). Scaffold (PR #1).
 
 ## Current Goal
 
-- Land Unit 04 — Transcription Pipeline, per `context/specs/04-transcription-pipeline.md`. Awaiting user confirmation per Prompt A's stop-between-units contract.
+- Land Unit 05 — Note Generation & Sign, per `context/specs/05-note-generation-and-sign.md`. Awaiting user confirmation per Prompt B's stop-between-units contract.
 
 ## Completed
 
@@ -67,6 +67,19 @@
   - `/capture/[noteId]` (68-line orchestration only); `/prepare/[noteId]` now has three real capture-mode cards (Live → /capture, Upload → /api/notes/[id]/upload-audio, Paste → /api/notes/[id]/paste-transcript).
   - 7 new AuditAction values appended (REALTIME_KEY_ISSUED, RECORDING_STARTED/PAUSED/RESUMED/FINALIZED, AUDIO_UPLOADED, TRANSCRIPT_PASTED).
 
+- **2026-05-17 — Unit 04: Transcription Pipeline** (PR #5 — `feat(unit-04): transcription pipeline`).
+  - Schema: NoteStatus appends DRAFTING + INTERRUPTED. Note gains inferenceLog (Json?) + interruptedAt + lastWorkerError (PHI-free; class + message only).
+  - `src/lib/redis.ts` — ioredis singleton with `maxRetriesPerRequest: null` (required by BullMQ). HMR-safe globalThis cache.
+  - `src/lib/queue.ts` — 6 BullMQ Queue instances + typed enqueue helpers with stable jobIds (`transcription:{noteId}:{requestId}` etc.). Defaults: 3 attempts, exp backoff 5s/10s/20s; voice-id at 2 attempts (best-effort).
+  - `src/workers/index.ts` — worker fleet entry point. One Worker per queue. Real handlers for transcription + voice-id; log-only stubs for ai-generation / note-finalize / note-brief / post-sign-artifacts (each defers to later units). SIGTERM/SIGINT graceful shutdown.
+  - `src/services/transcription/clean.ts` — pure cleanRealtimeTranscript / cleanBatchTranscript / cleanPastedTranscript. Drop non-final partials, coalesce same-speaker runs, map Soniox speaker int → role enum (CLINICIAN/PATIENT/OTHER), normalize whitespace, return TranscriptClean shape. 9 unit tests.
+  - `SonioxService.transcribeBatch()` — POST audio to /v1/transcribe-async + poll. Stub mode (no SONIOX_API_KEY) returns a synthetic transcript so the pipeline exercises locally without a Soniox account.
+  - `transcription.worker.ts` — three branches (finalize-realtime-transcript / transcribe-uploaded-audio / cleanup-pasted-transcript). On success: writes transcriptClean, flips TRANSCRIBING → DRAFTING, audits TRANSCRIPT_FINALIZED + NOTE_STATUS_TRANSITIONED, enqueues ai-generation + voice-id. On unrecoverable failure (final attempt): marks INTERRUPTED + interruptedAt + lastWorkerError, audits NOTE_INTERRUPTED.
+  - `voice-id.worker.ts` — SKELETON (TitaNet + VoiceProfile not yet in kit). Validates note + transcript, audits VOICE_ID_SKIPPED with reason `voice_profile_not_yet_implemented`, never blocks ai-generation. Real impl when VoiceProfile model + TitaNet land.
+  - Capture endpoints (Unit 03) wired to enqueue: /complete-stream → finalize-realtime-transcript; /upload-audio → transcribe-uploaded-audio; /paste-transcript → cleanup-pasted-transcript (now also produces canonical TranscriptClean shape inline). Each writes a TRANSCRIPTION_JOB_ENQUEUED audit row.
+  - `GET /api/notes/[id]/stream` — SSE stream of Note lifecycle. Default mode emits STATUS events + closes on exit from TRANSCRIBING/DRAFTING; ?include=sections also diffs Note.inferenceLog._sectionStatus (wiring for Unit 05). 2s poll, 10min cap, 15s heartbeat. Race-safe (every enqueue/close wrapped to swallow client-disconnect throws).
+  - 7 new AuditAction values appended (NOTE_STATUS_TRANSITIONED, NOTE_INTERRUPTED, TRANSCRIPTION_JOB_ENQUEUED, TRANSCRIPT_FINALIZED, VOICE_ID_MATCHED, VOICE_ID_SKIPPED, VOICE_ID_FAILED).
+
 ## In Progress
 
 None.
@@ -75,9 +88,7 @@ None.
 
 In priority order:
 
-1. **Unit 04 — Transcription Pipeline** ([`context/specs/04-transcription-pipeline.md`](specs/04-transcription-pipeline.md)) — finalization + cleaning + voice-id fan-out + SSE status stream.
-5. **Unit 04 — Transcription Pipeline** ([`context/specs/04-transcription-pipeline.md`](specs/04-transcription-pipeline.md)) — finalization + cleaning + voice-id fan-out + SSE status stream.
-6. **Unit 05 — Note Generation & Sign** ([`context/specs/05-note-generation-and-sign.md`](specs/05-note-generation-and-sign.md)) — LLM abstraction + division prompts + section progress + review + sign + immutability + post-sign artifacts.
+1. **Unit 05 — Note Generation & Sign** ([`context/specs/05-note-generation-and-sign.md`](specs/05-note-generation-and-sign.md)) — LLM abstraction + division prompts + section progress + review + sign + immutability + post-sign artifacts.
 7. **Unit 06 — Prior-Context Brief** ([`context/specs/06-prior-context-brief.md`](specs/06-prior-context-brief.md)) — `NoteBrief` precompute + brief UI + `FollowUp` lifecycle.
 8. **Unit 07 — Encounter Copilot Watch v0** ([`context/specs/07-encounter-copilot-watch-v0.md`](specs/07-encounter-copilot-watch-v0.md)) — beacon + open-follow-ups + plan-for-today cards.
 9. **Unit 08 — Admin & Compliance Ready** ([`context/specs/08-admin-and-compliance-ready.md`](specs/08-admin-and-compliance-ready.md)) — Sites + Rooms CRUD, admin-initiated MFA reset + password reset, customer self-onboarding wizard, BAA admin UI.
@@ -142,6 +153,16 @@ These need user/PM decision before the depending unit can ship. Quote the source
 - **2026-05-17 — Browser sends raw PCM bytes to Soniox WS.** No JSON framing on the audio path — Soniox's documented protocol takes the `api_key` + config as the first JSON message then accepts raw Int16 LE PCM payloads. The AudioWorklet's `samples.buffer` is transferred to avoid a copy.
 - **2026-05-17 — Soniox temporary-key endpoint not available on the deployed tier.** Verified live: `POST /v1/auth/temporary-api-keys` returns 404, so `SonioxService.mintEphemeralKey` falls back to passing the long-lived key through to the browser. The key still goes only through `/api/notes/[id]/realtime-key` (rule 11), but loses the 60s TTL the spec assumed. If the Soniox plan is upgraded to a tier that exposes the endpoint, the fallback path becomes dead code and can be deleted. Documented + accepted.
 - **2026-05-17 — `npm run verify:providers`** added — exercises each configured provider (Soniox mint, S3 round-trip, Bedrock list-foundation-models, Resend /domains) and reports a green/red checklist. Used in dev + CI for sanity-checking key rotations.
+
+### Unit 04 (2026-05-17)
+
+- **2026-05-17 — Real handlers wrapped via dynamic import indirection in worker entry.** `src/workers/index.ts` imports thin wrapper modules (`transcription.worker.ts`, `voice-id.worker.ts`) that dynamically import the real handler at first invocation. Pattern lets Commit 2 stand up the fleet with stub handlers and Commit 4 land the real implementation in the same file path without forcing Commit 2 to know what's coming.
+- **2026-05-17 — Voice-id ships as a skeleton in Unit 04.** Real impl requires VoiceProfile model with `embedding vector(192)` + pgvector + TitaNet x-vector service — none of which exist in the kit yet. Skeleton audits VOICE_ID_SKIPPED with reason `voice_profile_not_yet_implemented` and never blocks ai-generation (voice-id is best-effort per spec §H). Replace with real match-speakers when TitaNet + VoiceProfile land in a later unit; the job-data contract is already in place.
+- **2026-05-17 — Note.lastWorkerError is PHI-free + capped at 500 chars.** Stores `${errorName}: ${errorMessage}` only — never transcript text, never patient identifiers. Truncated to keep audit metadata small even if a downstream SDK throws a multi-kB error.
+- **2026-05-17 — INTERRUPTED only on the FINAL BullMQ attempt.** Transient errors get the standard 3-attempt retry; the worker marks INTERRUPTED + writes lastWorkerError + audits NOTE_INTERRUPTED only on the last retry's catch, so a flaky Soniox request doesn't immediately surface "interrupted" to the clinician.
+- **2026-05-17 — /paste-transcript cleans inline.** Spec said write a transcriptClean directly; we now use `cleanPastedTranscript` to produce the canonical TranscriptClean shape (plaintext, structured, speakerCount, wordCount, durationMs, source). Worker's cleanup-pasted-transcript branch becomes a true pass-through; Unit 05 LLM prompts get the same shape regardless of capture mode.
+- **2026-05-17 — SSE handler bounds: 10min cap + 15s heartbeat.** A stalled note shouldn't tie up a connection forever; the client reopens on close. Heartbeat ":\n\n" comment beats proxy idle-timeout (Cloudflare 100s, Nginx 60s default).
+- **2026-05-17 — SSE includes an initial STATUS event** so /processing renders the current state synchronously rather than waiting for the first 2s poll tick.
 
 ### Pre-existing (foundational, from spec)
 
