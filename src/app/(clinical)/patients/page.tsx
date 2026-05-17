@@ -1,0 +1,142 @@
+import type { Metadata } from 'next';
+import Link from 'next/link';
+
+import { auth } from '@/lib/auth';
+import { prisma } from '@/lib/prisma';
+import { Division, Prisma } from '@prisma/client';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { PatientsSearchForm } from './_components/patients-search-form';
+import { AddPatientButton } from './_components/add-patient-button';
+
+export const dynamic = 'force-dynamic';
+export const metadata: Metadata = { title: 'Patients' };
+
+const PAGE_SIZE = 20;
+
+type SearchParamsShape = Promise<{ query?: string; division?: string; page?: string }>;
+
+export default async function PatientsPage({
+  searchParams,
+}: {
+  searchParams: SearchParamsShape;
+}) {
+  const { query, division, page } = await searchParams;
+  const session = await auth();
+  if (!session?.user?.orgId) return null;
+
+  const rawQuery = (query ?? '').trim();
+  const divisionFilter = (division as Division | undefined) ?? undefined;
+  const pageNum = Math.max(1, Number(page ?? '1') || 1);
+
+  const where: Prisma.PatientWhereInput = {
+    orgId: session.user.orgId,
+    isDeleted: false,
+    ...(divisionFilter ? { division: divisionFilter } : {}),
+    ...(rawQuery
+      ? {
+          OR: [
+            { lastName: { contains: rawQuery, mode: 'insensitive' } },
+            { firstName: { contains: rawQuery, mode: 'insensitive' } },
+            { mrn: { contains: rawQuery, mode: 'insensitive' } },
+          ],
+        }
+      : {}),
+  };
+
+  const [total, patients] = await Promise.all([
+    prisma.patient.count({ where }),
+    prisma.patient.findMany({
+      where,
+      orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
+      skip: (pageNum - 1) * PAGE_SIZE,
+      take: PAGE_SIZE,
+      include: {
+        encounters: { orderBy: { startedAt: 'desc' }, take: 1 },
+      },
+    }),
+  ]);
+
+  return (
+    <div className="mx-auto max-w-5xl px-4 py-6 space-y-4">
+      <div className="flex items-center justify-between gap-4">
+        <h1 className="text-2lg font-semibold">Patients</h1>
+        <AddPatientButton />
+      </div>
+      <PatientsSearchForm initialQuery={rawQuery} initialDivision={divisionFilter ?? ''} />
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-md">{total} result{total === 1 ? '' : 's'}</CardTitle>
+        </CardHeader>
+        <CardContent className="overflow-x-auto p-0">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
+                <th className="text-left px-4 py-2 font-medium">Name</th>
+                <th className="text-left px-4 py-2 font-medium">MRN</th>
+                <th className="text-left px-4 py-2 font-medium">DOB</th>
+                <th className="text-left px-4 py-2 font-medium">Sex</th>
+                <th className="text-left px-4 py-2 font-medium">Division</th>
+                <th className="text-left px-4 py-2 font-medium">Last visit</th>
+              </tr>
+            </thead>
+            <tbody>
+              {patients.map((p) => (
+                <tr key={p.id} className="border-b border-border last:border-b-0">
+                  <td className="px-4 py-3 font-medium">
+                    <Link href={`/patients/${p.id}`} className="hover:underline">
+                      {p.lastName}, {p.firstName}
+                    </Link>
+                  </td>
+                  <td className="px-4 py-3 font-mono">{p.mrn}</td>
+                  <td className="px-4 py-3">{p.dob.toLocaleDateString()}</td>
+                  <td className="px-4 py-3">{p.sex}</td>
+                  <td className="px-4 py-3">
+                    <StatusBadge variant="neutral" noIcon>{p.division}</StatusBadge>
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground">
+                    {p.encounters[0]?.startedAt
+                      ? p.encounters[0].startedAt.toLocaleDateString()
+                      : '—'}
+                  </td>
+                </tr>
+              ))}
+              {patients.length === 0 && (
+                <tr><td colSpan={6} className="px-4 py-6 text-center text-muted-foreground">No matches.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
+
+      {total > PAGE_SIZE && (
+        <nav className="flex items-center justify-between text-sm text-muted-foreground">
+          <span>
+            Page {pageNum} of {Math.ceil(total / PAGE_SIZE)}
+          </span>
+          <div className="flex gap-2">
+            {pageNum > 1 && (
+              <Link href={pageHref({ query: rawQuery, division: divisionFilter, page: pageNum - 1 })} className="underline">
+                ← Prev
+              </Link>
+            )}
+            {pageNum * PAGE_SIZE < total && (
+              <Link href={pageHref({ query: rawQuery, division: divisionFilter, page: pageNum + 1 })} className="underline">
+                Next →
+              </Link>
+            )}
+          </div>
+        </nav>
+      )}
+    </div>
+  );
+}
+
+function pageHref(args: { query: string; division: Division | undefined; page: number }) {
+  const u = new URLSearchParams();
+  if (args.query) u.set('query', args.query);
+  if (args.division) u.set('division', args.division);
+  u.set('page', String(args.page));
+  return `/patients?${u.toString()}`;
+}
