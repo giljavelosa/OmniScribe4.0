@@ -77,7 +77,11 @@ export type AudioWiring = {
 export type StartOptions = {
   noteId: string;
   clinicianTrack: MediaStreamTrack;
-  patientTrack: MediaStreamTrack;
+  /** Patient's inbound WebRTC audio track. Optional: v1 ships before the
+   *  Daily.co SDK is wired, so the room surface can pass null to run
+   *  clinician-only. When the real-mode SDK integration lands, pass the
+   *  Daily participant's persistentTrack — no other change required. */
+  patientTrack: MediaStreamTrack | null;
 };
 
 export type PipelineCallbacks = {
@@ -196,10 +200,11 @@ export class TelehealthAudioPipeline {
   }
 
   async #wireBothSources(opts: StartOptions): Promise<void> {
-    for (const { label, track } of [
-      { label: 'clinician' as const, track: opts.clinicianTrack },
-      { label: 'patient' as const, track: opts.patientTrack },
-    ]) {
+    const tracks: Array<{ label: SourceLabel; track: MediaStreamTrack }> = [
+      { label: 'clinician', track: opts.clinicianTrack },
+    ];
+    if (opts.patientTrack) tracks.push({ label: 'patient', track: opts.patientTrack });
+    for (const { label, track } of tracks) {
       const disconnect = await this.#audioWiring.wireSource({
         label,
         track,

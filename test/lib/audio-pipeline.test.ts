@@ -340,6 +340,25 @@ describe('TelehealthAudioPipeline', () => {
     expect(pipeline.drainRetainedSamples()).toEqual([]);
   });
 
+  it('wires only the clinician source when patientTrack is null', async () => {
+    const fetchImpl = vi.fn(async () =>
+      new Response(JSON.stringify({ data: realtimeKeyResponse() }), { status: 200 }),
+    ) as unknown as typeof fetch;
+    const wiring = fakeAudioWiring();
+    const pipeline = new TelehealthAudioPipeline({
+      fetchImpl,
+      wsConstructor: mockWebSocket(),
+      audioWiring: wiring,
+    });
+    const tracks = fakeTracks();
+    await pipeline.start({
+      noteId: 'n1',
+      clinicianTrack: tracks.clinicianTrack,
+      patientTrack: null,
+    });
+    expect(wiring.pumps.length).toBe(1);
+  });
+
   it('does not retain samples by default', async () => {
     const fetchImpl = vi.fn(async () =>
       new Response(JSON.stringify({ data: realtimeKeyResponse() }), { status: 200 }),

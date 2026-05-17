@@ -7,7 +7,7 @@ import type { AuditAction } from '@/lib/audit/actions';
 
 export const runtime = 'nodejs';
 
-const SURFACES = ['prepare', 'capture', 'review'] as const;
+const SURFACES = ['prepare', 'capture', 'review', 'telehealth-room'] as const;
 // Client-side fire-and-forget audit ingress. Each action is shape-locked
 // here at the route boundary so PHI can't be smuggled through the
 // metadata fields. Adding new actions: extend this allowlist AND update
@@ -25,6 +25,11 @@ const ALLOWED_ACTIONS: ReadonlyArray<AuditAction> = [
   // itemCount carries the character count of what was copied (no
   // content; the route's schema only accepts numbers).
   'SECTION_COPIED_TO_CLIPBOARD',
+  // Unit 17 — telehealth audio pipeline drained its reconnect buffer
+  // after a WS reopen. Fired by the room shell on the pipeline's
+  // onReconnected callback. itemCount carries the count of buffered
+  // chunks replayed.
+  'TELEHEALTH_AUDIO_RECONNECTED',
 ];
 
 const bodySchema = z.object({
