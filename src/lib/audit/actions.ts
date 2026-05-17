@@ -180,4 +180,13 @@ export type AuditAction =
   // fails one of (mic / network / browser_compat). Metadata captures the
   // check name + a short PHI-free reason; gives ops visibility into the
   // common setup failures so the support playbook can address them.
-  | 'TELEHEALTH_PRECALL_CHECK_FAILED';
+  | 'TELEHEALTH_PRECALL_CHECK_FAILED'
+  // ---- Unit 19: FHIR / SMART OAuth2 auth foundations (Wave 4 / F1) ----
+  // Five actions covering the SMART provider-launched OAuth handshake +
+  // token lifecycle. All PHI-free — patient identifiers from the launch
+  // context are EHR-side, not HIPAA Safe Harbor PHI.
+  | 'FHIR_LAUNCH_INITIATED'
+  | 'FHIR_AUTH_GRANTED'
+  | 'FHIR_AUTH_FAILED'
+  | 'FHIR_TOKEN_REFRESHED'
+  | 'FHIR_DISCONNECTED';
