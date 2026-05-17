@@ -4,11 +4,11 @@
 
 ## Current Phase
 
-- **Wave 0 — Foundation.** Unit 04 shipped (PR #5). Unit 03 shipped (PR #4). Unit 02 shipped (PR #3). Unit 01 shipped (PR #2). Scaffold (PR #1).
+- **Wave 0 — Foundation, COMPLETE end-to-end.** Unit 05 shipped (PR #6 — branch `feat/unit-05-note-generation-sign`). Unit 04 shipped (PR #5). Unit 03 shipped (PR #4). Unit 02 shipped (PR #3). Unit 01 shipped (PR #2). Scaffold (PR #1). Wave 0 (Units 01–05) is now a working end-to-end medical AI scribe: schedule → capture → transcribe → AI draft → review → sign → post-sign artifacts.
 
 ## Current Goal
 
-- Land Unit 05 — Note Generation & Sign, per `context/specs/05-note-generation-and-sign.md`. Awaiting user confirmation per Prompt B's stop-between-units contract.
+- Await user confirmation before starting Unit 06 — Prior-Context Brief, per Prompt B's stop-between-units contract.
 
 ## Completed
 
@@ -80,6 +80,19 @@
   - `GET /api/notes/[id]/stream` — SSE stream of Note lifecycle. Default mode emits STATUS events + closes on exit from TRANSCRIBING/DRAFTING; ?include=sections also diffs Note.inferenceLog._sectionStatus (wiring for Unit 05). 2s poll, 10min cap, 15s heartbeat. Race-safe (every enqueue/close wrapped to swallow client-disconnect throws).
   - 7 new AuditAction values appended (NOTE_STATUS_TRANSITIONED, NOTE_INTERRUPTED, TRANSCRIPTION_JOB_ENQUEUED, TRANSCRIPT_FINALIZED, VOICE_ID_MATCHED, VOICE_ID_SKIPPED, VOICE_ID_FAILED).
 
+- **2026-05-17 — Unit 05: Note Generation & Sign** (PR #6 — `feat(unit-05): note generation & sign`).
+  - Schema: NoteStatus appends DRAFT / REVIEWING / SIGNED / TRANSFERRED / PENDING_REVIEW (append-only, rule 2). New `NoteArtifactKind` enum (PATIENT_INSTRUCTIONS / REFERRAL_LETTER). Note gains draftJson, finalJson (IMMUTABLE post-SIGNED, rule 3), templateId+template, templateVersion, noteStyle, sensitivityLevel, signedAt, signedByUserId, backfilledAt, backfillReason, artifacts relation. New `NoteTemplate` model (sectionSchema Json, visibility, isPreset, version). New `NoteArtifact` model.
+  - `src/services/llm/` — provider abstraction (rule 6 sole AI ingress). `BedrockService` (InvokeModel + InvokeModelWithResponseStream, bearer-token via `AWS_BEARER_TOKEN_BEDROCK`, stub mode when token/model absent). `phi-guard.ts` PHI_ALLOWED_PROVIDERS = ['bedrock', 'vllm'] enforced by `assertProviderAllowedForPHI` in the router wrapper. 4 unit tests on the guard.
+  - Division-aware master prompts: `note-medical-prompt.ts`, `note-behavioral-health-prompt.ts`, `note-rehab-master-prompt.ts` — each codifies clinician voice + attestation (rule 20) + no-advice safety (rule 24) + data provenance + JSON output schema. Dispatched by `buildMasterPrompt(input)` via `buildSharedUserBody`. Per-section streaming via `buildSectionPrompt`. PHI-aware `projectPatientForPrompt` / `projectEpisodeForPrompt` (NEVER projects DOB / SSN / phone / email).
+  - `src/workers/ai-generation/handler.ts` — generate-note loops sections, marks _sectionStatus generating → populated/failed in `Note.inferenceLog`, merges into `draftJson`. Continues on per-section failure (partial drafts still useful). regenerate-section single-section path with `_regenerations` audit trail. Refuses if status === SIGNED. Auto-selects first preset template for note division when none assigned.
+  - APIs: `GET /api/notes/[id]` returns Note + template + patient + sections + progress + readyForSign + draftJson + finalJson (audits PATIENT_VIEWED). `PATCH /api/notes/[id]/sections/[sectionId]` writes draftJson[sectionId].content + marks status=edited + audits SECTION_EDITED. `POST /api/notes/[id]/regenerate-section` enqueues ai-generation with `overwriteEdited` confirmation flow (409 overwrite_requires_confirm when section already edited).
+  - `/processing/[noteId]` reassurance surface — SSE-subscribed, `ProcessingIndicator` + escalating empathy copy (4 tiers <15s / 15-45s / 45-90s / >90s), INTERRUPTED recovery banner, auto-routes to /review on DRAFT/REVIEWING/SIGNED. Capture flows (live + upload + paste) all push to /processing instead of refreshing in place.
+  - `/review/[noteId]` editing surface — SSE refetches on STATUS/SECTIONS events. `SectionAccordion` with 1s debounce auto-save, regenerate button with `<AlertDialog>` confirm (rule 22). `ReadinessPanel` sticky sidebar surfacing required-section completeness + a Continue-to-sign CTA gated on `isReadyForSign(cells)`. `SectionProgressStrip` (○ ⟳ ● ✏ ⚠) component for the per-section state glyph.
+  - `/sign/[noteId]` final preview + MFA reverify + sign CTA. `POST /api/notes/[id]/sign` is THE SOLE write path for finalJson (rule 3 — grep-enforced). Re-verifies TOTP (D2 always-required for sensitive actions, audits MFA_VERIFIED + MFA_VERIFY_FAILED). Inside one transaction: status=SIGNED + finalJson=canonicalize(draftJson) + signedAt + signedByUserId. Outside the tx: enqueues note-brief (Unit 06) + post-sign-artifacts (PATIENT_INSTRUCTIONS always; REFERRAL_LETTER on `/\brefer\w*/i` hint). Refuses 409 already_signed on SIGNED/TRANSFERRED, 409 not_ready on incomplete sections, 401 mfa_required / invalid_mfa.
+  - `src/workers/post-sign-artifacts/handler.ts` — Haiku for patient instructions (plain-language 6th-grade, JSON `{ plainLanguage, bulletPoints, whatToWatchFor, whenToCallUs }` with safety constraint forbidding invented dosages/red-flags), Sonnet for referral letter (JSON `{ recipient, subject, body }` defaulting recipient to "General — please direct as appropriate"). Idempotent on (noteId, kind); failures bubble for BullMQ retry; PHI-free audit metadata.
+  - Seed adds 4 platform-level preset NoteTemplates (orgId null): General SOAP + Acute Care Visit (MEDICAL), Behavioral Health Session (BH), PT/OT Daily Note (REHAB). Each section carries a promptHint surfaced by the division master prompts.
+  - 14 new AuditAction values appended (NOTE_GENERATION_*, SECTION_*, NOTE_SIGN_OPENED, NOTE_SIGNED, NOTE_TEMPLATE_SELECTED, NOTE_BRIEF_ENQUEUED, POST_SIGN_ARTIFACT_*).
+
 ## In Progress
 
 None.
@@ -88,8 +101,7 @@ None.
 
 In priority order:
 
-1. **Unit 05 — Note Generation & Sign** ([`context/specs/05-note-generation-and-sign.md`](specs/05-note-generation-and-sign.md)) — LLM abstraction + division prompts + section progress + review + sign + immutability + post-sign artifacts.
-7. **Unit 06 — Prior-Context Brief** ([`context/specs/06-prior-context-brief.md`](specs/06-prior-context-brief.md)) — `NoteBrief` precompute + brief UI + `FollowUp` lifecycle.
+1. **Unit 06 — Prior-Context Brief** ([`context/specs/06-prior-context-brief.md`](specs/06-prior-context-brief.md)) — `NoteBrief` precompute + brief UI + `FollowUp` lifecycle.
 8. **Unit 07 — Encounter Copilot Watch v0** ([`context/specs/07-encounter-copilot-watch-v0.md`](specs/07-encounter-copilot-watch-v0.md)) — beacon + open-follow-ups + plan-for-today cards.
 9. **Unit 08 — Admin & Compliance Ready** ([`context/specs/08-admin-and-compliance-ready.md`](specs/08-admin-and-compliance-ready.md)) — Sites + Rooms CRUD, admin-initiated MFA reset + password reset, customer self-onboarding wizard, BAA admin UI.
 
@@ -103,7 +115,7 @@ These need user/PM decision before the depending unit can ship. Quote the source
 
 1. **Authentication seed data** — what test users should `prisma db seed` create besides `admin@demo.local` and `clinician@demo.local`? Suggest: at least one VIEWER, one ORG_ADMIN, one SITE_ADMIN, and one PLATFORM_OWNER for owner-console testing. Decide before completing Unit 01.
 
-2. **Default templates to seed** — which preset templates ship in the initial seed? Suggest: 2 per division (one for new-patient intake, one for established-patient progress) — total 6 CMS-default templates. Decide before completing Unit 05.
+2. ~~**Default templates to seed**~~ — RESOLVED in Unit 05 (4 platform-level presets: 2 MEDICAL + 1 BH + 1 REHAB). See Architecture Decisions / Unit 05 for the rationale on shipping a leaner set than the spec's "2 per division" suggestion.
 
 3. **Watch v0 card content scope** — Watch v0 includes both open-follow-ups + plan-for-today cards. Should they ship as one PR or sequentially? Recommend one PR (they share the same data source); decide before starting Unit 07.
 
@@ -111,7 +123,7 @@ These need user/PM decision before the depending unit can ship. Quote the source
 
 5. **FHIR SMART launch model** — provider-launched per-clinician or per-org for v1? Affects token storage shape + consent UX. Decide before Wave 4 (Unit 19).
 
-6. **Default note style preference** — initial value for `OrgUser.preferredNoteStyle`. Suggest `HYBRID`. Decide before completing Unit 05.
+6. ~~**Default note style preference**~~ — RESOLVED in Unit 05 (Note.noteStyle defaults to HYBRID per the schema; preset templates do not pin a style so the per-note default applies).
 
 7. **Customer self-onboarding wizard placement** — single 4-step wizard (recommended) or split across pages with progress bar? Decide before completing Unit 08.
 
@@ -163,6 +175,20 @@ These need user/PM decision before the depending unit can ship. Quote the source
 - **2026-05-17 — /paste-transcript cleans inline.** Spec said write a transcriptClean directly; we now use `cleanPastedTranscript` to produce the canonical TranscriptClean shape (plaintext, structured, speakerCount, wordCount, durationMs, source). Worker's cleanup-pasted-transcript branch becomes a true pass-through; Unit 05 LLM prompts get the same shape regardless of capture mode.
 - **2026-05-17 — SSE handler bounds: 10min cap + 15s heartbeat.** A stalled note shouldn't tie up a connection forever; the client reopens on close. Heartbeat ":\n\n" comment beats proxy idle-timeout (Cloudflare 100s, Nginx 60s default).
 - **2026-05-17 — SSE includes an initial STATUS event** so /processing renders the current state synchronously rather than waiting for the first 2s poll tick.
+
+### Unit 05 (2026-05-17)
+
+- **2026-05-17 — Bedrock stub mode for dev.** Same pattern as Soniox + S3: when `AWS_BEARER_TOKEN_BEDROCK` is absent OR `BEDROCK_MODEL_ID` is still the `...` placeholder, `BedrockService` returns a synthetic JSON response so the ai-generation + post-sign-artifacts workers exercise end-to-end without a live Bedrock account. The PHI guard still runs (a stubbed Bedrock is still in the PHI allowlist; openai/openrouter are not). Stub `stub: true` flag is included in audit metadata so a stub result is never mistaken for a real one in production logs.
+- **2026-05-17 — Section status JSON lives in `Note.inferenceLog._sectionStatus`.** PHI-free by construction — only stores `{ status, lastGeneratedAt, model, latencyMs, tokensIn, tokensOut, error? }` per section. Same Json column already holds worker retry counts + transitions; consolidating in one column keeps the schema lean. A separate model would be cleaner long-term; revisit if section-level analytics warrant it.
+- **2026-05-17 — Auto-template selection on first AI generation.** The ai-generation worker picks the first preset `NoteTemplate` for the note's division (orderBy createdAt asc) when `note.templateId` is null. Spec hinted at a clinician-driven picker in /review; we ship the auto-pick now because the clinician can still override mid-review by editing sections directly, and the alternative (block AI generation pending a picker) breaks the "Start Drafting → walk to next room" flow that drove much of Unit 03's design.
+- **2026-05-17 — Section regeneration uses the same `ai-generation` queue with a `regenerate-section` discriminator.** Rule 18 prohibits standing up a second BullMQ queue when a discriminator on an existing queue serves the same purpose. Confirmation flow (clinician edited the section first) lives at the API layer (409 overwrite_requires_confirm), not in the worker.
+- **2026-05-17 — `Note.finalJson` written in ONE place: `POST /api/notes/[id]/sign`.** Enforced by manual grep + by the comment-as-contract at the top of the route file. Anti-regression rule 3: this is the load-bearing immutability invariant for the entire scribe — if any future code path adds a second write, three-lens evaluation (compliance + auditor) fails immediately.
+- **2026-05-17 — Post-sign artifacts enqueued OUTSIDE the sign transaction.** A Redis hiccup must not roll back a signed note. Pattern: commit the sign, audit NOTE_SIGNED, THEN enqueue. If the enqueue fails the note is still signed (correct) and we can re-enqueue manually; if it succeeded but the worker fails, BullMQ retries 3× then surfaces a POST_SIGN_ARTIFACT_GENERATION_FAILED audit row for ops triage.
+- **2026-05-17 — Referral letter heuristic = `/\brefer\w*/i.test(content)`.** Cheap and conservative: false positives generate one unused letter (low cost — Sonnet call on a few sections of text), false negatives mean the clinician fires the letter manually. A structured "Plan.referrals" field in the section schema would be a cleaner signal; revisit when a real customer's referral volume warrants it.
+- **2026-05-17 — Patient instructions targets a 6th-grade reading level + bans inventing dosages.** The artifact is HANDED to the patient — system prompt is explicit about what the model may NOT do (no new dosages, no new red flags, no diagnostic disclosure beyond the signed note). This is the strongest safety-rail the AI artifact pipeline ships with, because the patient cannot verify the instructions against their chart.
+- **2026-05-17 — 4 platform-level preset NoteTemplates seeded (orgId null), not 6.** Spec suggested "2 per division" (6 total). Shipped 4 (2 MEDICAL + 1 BH + 1 REHAB) — the BH + REHAB workflows each have a single dominant note shape per division, and extra templates would dilute the default. Adding more is a one-PR migration when a real customer asks.
+- **2026-05-17 — `NoteArtifact` idempotency by (noteId, kind) at the worker, not the schema.** No unique constraint because a future workflow may legitimately regenerate artifacts (e.g., clinician edits an addendum). The worker skips + audits POST_SIGN_ARTIFACT_SKIPPED when one already exists; a future "regenerate artifact" path will delete-then-enqueue.
+- **2026-05-17 — TipTap deferred to Unit 14.** Spec mentioned TipTap for the review editor; we ship `<Textarea>` with 1s debounce auto-save now. TipTap brings a non-trivial bundle + a new mental model for content storage (ProseMirror JSON vs. plain string). Unit 14 is where compliance-flag inline annotations land and TipTap pays for itself.
 
 ### Pre-existing (foundational, from spec)
 
