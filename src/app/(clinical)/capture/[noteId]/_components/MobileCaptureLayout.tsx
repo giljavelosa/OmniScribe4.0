@@ -10,11 +10,25 @@ import { PriorContextPanel } from './PriorContextPanel';
 import { LiveNotePanel } from './LiveNotePanel';
 import { RecordingControls } from './RecordingControls';
 import { useTranscript } from '../_hooks/capture-state';
+import type { PriorContextBriefContent } from '@/types/brief';
+
+type LiveFollowUp = {
+  id: string;
+  text: string;
+  status: 'OPEN' | 'MET' | 'CARRIED' | 'DROPPED' | 'CLOSED_BY_DISCHARGE';
+  source: { noteId: string; date: string };
+};
 
 type Props = {
   noteId: string;
   patientHeader: ReactNode;
   stubBanner: ReactNode;
+  brief: PriorContextBriefContent | null;
+  initialOpenFollowUps: LiveFollowUp[];
+  patientDisplayName: string;
+  patientId: string;
+  nowMs: number;
+  hasPriorSignedNote: boolean;
 };
 
 /**
@@ -22,7 +36,17 @@ type Props = {
  * History / Setup. Pulsing dot on unviewed tabs when content updates while
  * a different tab is active.
  */
-export function MobileCaptureLayout({ noteId, patientHeader, stubBanner }: Props) {
+export function MobileCaptureLayout({
+  noteId,
+  patientHeader,
+  stubBanner,
+  brief,
+  initialOpenFollowUps,
+  patientDisplayName,
+  patientId,
+  nowMs,
+  hasPriorSignedNote,
+}: Props) {
   const [active, setActive] = useState<'transcript' | 'note' | 'history' | 'setup'>('transcript');
   const transcriptCountRef = useRef(0);
   const [transcriptDirty, setTranscriptDirty] = useState(false);
@@ -80,13 +104,21 @@ export function MobileCaptureLayout({ noteId, patientHeader, stubBanner }: Props
         <TabsContent value="note" className="flex-1 p-2 min-h-0">
           <LiveNotePanel />
         </TabsContent>
-        <TabsContent value="history" className="flex-1 p-2 min-h-0">
-          <p className="text-sm text-muted-foreground p-2">
-            Visit history lands with the prior-context brief in Unit 06.
-          </p>
+        <TabsContent value="history" className="flex-1 p-2 min-h-0 overflow-y-auto">
+          <PriorContextPanel
+            brief={brief}
+            initialOpenFollowUps={initialOpenFollowUps}
+            patientDisplayName={patientDisplayName}
+            patientId={patientId}
+            nowMs={nowMs}
+            hasPriorSignedNote={hasPriorSignedNote}
+          />
         </TabsContent>
         <TabsContent value="setup" className="flex-1 p-2 min-h-0">
-          <PriorContextPanel />
+          <p className="text-sm text-muted-foreground p-2">
+            Visit setup (template + style) is configured on /prepare. This tab
+            will surface mid-visit adjustments in a later unit.
+          </p>
         </TabsContent>
       </Tabs>
 
