@@ -4,11 +4,11 @@
 
 ## Current Phase
 
-- **Wave 0 — Foundation.** Unit 02 shipped (PR #3). Unit 01 shipped (PR #2). Scaffold (PR #1).
+- **Wave 0 — Foundation.** Unit 03 shipped (PR #4). Unit 02 shipped (PR #3). Unit 01 shipped (PR #2). Scaffold (PR #1).
 
 ## Current Goal
 
-- Land Unit 03 — Capture & Recording, per `context/specs/03-capture-recording.md`. Awaiting user confirmation per Prompt A's stop-between-units contract.
+- Land Unit 04 — Transcription Pipeline, per `context/specs/04-transcription-pipeline.md`. Awaiting user confirmation per Prompt A's stop-between-units contract.
 
 ## Completed
 
@@ -51,6 +51,22 @@
   - `/prepare/[noteId]` minimal server-rendered placeholder (real prepare surface lands in Unit 03).
   - 20 new AuditAction values appended (PATIENT_*, DEPARTMENT_*, SCHEDULE_*, ENCOUNTER_*, etc.).
 
+- **2026-05-17 — Unit 03: Capture & Recording** (PR #4 — `feat(unit-03): capture & recording`).
+  - Schema: NoteStatus appends (RECORDING, PAUSED, TRANSCRIBING; rest in Unit 04/05); new `CaptureMode` enum (LIVE/UPLOADED/PASTED); Note gains `captureMode`, `audioFileKey`, `transcriptRaw`, `transcriptClean`; new `AudioSegment` model (soft-delete only, rule 7).
+  - `src/services/transcription/SonioxService.ts` — THE sole path to Soniox (rule 11). Mints ephemeral STT-WS-only keys (60s TTL); stub mode when SONIOX_API_KEY unset; `assertSonioxAllowedForPHI` rule-17 gate. Real-time config locks `enable_speaker_diarization: true` + `audio_format: pcm_s16le` (rule 12).
+  - `src/lib/s3/client.ts` — S3 put + presigned GET helpers with local-fs stub (writes to `./tmp/audio/` when S3_AUDIO_BUCKET unset).
+  - `public/audio/pcm-worklet.js` — 16,000 Hz mono Int16 LE AudioWorklet (rule 12 locked here).
+  - APIs (all `requireFeatureAccess('NOTE_CREATE')`, ownership check, org-scoped, audit-logged):
+    - `POST /api/notes/[id]/realtime-key` — mints ephemeral key, flips PREPARING → RECORDING on first mint, audits REALTIME_KEY_ISSUED + RECORDING_STARTED.
+    - `POST /api/notes/[id]/complete-stream` — multipart finalize, uploads WAV to S3, creates AudioSegment, writes transcriptRaw, transitions → TRANSCRIBING, audits RECORDING_FINALIZED.
+    - `POST /api/notes/[id]/upload-audio` — UPLOADED mode, 200 MB cap, mime allowlist.
+    - `POST /api/notes/[id]/paste-transcript` — PASTED mode, writes transcriptClean directly.
+    - `POST /api/notes/[id]/recording-state` — pause/resume audit hook, flips RECORDING ⇄ PAUSED.
+  - `CaptureStateProvider` (single source of truth) — AudioWorklet + WebSocket lifecycle, RMS smoothing, transcript state, pipeline teardown on unmount. Granular hooks (`useRecordingState`, `useAudioLevel`, `useTranscript`, `useCaptureControls`, `useStubBanner`) so each component subscribes to only what it needs.
+  - 9 capture components — none over 120 lines, total 1066 lines across 12 files (vs. prior prototype's 2,245-line monolith). Honors all design-critique-capture-flow.md findings: single RecordingStatus source of truth, correct button polarity (Start Drafting loud pre-draft, Finish & Review loud post-draft, Finish never red), AlertDialog leave-confirm (never native confirm), AudioLevelBars reading the shared level state.
+  - `/capture/[noteId]` (68-line orchestration only); `/prepare/[noteId]` now has three real capture-mode cards (Live → /capture, Upload → /api/notes/[id]/upload-audio, Paste → /api/notes/[id]/paste-transcript).
+  - 7 new AuditAction values appended (REALTIME_KEY_ISSUED, RECORDING_STARTED/PAUSED/RESUMED/FINALIZED, AUDIO_UPLOADED, TRANSCRIPT_PASTED).
+
 ## In Progress
 
 None.
@@ -59,7 +75,7 @@ None.
 
 In priority order:
 
-1. **Unit 03 — Capture & Recording** ([`context/specs/03-capture-recording.md`](specs/03-capture-recording.md)) — browser AudioWorklet + Soniox ephemeral key + capture page (built per design-critique findings from day one).
+1. **Unit 04 — Transcription Pipeline** ([`context/specs/04-transcription-pipeline.md`](specs/04-transcription-pipeline.md)) — finalization + cleaning + voice-id fan-out + SSE status stream.
 5. **Unit 04 — Transcription Pipeline** ([`context/specs/04-transcription-pipeline.md`](specs/04-transcription-pipeline.md)) — finalization + cleaning + voice-id fan-out + SSE status stream.
 6. **Unit 05 — Note Generation & Sign** ([`context/specs/05-note-generation-and-sign.md`](specs/05-note-generation-and-sign.md)) — LLM abstraction + division prompts + section progress + review + sign + immutability + post-sign artifacts.
 7. **Unit 06 — Prior-Context Brief** ([`context/specs/06-prior-context-brief.md`](specs/06-prior-context-brief.md)) — `NoteBrief` precompute + brief UI + `FollowUp` lifecycle.
@@ -115,6 +131,15 @@ These need user/PM decision before the depending unit can ship. Quote the source
 - **2026-05-17 — Department.delete is hard-delete with 409 in_use guard, not soft-archive.** Refuses 409 if any enrollment / encounter / episode / intake references it. Departments rarely deactivate in normal operation; if it becomes a pain point, Unit 11 (episode maturity) may add a soft-archive flag. Documented so a future agent doesn't add isArchived without considering the use-case.
 - **2026-05-17 — Patient cascade behavior.** Nested rows (addresses, coverages, emergency contacts, guarantors, consents, communication prefs) onDelete: Cascade from Patient. The Patient row itself is never hard-deleted (isDeleted soft-delete is the only retention-compliant path). Acceptable because Patient.isDeleted gates retrieval — Unit 11/12 may revisit if cascade behavior surprises anyone.
 - **2026-05-17 — Patient search uses Prisma contains+insensitive, not pg_trgm.** Spec said "trigram match." Postgres pg_trgm extension would require an extra migration step + a separate query path. Contains+insensitive satisfies the < 1 second on 3-patient demo set verify-when-done bar. Swap to pg_trgm is contract-preserving and can land when a real customer's MRN volume warrants it.
+
+### Unit 03 (2026-05-17)
+
+- **2026-05-17 — Soniox stub mode for dev.** When SONIOX_API_KEY is unset, `mintEphemeralKey` returns a fake key + the production WS URL + the fixed config. The capture page detects this via `useStubBanner()` and shows a warning banner — the rest of the flow (mic permission, AudioWorklet, finalize upload, audit, status transitions) still exercises end-to-end. Lets local dev work without a Soniox account. Real Soniox requires both SONIOX_API_KEY AND SONIOX_BAA_ON_FILE=true in any non-dev env (rule 17, enforced by `assertSonioxAllowedForPHI`).
+- **2026-05-17 — Local-fs S3 stub.** `src/lib/s3/client.ts` writes to `./tmp/audio/` when S3_AUDIO_BUCKET is unset. Production sets the bucket + relies on the IAM task role (rule 13 — never static access keys). Stub mode logs the path so devs can inspect captures locally.
+- **2026-05-17 — Single CaptureStateProvider over Zustand.** Spec mentioned "Context or Zustand"; chose Context to avoid adding a new dependency for one provider. Granular hooks (`useAudioLevel`, `useTranscript`, etc.) prevent over-rendering — a component that only needs the level doesn't re-render on transcript updates.
+- **2026-05-17 — RMS smoothed via rAF, not on every worklet message.** AudioWorklet emits at ~16ms intervals; setting React state that often would melt the renderer. Worklet writes to a ref; a `requestAnimationFrame` loop reads the ref + commits a smoothed value 60×/sec. AudioLevelBars re-renders ≤60×/sec regardless of worklet frequency.
+- **2026-05-17 — Start Drafting button shipped disabled in Unit 03.** Pre-draft button polarity matters (the prior prototype's #1 friction was clinicians hitting Finish first); but the actual drafting pipeline lands in Unit 05. The button is present, primary-teal styled, with a tooltip explaining it lights up in Unit 05. Honors the design rule without faking the behavior.
+- **2026-05-17 — Browser sends raw PCM bytes to Soniox WS.** No JSON framing on the audio path — Soniox's documented protocol takes the `api_key` + config as the first JSON message then accepts raw Int16 LE PCM payloads. The AudioWorklet's `samples.buffer` is transferred to avoid a copy.
 
 ### Pre-existing (foundational, from spec)
 
