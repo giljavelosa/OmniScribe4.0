@@ -11,9 +11,10 @@ describe('diffForAudit', () => {
   });
 
   it('treats null and undefined consistently (both normalize to null)', () => {
-    const before = { phone: null as string | null, address: undefined as string | undefined };
-    const after = { phone: undefined as string | undefined, address: null as string | null };
-    const diff = diffForAudit(before, after, ['phone', 'address'] as const);
+    type Shape = { phone: string | null | undefined; address: string | null | undefined };
+    const before: Shape = { phone: null, address: undefined };
+    const after: Shape = { phone: undefined, address: null };
+    const diff = diffForAudit<Shape>(before, after, ['phone', 'address'] as const);
     // null vs undefined are coalesced to null on both sides → no change.
     expect(diff).toEqual({});
   });
