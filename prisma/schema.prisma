@@ -1154,6 +1154,10 @@ model TelehealthSession {
    *  until the clinician starts the call. */
   noteId         String?                 @unique
   note           Note?                   @relation(fields: [noteId], references: [id])
+  /** Unit 18 — PHI-free call quality metrics written by the /end handler.
+   *  Shape: { sampleChunksProcessed, reconnectCount, callDurationMs,
+   *  transcriptSegmentCount }. Auditor lens + future ops dashboards. */
+  qualityMetrics Json?
   createdAt      DateTime                @default(now())
   updatedAt      DateTime                @updatedAt
 
