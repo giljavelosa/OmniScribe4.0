@@ -10,6 +10,7 @@ import {
   markSectionStatus,
   appendRegeneration,
   mergeSectionIntoDraft,
+  recordSectionAttempt,
 } from '@/lib/notes/section-status';
 import type { TranscriptClean } from '@/services/transcription';
 
@@ -189,6 +190,7 @@ export async function handle(job: Job<AiGenerationJob>) {
         tokensIn: result.tokensIn,
         tokensOut: result.tokensOut,
       });
+      await recordSectionAttempt(noteId, { latencyMs: result.latencyMs, success: true });
       await writeAuditLog({
         orgId,
         action: 'SECTION_GENERATED',
@@ -203,6 +205,7 @@ export async function handle(job: Job<AiGenerationJob>) {
         status: 'failed',
         error: { code: 'GENERATION_FAILED', message: message.slice(0, 300) },
       });
+      await recordSectionAttempt(noteId, { latencyMs: 0, success: false });
       await writeAuditLog({
         orgId,
         action: 'SECTION_GENERATION_FAILED',
@@ -294,6 +297,7 @@ async function regenerateOne(
       overwroteEdited: !!overwroteEdited,
       previousContent,
     });
+    await recordSectionAttempt(noteId, { latencyMs: result.latencyMs, success: true });
     await writeAuditLog({
       orgId,
       action: 'SECTION_REGENERATED',
@@ -314,6 +318,7 @@ async function regenerateOne(
       status: 'failed',
       error: { code: 'GENERATION_FAILED', message: message.slice(0, 300) },
     });
+    await recordSectionAttempt(noteId, { latencyMs: 0, success: false });
     await writeAuditLog({
       orgId,
       action: 'SECTION_GENERATION_FAILED',
