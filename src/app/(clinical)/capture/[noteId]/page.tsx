@@ -5,6 +5,7 @@ import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { StatusBadge } from '@/components/ui/status-badge';
 import type { PriorContextBriefContent } from '@/types/brief';
+import { CopilotShell } from '@/components/copilot/copilot-shell';
 import { CaptureStateProvider } from './_hooks/capture-state';
 import { DesktopCaptureLayout } from './_components/DesktopCaptureLayout';
 import { MobileCaptureLayout } from './_components/MobileCaptureLayout';
@@ -131,6 +132,7 @@ export default async function CapturePage({ params }: { params: Promise<{ noteId
         nowMs={nowMs}
         hasPriorSignedNote={hasPriorSignedNote}
       />
+      <CopilotShell surface="capture" noteId={note.id} />
     </CaptureStateProvider>
   );
 }
