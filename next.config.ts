@@ -8,10 +8,8 @@ const nextConfig: NextConfig = {
   serverExternalPackages: ['@prisma/client', 'bcryptjs'],
   reactStrictMode: true,
   poweredByHeader: false,
-  experimental: {
-    // Tighten the surface for accidental client/server boundary mistakes.
-    typedRoutes: true,
-  },
+  // Tighten the surface for accidental client/server boundary mistakes.
+  typedRoutes: true,
 };
 
 export default nextConfig;
