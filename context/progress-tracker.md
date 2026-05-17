@@ -4,11 +4,11 @@
 
 ## Current Phase
 
-- **Wave 3 in flight — Unit 16 shipped.** PR #17 (branch `feat/unit-16-telehealth-audio`, stacked on `feat/unit-15-telehealth-infra`). Audio plumbing for the telehealth call: (a) starting a telehealth session now creates the Encounter + Note inside the same $transaction as the Daily.co room — reuses the existing `startVisit()` helper so the in-person + telehealth Note lifecycle stays identical; (b) browser-side `TelehealthAudioPipeline` multiplexes two MediaStreamTracks (clinician local + patient remote) into a single Soniox WebSocket so diarization Just Works on Soniox's side; (c) `ReconnectBuffer` 30 s ring buffer so transient WiFi blips don't lose audio.
+- **Wave 3 in flight — Unit 17 shipped.** PR #18 (branch `feat/unit-17-telehealth-clinician-room`, stacked on `feat/unit-16-telehealth-audio`). The clinician-facing `/telehealth/room/[scheduleId]` surface lights up the live telehealth experience: Daily iframe + live transcript driven by Unit 16's `TelehealthAudioPipeline` + mic mute + End-call handoff that closes the loop with the existing `/api/notes/[id]/complete-stream` → `/processing/[noteId]` pipeline. Reuses the WAV encoder (extracted from the in-person capture flow) so end-of-call upload is byte-identical to in-person finish. Patient track is null in v1 (clinician-only transcript) — Daily SDK wiring is the one-line swap when DAILY_API_KEY is set.
 
 ## Current Goal
 
-- Await user confirmation before starting Unit 17 — the clinician-facing `/telehealth/room/[scheduleId]` surface that wires Daily.co into the audio pipeline + integrates the existing capture controls + live note panel. Per Prompt B's stop-between-units contract.
+- Await user confirmation before starting Unit 18 — Wave 3 polish: pre-call diagnostic (mic/cam/network), Daily SDK swap for the patient track, network-quality indicator on the patient tile, mid-call rejoin if disconnected within the active window. Per Prompt B's stop-between-units contract.
 
 ## Completed
 
@@ -216,6 +216,26 @@
   - Reconnect logic: on unexpected WS close, schedule reconnect after 500 ms; drain ReconnectBuffer to the new socket so the resumed Soniox session sees continuous audio. Three attempts before giving up; onReconnected callback fires on success so the Unit 17 surface can audit via TELEHEALTH_AUDIO_RECONNECTED.
   - 138 tests pass (was 122); build/lint/typecheck clean; no new APIs (reuses /api/notes/[id]/realtime-key); 1 schema migration ships.
 
+- **2026-05-17 — Unit 17: Telehealth clinician room** (PR #18 — `feat(unit-17): telehealth clinician room`).
+  - Spec at `context/specs/17-telehealth-clinician-room.md`. Wave 3 Phase 2.
+  - New surface: `/telehealth/room/[scheduleId]` (under `(clinical)/`). Server gate verifies schedule + session + ACTIVE status + `session.noteId` + clinician ownership (or SUPER_ADMIN); pre-active sessions get a friendly "Session not started" card. Robots noindex.
+  - `src/lib/audio/wav-encoder.ts` extracted from `(clinical)/capture/_hooks/capture-state.tsx`. The encoder is byte-for-byte unchanged; capture-state imports from the new shared module. Telehealth room uses it for end-of-call WAV upload. 3 vitest cases lock the RIFF/WAVE header shape.
+  - `TelehealthAudioPipeline` (Unit 16) gains:
+    - `retainSamples: true` constructor option + `drainRetainedSamples()` method so end-of-call WAV upload can reuse the existing `/api/notes/[id]/complete-stream` endpoint. Memory cap ~115 MB for 30 min of two 16 kHz Int16 streams; acceptable per single call. Off by default — in-visit copilot use case never needs the bytes.
+    - `patientTrack` is now optional (`MediaStreamTrack | null`). Stub-mode ships clinician-only (no Daily SDK yet); real-mode swap is one-line at the room shell call site.
+  - Room shell client (`_components/room-shell.tsx`) owns the full live experience:
+    - Layout: Daily iframe (left pane) + live transcript pane (right pane) + bottom controls (Mute + End-call) + header connection chip (Connected / Stub mode / Reconnecting… / Disconnected).
+    - On mount: requests clinician mic via getUserMedia (echo+noise suppression on), constructs pipeline with retainSamples + transcript/reconnect/error callbacks, starts pipeline. On unmount: stops pipeline + releases mic.
+    - Mic mute toggles `MediaStreamTrack.enabled` natively — no pipeline restart.
+    - Reconnect audit: pipeline's `onReconnected` callback POSTs `/api/audit/copilot-event` with `action: 'TELEHEALTH_AUDIO_RECONNECTED'` + `surface: 'telehealth-room'`. New surface + new action added to the copilot-event allowlist.
+  - End-call handoff (5 steps, order matters):
+    1. `pipeline.stop()` — closes WS, tears down audio
+    2. `drainRetainedSamples()` + `encodeWavBlob()` — produces self-describing WAV
+    3. `POST /api/notes/[noteId]/complete-stream` (multipart) — same endpoint in-person finish uses; flips Note RECORDING → TRANSCRIBING + enqueues transcription worker
+    4. `POST /api/admin/telehealth/sessions/[id]/end` — destroys Daily room, flips session to COMPLETED. Best-effort: if this fails after step 3 succeeded, audio is durable so we log + continue
+    5. `router.push('/processing/[noteId]')` — same post-call screen in-person uses
+  - 144 tests pass (was 138); build/lint/typecheck clean; new tests: 3 WAV encoder shape, 2 pipeline retainSamples on/off, 1 pipeline clinician-only-when-patientTrack-null.
+
 ## In Progress
 
 None.
@@ -224,7 +244,7 @@ None.
 
 In priority order:
 
-1. **Unit 17 — Telehealth capture-flow integration (clinician room surface)** — `/telehealth/room/[scheduleId]`: Daily.co video iframe + capture controls + live note panel + brief side panel; wires Unit 16's `TelehealthAudioPipeline` to the Daily.co `participants.<id>.tracks.audio.persistentTrack`; end-call handoff to `/review`. Reuses `(clinical)` surface components (TranscriptWorkspace, LiveNotePanel) so the in-person + telehealth clinician experiences stay aligned.
+1. **Unit 18 — Telehealth polish (Wave 3 closing)** — pre-call diagnostic (mic/cam/network), Daily.co SDK swap for the patient track (the one-line change Unit 17 documented), network-quality indicator on the patient tile, mid-call rejoin if the clinician disconnects within the active window, TitaNet voice-ID on the post-call review surface for clinician-vs-patient labeling.
 8. **Unit 07 — Encounter Copilot Watch v0** ([`context/specs/07-encounter-copilot-watch-v0.md`](specs/07-encounter-copilot-watch-v0.md)) — beacon + open-follow-ups + plan-for-today cards.
 9. **Unit 08 — Admin & Compliance Ready** ([`context/specs/08-admin-and-compliance-ready.md`](specs/08-admin-and-compliance-ready.md)) — Sites + Rooms CRUD, admin-initiated MFA reset + password reset, customer self-onboarding wizard, BAA admin UI.
 
@@ -406,6 +426,16 @@ These need user/PM decision before the depending unit can ship. Quote the source
 - **2026-05-17 — Copy-to-clipboard fires SECTION_COPIED_TO_CLIPBOARD via the copilot-event endpoint with itemCount = char count.** PHI-free at the audit layer (content never leaves the client beyond the clipboard write). The cap raise (1000 → 100_000) accommodates real section sizes; the prior cap was sized for "items in a list" not "characters in a section."
 - **2026-05-17 — Accordion animation polish ships data-state + transition-duration classes only — no CSS keyframes.** The simplest cross-browser solution that works inside Tailwind v4 without custom @keyframes. Future polish (CSS-only height animation for collapse/expand) can hook the data-state attribute when the design asks for it.
 - **2026-05-17 — Wave 2 COMPLETE.** Units 10–14 close the clinical-surface trust gaps. /review now has: SSE reconnect indicator (10), section regenerate with diff (10), failure-recovery banner (10), per-section observability (10), inline goal progression on the patient panel (11), snapshot strip + override-wins on /patients/[id] (12), templates authoring with version history (13), and AI compliance flags with severity-grouped review (14). The clinical surfaces are no longer "works" — they're "trusted daily."
+
+### Unit 17 (2026-05-17)
+
+- **2026-05-17 — Daily iframe over Daily SDK for v1.** The iframe loads the room URL directly; zero Daily SDK bundle dependency. In stub mode the URL 404s but the page still renders cleanly. In real mode (DAILY_API_KEY set), the iframe loads the real video. The trade-off: we can't access the patient's WebRTC track without the SDK, so the audio pipeline runs clinician-only in v1. Wave 3 polish wires the SDK + swaps the synthetic patient track (one-line at the room shell — pipeline already accepts the MediaStreamTrack swap).
+- **2026-05-17 — Pipeline `patientTrack` is now `MediaStreamTrack | null`, not a synthetic silent track.** Originally drafted as "feed an oscillator into a MediaStreamAudioDestinationNode to produce a silent patient track" — two AudioContexts in the page is wasteful, and "null = wire only the clinician" is honest about the architecture. The pipeline branches cleanly on null without adding test surface; the symmetric real-mode flow (pass the Daily participant's persistentTrack) is the same call site change.
+- **2026-05-17 — WAV encoder extracted to `src/lib/audio/wav-encoder.ts` instead of duplicated.** The in-person capture flow's encoder is bit-for-bit what telehealth needs (16 kHz mono Int16 PCM is locked at the worklet + Soniox config). Extracting it keeps the encoder shape under a single source of truth — the S3 + Soniox batch paths treat the byte layout as contract; if it ever needs to change, it changes once.
+- **2026-05-17 — `retainSamples` is opt-in on the pipeline, not always-on.** End-of-call upload needs the bytes; the in-visit copilot use case (the pipeline's original target) doesn't. Always-on would burn ~115 MB/call for callers that never read it. The flag keeps the pipeline class generic.
+- **2026-05-17 — End-call ordering: complete-stream BEFORE end-session.** If end-session ran first and complete-stream then failed, the session would be COMPLETED but the audio lost (no audioFileKey on the Note). Running complete-stream first means the audio is durable before we touch session state; an end-session failure after that point gets logged + the clinician still lands on /processing (the audio is safe).
+- **2026-05-17 — Reuse `/api/notes/[id]/complete-stream` instead of a telehealth-specific upload endpoint.** Same justification as Unit 16's realtime-key reuse: the endpoint already auth-gates by clinician ownership + handles audio + transcript + worker enqueue. The telehealth path goes through the EXACT same post-call flow as in-person — that's the spec's promise.
+- **2026-05-17 — Audit ingress reuses /api/audit/copilot-event with a new 'telehealth-room' surface.** A dedicated /api/telehealth/audit-event would duplicate the auth + allowlist boilerplate for one current action (TELEHEALTH_AUDIO_RECONNECTED). The copilot-event endpoint's narrow allowlist + surface tag pattern was designed for exactly this growth; the audit row anchors against the Note (which the room shell has), and the session.noteId @unique link means session-grouped queries still resolve.
 
 ### Unit 16 (2026-05-17)
 
