@@ -147,4 +147,10 @@ export type AuditAction =
   // ---- Unit 12: Patient detail redesign ----
   | 'SNAPSHOT_OVERRIDE_CREATED'
   | 'SNAPSHOT_OVERRIDE_SUPERSEDED'
-  | 'PATIENT_DEMOGRAPHICS_EDITED';
+  | 'PATIENT_DEMOGRAPHICS_EDITED'
+  // ---- Unit 13: Templates editor maturity ----
+  | 'TEMPLATE_CREATED'
+  | 'TEMPLATE_UPDATED'
+  | 'TEMPLATE_CLONED'
+  | 'TEMPLATE_ARCHIVED'
+  | 'TEMPLATE_UNARCHIVED';
