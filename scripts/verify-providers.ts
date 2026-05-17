@@ -81,7 +81,12 @@ async function verifyS3(): Promise<Result> {
     if (!bodyOk) return { provider, ok: false, detail: `put+presigned-get round trip failed (fetch=${fetched.status})` };
     return { provider, ok: true, detail: `bucket=${bucket} region=${region} put/get/delete round-trip OK` };
   } catch (e) {
-    return { provider, ok: false, detail: e instanceof Error ? e.message : String(e) };
+    // AWS SDK errors carry .name + .message + sometimes .$metadata.httpStatusCode.
+    const err = e as { name?: string; message?: string; Code?: string; $metadata?: { httpStatusCode?: number } };
+    const status = err.$metadata?.httpStatusCode ? ` http=${err.$metadata.httpStatusCode}` : '';
+    const code = err.name || err.Code || 'UnknownError';
+    const msg = err.message ?? String(e);
+    return { provider, ok: false, detail: `${code}${status}: ${msg}` };
   }
 }
 
