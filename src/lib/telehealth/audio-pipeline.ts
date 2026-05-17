@@ -96,6 +96,11 @@ export type PipelineOptions = PipelineCallbacks & {
   audioWiring?: AudioWiring;
   /** ReconnectBuffer override (mostly for test seam). */
   reconnectBuffer?: ReconnectBuffer;
+  /** Retain a copy of every pumped chunk for end-of-call WAV upload (Unit 17).
+   *  Memory cap is ~115 MB for 30 min of two 16 kHz Int16 streams; acceptable
+   *  per single call. Off by default — the in-visit copilot use case never
+   *  needs to upload the bytes. */
+  retainSamples?: boolean;
 };
 
 type Source = { label: SourceLabel; disconnect: () => void };
@@ -114,6 +119,8 @@ export class TelehealthAudioPipeline {
   #reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   #reconnectAttempts = 0;
   #stopped = false;
+  readonly #retainSamples: boolean;
+  #retained: Int16Array[] | null = null;
 
   constructor(options: PipelineOptions = {}) {
     this.#wsCtor = options.wsConstructor ?? (globalThis.WebSocket as typeof WebSocket);
@@ -122,6 +129,8 @@ export class TelehealthAudioPipeline {
     this.#buffer =
       options.reconnectBuffer ?? new ReconnectBuffer({ sampleRate: TELEHEALTH_AUDIO_SAMPLE_RATE });
     this.#cb = options;
+    this.#retainSamples = options.retainSamples ?? false;
+    if (this.#retainSamples) this.#retained = [];
   }
 
   get state(): ConnectionState {
@@ -203,9 +212,20 @@ export class TelehealthAudioPipeline {
   #pump(samples: Int16Array): void {
     // Always buffer — drains on reconnect; cap is bounded so memory is safe.
     this.#buffer.push(samples);
+    if (this.#retained) this.#retained.push(samples);
     if (this.#ws && this.#ws.readyState === WebSocket.OPEN) {
       this.#ws.send(samples.buffer);
     }
+  }
+
+  /** Pull every retained sample chunk and clear the internal store. Only
+   *  meaningful when the pipeline was constructed with `retainSamples: true`;
+   *  returns an empty array otherwise. */
+  drainRetainedSamples(): Int16Array[] {
+    if (!this.#retained) return [];
+    const out = this.#retained;
+    this.#retained = [];
+    return out;
   }
 
   async #openWebSocket(key: RealtimeKeyResponse): Promise<void> {

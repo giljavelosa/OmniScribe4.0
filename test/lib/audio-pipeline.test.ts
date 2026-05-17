@@ -316,6 +316,47 @@ describe('TelehealthAudioPipeline', () => {
     await expect(pipeline.start({ noteId: 'n1', ...fakeTracks() })).rejects.toThrow();
   });
 
+  it('retains pumped samples when retainSamples: true is set', async () => {
+    const fetchImpl = vi.fn(async () =>
+      new Response(JSON.stringify({ data: realtimeKeyResponse() }), { status: 200 }),
+    ) as unknown as typeof fetch;
+    const wiring = fakeAudioWiring();
+    const pipeline = new TelehealthAudioPipeline({
+      fetchImpl,
+      wsConstructor: mockWebSocket(),
+      audioWiring: wiring,
+      retainSamples: true,
+    });
+    await pipeline.start({ noteId: 'n1', ...fakeTracks() });
+    const ws = FakeSocket.instances[0]!;
+    ws.simulate({ open: () => {} });
+    wiring.pumps[0]!(new Int16Array([1, 2]));
+    wiring.pumps[1]!(new Int16Array([3, 4, 5]));
+    const drained = pipeline.drainRetainedSamples();
+    expect(drained.length).toBe(2);
+    expect(Array.from(drained[0]!)).toEqual([1, 2]);
+    expect(Array.from(drained[1]!)).toEqual([3, 4, 5]);
+    // Second drain returns an empty array — the buffer was cleared.
+    expect(pipeline.drainRetainedSamples()).toEqual([]);
+  });
+
+  it('does not retain samples by default', async () => {
+    const fetchImpl = vi.fn(async () =>
+      new Response(JSON.stringify({ data: realtimeKeyResponse() }), { status: 200 }),
+    ) as unknown as typeof fetch;
+    const wiring = fakeAudioWiring();
+    const pipeline = new TelehealthAudioPipeline({
+      fetchImpl,
+      wsConstructor: mockWebSocket(),
+      audioWiring: wiring,
+    });
+    await pipeline.start({ noteId: 'n1', ...fakeTracks() });
+    const ws = FakeSocket.instances[0]!;
+    ws.simulate({ open: () => {} });
+    wiring.pumps[0]!(new Int16Array([1, 2, 3]));
+    expect(pipeline.drainRetainedSamples()).toEqual([]);
+  });
+
   it('surfaces fetch failure as a thrown error during start', async () => {
     const fetchImpl = vi.fn(async () =>
       new Response(JSON.stringify({ error: { code: 'forbidden' } }), { status: 403 }),
