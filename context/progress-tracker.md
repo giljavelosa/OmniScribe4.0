@@ -4,11 +4,11 @@
 
 ## Current Phase
 
-- **Wave 1 — progressing.** Unit 07 shipped (PR #8 — branch `feat/unit-07-copilot-watch-v0`). Unit 06 shipped (PR #7). Wave 0 complete (PRs #1–#6). The Co-Pilot's first surface is live: bottom-right Sparkles Beacon across /prepare + /capture + /review, two Watch cards (open follow-ups + plan-for-today) source-grounded only with provenance pills on every fact.
+- **Wave 1 — closing.** Unit 08 shipped (PR #9 — branch `feat/unit-08-admin-compliance-ready`). Unit 07 shipped (PR #8). Unit 06 shipped (PR #7). Wave 0 complete (PRs #1–#6). Commercial-readiness gates closed: Sites + Rooms CRUD, /admin/audit log surface (filters + CSV export), /admin/org-settings, audit-log enrichment for high-severity mutations (MFA reset, role changes). OmniScribe is now sellable to and operable for a first paying customer.
 
 ## Current Goal
 
-- Await user confirmation before starting Unit 08 — Admin & Compliance Ready, per Prompt B's stop-between-units contract.
+- Await user confirmation before starting Unit 09 — Owner Console v1, per Prompt B's stop-between-units contract.
 
 ## Completed
 
@@ -117,6 +117,18 @@
   - `/capture` integration: `PlanForTodayCard` rendered as sibling below `PriorContextPanel` (desktop right pane + mobile History tab). `OpenFollowUpsCard` deliberately NOT rendered here (PriorContextPanel already surfaces open follow-ups interactively via `followUpsSlot` from Unit 06 — two interactive surfaces would risk state drift). `CopilotShell` mounted at page root.
   - `/review` integration: `OpenFollowUpsCard` in the sticky right sidebar below `ReadinessPanel`. PlanForTodayCard NOT rendered here per spec §J ("too late for plan for today"). `CopilotShell` at page root.
 
+- **2026-05-17 — Unit 08: Admin & Compliance Ready** (PR #9 — `feat(unit-08): admin & compliance ready`).
+  - 13 new AuditAction values (SITE_* x4, ROOM_* x4, ORG_SETTINGS_UPDATED, USER_ROLE_CHANGED, NOTE_SENSITIVITY_CHANGED, AUDIT_LOG_VIEWED, AUDIT_LOG_EXPORTED).
+  - `src/lib/audit/diff.ts` — pure `diffForAudit(before, after, fields)` helper produces PHI-free `{ field: { before, after } }` metadata; caller-allowlisted field set. 6 unit tests cover null/undefined coalescence, Date.getTime() equality, nested-object JSON-equality, and the deliberate-allowlist invariant.
+  - Sites CRUD: GET/POST `/api/admin/sites`, GET/PATCH `/api/admin/sites/[id]`, POST `/api/admin/sites/[id]/archive` (action discriminator: archive/unarchive). Nested Rooms: GET/POST `/api/admin/sites/[id]/rooms`, PATCH `/api/admin/rooms/[id]`, POST `/api/admin/rooms/[id]/archive`. All gated by TEAM_MEMBERS_MANAGE; every mutation audits with PHI-free metadata; updates use diffForAudit.
+  - `/admin/sites` list with active-first sort + archive badge; `CreateSiteSheet` (rule 22 shadcn Sheet); `SiteRowActions` with archive AlertDialog (reason optional ≥10 chars when supplied) + unarchive single-tap.
+  - `/admin/sites/[id]` detail with `EditSiteForm` (name / address / phone / primaryDivision) + `RoomsSection` (inline-add, inline-rename, archive/unarchive). Site archive surfaces a banner when active to prevent room additions on archived sites.
+  - Audit log surface: `GET /api/admin/audit` (cursor pagination, filters: from/to/action/userId/resourceId, joins User for actor email, audits AUDIT_LOG_VIEWED with filter SHAPE not values). `GET /api/admin/audit/export` (RFC-4180 CSV, capped 10k rows with `# truncated_at` comment marker, audits AUDIT_LOG_EXPORTED). `/admin/audit` page hydrates dropdowns from DISTINCT actions + actors in THIS org's log; `AuditTable` client component owns filter state + Load-more pagination + CSV download.
+  - `/admin/org-settings`: PATCH `/api/admin/org-settings` accepts name / division / defaultDivision / forceMfa / complianceProfile / defaultNoteStyle (last routed to audit only; schema bloat deferred until customer ask). BAA snapshot card is read-only — owner-only by design.
+  - Audit-log enrichment: MFA reset captures `before.mfaEnabled` + `sessionsInvalidated` count + reason. Admin user PATCH supports role + division updates and emits dedicated `USER_ROLE_CHANGED` row in addition to `USER_UPDATED` when role moves (higher-severity event filterable in compliance dashboards without scanning USER_UPDATED rows).
+  - Admin nav: Users · Sites · Audit · Org settings (replaced "Unit 08" placeholders).
+  - Test: `test/api/onboarding-expired-invite.test.ts` verifies `POST /api/onboarding/[token]/password` returns 410 Gone for expired AND unknown tokens (no enumeration distinction). Runs against the real local Postgres via Prisma; cleans up its own fixtures.
+
 ## In Progress
 
 None.
@@ -125,7 +137,7 @@ None.
 
 In priority order:
 
-1. **Unit 08 — Admin & Compliance Ready** ([`context/specs/08-admin-and-compliance-ready.md`](specs/08-admin-and-compliance-ready.md)) — Sites + Rooms CRUD, admin-initiated MFA reset + password reset polish, customer self-onboarding wizard polish, BAA admin UI.
+1. **Unit 09 — Owner Console v1** — full owner-mode surfaces: cross-org user list, platform-wide audit, announcements, health monitoring, impersonation, seat allocation UI. (Stripe seat allocation deferred from Unit 08 per scope decision below.)
 8. **Unit 07 — Encounter Copilot Watch v0** ([`context/specs/07-encounter-copilot-watch-v0.md`](specs/07-encounter-copilot-watch-v0.md)) — beacon + open-follow-ups + plan-for-today cards.
 9. **Unit 08 — Admin & Compliance Ready** ([`context/specs/08-admin-and-compliance-ready.md`](specs/08-admin-and-compliance-ready.md)) — Sites + Rooms CRUD, admin-initiated MFA reset + password reset, customer self-onboarding wizard, BAA admin UI.
 
@@ -149,7 +161,7 @@ These need user/PM decision before the depending unit can ship. Quote the source
 
 6. ~~**Default note style preference**~~ — RESOLVED in Unit 05 (Note.noteStyle defaults to HYBRID per the schema; preset templates do not pin a style so the per-note default applies).
 
-7. **Customer self-onboarding wizard placement** — single 4-step wizard (recommended) or split across pages with progress bar? Decide before completing Unit 08.
+7. ~~**Customer self-onboarding wizard placement**~~ — RESOLVED in Unit 01 (single 4-step wizard, password → MFA → done → auto sign-in) and verified end-to-end in Unit 08 (expired-invite returns 410 Gone via test/api/onboarding-expired-invite.test.ts).
 
 8. **Public signup** — confirm out of scope for v1 (invite-only). If/when added later, requires `User.failedLoginAttempts` + `User.lockedUntil` fields + lockout policy.
 
@@ -232,6 +244,17 @@ These need user/PM decision before the depending unit can ship. Quote the source
 - **2026-05-17 — Audit endpoint accepts only 4 fenced actions + fenced metadata.** `POST /api/audit/copilot-event` deliberately restricts both the action union AND the metadata shape (`surface`, optional `cardType`, optional `itemCount`) at the route boundary. Client code can only emit what the schema permits — the PHI denylist enforced by `writeAuditLog` never has to fight client-supplied data because the route itself rejects ill-formed payloads with 400. Tighter than a generic audit endpoint would have been, but it's the right blast-radius posture for a client-side ingress.
 - **2026-05-17 — Beacon mounting gating lives at the caller, not the component.** Pages that should NOT render the beacon (/sign, /admin/*, /owner/*, /login) simply don't import or mount `<CopilotShell>`. Reasoning: a single explicit caller decision is easier to audit than a deny-list inside the component (which can drift as routes are renamed). The spec's "NOT rendered on /sign, /admin/*, /owner/*, /login" becomes a CI grep target on `<CopilotShell>` usage.
 - **2026-05-17 — Cards are SOURCE-GROUNDED ONLY — no AI inference.** v0 surfaces only what the prior clinician explicitly wrote (FollowUp rows extracted from signed Plan sections; carryForwardPlan items quoted from signed notes). No LLM inference at the card layer. If a future card needs reasoning, that's Ask-mode (Unit 27), not Watch — distinct architecture, distinct UX contract.
+
+### Unit 08 (2026-05-17)
+
+- **2026-05-17 — Stripe seat allocation deferred to Unit 09.** Spec §K calls for `POST /api/admin/seats` with Stripe subscription updates atomic with seat-row creation. Deferred because (a) Unit 01 D8 explicitly parked Stripe + billing until "Wave 0+ / post-Wave-1," (b) the rest of Unit 08 lands a sellable surface without seat-management UI (seats are seeded; ops can adjust manually for the first paying customer), (c) Stripe atomicity needs careful rollback semantics that warrant their own focused PR. Moves Unit 08's scope to: Sites + Rooms CRUD, audit-log surface, org settings, audit enrichment — the gates that actually block a first sale.
+- **2026-05-17 — Sites + Rooms gated by TEAM_MEMBERS_MANAGE.** Sites are org structural data, not patient data — closest existing capability key. Avoids inventing a new FeatureKey for one surface; admin role already has the right blast-radius posture (only ORG_ADMIN / SUPER_ADMIN can manage members → same humans manage sites).
+- **2026-05-17 — Site archive is reversible; no hard-delete in v1.** Rule 7's "audio never hard-deleted" spirit applies broadly: archived sites preserve all history (patients, schedules, encounters) and can be restored. Hard-delete would orphan referential integrity for departments + episodes — solving that needs a discharge-and-migrate workflow that's out of scope for v1.
+- **2026-05-17 — Audit log read endpoint is itself audited.** `AUDIT_LOG_VIEWED` writes on every list call; `AUDIT_LOG_EXPORTED` writes on every CSV download. The filter SHAPE (booleans for hasFrom / hasResourceId etc) is captured, not the filter values themselves — so the audit log shows that someone searched the log without revealing what resource ids they were searching for. This is the HIPAA business-associate posture: who looked at what, without re-leaking what they looked at.
+- **2026-05-17 — CSV export hand-rolled, not papaparse.** Spec dependencies list `papaparse@5.x` for export but RFC-4180 quoting is ~10 lines of code. Avoiding a dep keeps the bundle smaller and the export path obviously-correct under review. If a future surface needs CSV parsing (not writing), revisit.
+- **2026-05-17 — BAA enrichment uses full-snapshot pattern, not diffForAudit.** PATCH `/api/owner/orgs/[id]/baa` writes the full 3-field BAA posture (`{ baaVersion, baaExecutedAt, complianceProfile }`) on both before+after sides, even when only one moved. Reasoning: auditors want the complete compliance posture at the moment of change, not just the delta — "what version was active when this was signed" beats "what changed." Other enrichment (Site/Room/OrgUser) uses diffForAudit because those are non-compliance fields where the delta IS what auditors need.
+- **2026-05-17 — `defaultNoteStyle` accepted on org settings PATCH but stored in audit log only.** The Organization schema doesn't have the field yet. We accept the input + write `ORG_SETTINGS_UPDATED` with the requested value so the audit trail captures intent, but the data layer doesn't gain a column until a customer actually requests an org-wide default note style. Schema bloat-aversion — wait for the use case.
+- **2026-05-17 — USER_ROLE_CHANGED emits as a separate row in addition to USER_UPDATED.** Role changes are higher-severity than `canManagePatients` toggles or `isActive` deactivations (which also produce USER_UPDATED / USER_DEACTIVATED). Compliance dashboards filtering for "who became an admin and when" shouldn't have to scan every USER_UPDATED row.
 
 ### Pre-existing (foundational, from spec)
 
