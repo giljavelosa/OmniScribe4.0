@@ -64,34 +64,36 @@ enum NoteStyle {
 // -----------------------------------------------------------------------------
 
 model Organization {
-  id                  String            @id @default(cuid())
-  name                String
-  division            Division
-  defaultDivision     Division?
-  billingEmail        String
-  stripeCustomerId    String?
-  forceMfa            Boolean           @default(false)
+  id               String    @id @default(cuid())
+  name             String
+  division         Division
+  defaultDivision  Division?
+  billingEmail     String
+  stripeCustomerId String?
+  forceMfa         Boolean   @default(false)
 
   // BAA tracking — required for the Owner console to mark an org "BAA on file".
   // Required at the application layer for new orgs created via /owner/orgs/new;
   // optional at the DB layer so legacy/dev rows can exist without it.
-  baaExecutedAt       DateTime?
-  baaVersion          String?
-  baaCountersignedBy  String?           // userId of the platform owner who countersigned
-  complianceProfile   ComplianceProfile @default(STANDARD)
+  baaExecutedAt      DateTime?
+  baaVersion         String?
+  baaCountersignedBy String? // userId of the platform owner who countersigned
+  complianceProfile  ComplianceProfile @default(STANDARD)
 
-  createdAt           DateTime          @default(now())
-  updatedAt           DateTime          @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  sites               Site[]
-  orgUsers            OrgUser[]
-  seats               Seat[]
-  invites             Invite[]
-  featureFlags        FeatureFlag[]
-  ipAllowlistEntries  IpAllowlistEntry[]
-  patients            Patient[]
-  departments         Department[]
-  noteTemplates       NoteTemplate[]
+  sites              Site[]
+  orgUsers           OrgUser[]
+  seats              Seat[]
+  invites            Invite[]
+  featureFlags       FeatureFlag[]
+  ipAllowlistEntries IpAllowlistEntry[]
+  patients           Patient[]
+  departments        Department[]
+  noteTemplates      NoteTemplate[]
+  noteBriefs         NoteBrief[]
+  followUps          FollowUp[]
 
   @@index([baaExecutedAt])
 }
@@ -108,21 +110,21 @@ model Site {
   archivedAt      DateTime?
   createdAt       DateTime     @default(now())
 
-  rooms           Room[]
-  patients        Patient[]
-  departments     Department[]
+  rooms       Room[]
+  patients    Patient[]
+  departments Department[]
 
   @@index([orgId])
 }
 
 model Room {
-  id          String    @id @default(cuid())
-  siteId      String
-  site        Site      @relation(fields: [siteId], references: [id])
-  name        String
-  isArchived  Boolean   @default(false)
-  archivedAt  DateTime?
-  createdAt   DateTime  @default(now())
+  id         String    @id @default(cuid())
+  siteId     String
+  site       Site      @relation(fields: [siteId], references: [id])
+  name       String
+  isArchived Boolean   @default(false)
+  archivedAt DateTime?
+  createdAt  DateTime  @default(now())
 
   @@index([siteId])
 }
@@ -132,18 +134,18 @@ model Room {
 // -----------------------------------------------------------------------------
 
 model User {
-  id                  String               @id @default(cuid())
-  email               String               @unique
-  name                String?
-  image               String?
-  passwordHash        String
-  mfaSecret           String?
-  mfaEnabled          Boolean              @default(false)
+  id               String       @id @default(cuid())
+  email            String       @unique
+  name             String?
+  image            String?
+  passwordHash     String
+  mfaSecret        String?
+  mfaEnabled       Boolean      @default(false)
   // JSON array of bcrypt-hashed recovery codes; each element is consumed when used.
-  mfaRecoveryCodes    Json?
-  platformRole        PlatformRole         @default(NONE)
-  createdAt           DateTime             @default(now())
-  updatedAt           DateTime             @updatedAt
+  mfaRecoveryCodes Json?
+  platformRole     PlatformRole @default(NONE)
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
 
   orgUsers            OrgUser[]
   sessions            UserSession[]
@@ -151,19 +153,19 @@ model User {
 }
 
 model OrgUser {
-  id                  String               @id @default(cuid())
-  userId              String
-  user                User                 @relation(fields: [userId], references: [id])
-  orgId               String
-  organization        Organization         @relation(fields: [orgId], references: [id])
-  role                OrgRole
-  division            Division
-  profession          String?
-  canManagePatients   Boolean              @default(false)
-  preferredNoteStyle  NoteStyle            @default(HYBRID)
-  isActive            Boolean              @default(true)
-  createdAt           DateTime             @default(now())
-  updatedAt           DateTime             @updatedAt
+  id                 String       @id @default(cuid())
+  userId             String
+  user               User         @relation(fields: [userId], references: [id])
+  orgId              String
+  organization       Organization @relation(fields: [orgId], references: [id])
+  role               OrgRole
+  division           Division
+  profession         String?
+  canManagePatients  Boolean      @default(false)
+  preferredNoteStyle NoteStyle    @default(HYBRID)
+  isActive           Boolean      @default(true)
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
 
   seatId              String?              @unique
   seat                Seat?                @relation(fields: [seatId], references: [id])
@@ -181,7 +183,7 @@ model Seat {
   expiresAt    DateTime
   createdAt    DateTime     @default(now())
 
-  assignedTo   OrgUser?
+  assignedTo OrgUser?
 
   @@index([orgId])
 }
@@ -236,7 +238,7 @@ model PasswordResetToken {
   id         String    @id @default(cuid())
   userId     String
   user       User      @relation(fields: [userId], references: [id])
-  tokenHash  String    @unique  // bcrypt-hashed; never store raw token
+  tokenHash  String    @unique // bcrypt-hashed; never store raw token
   expiresAt  DateTime
   consumedAt DateTime?
   createdAt  DateTime  @default(now())
@@ -253,12 +255,12 @@ model AuditLog {
   id               String   @id @default(cuid())
   userId           String?
   orgId            String?
-  actingUserId     String?  // for impersonation: the platform owner acting
-  onBehalfOfUserId String?  // for impersonation: the user they're acting as
-  action           String   // e.g. USER_SIGNED_IN, NOTE_SIGNED, ORG_BAA_UPDATED
+  actingUserId     String? // for impersonation: the platform owner acting
+  onBehalfOfUserId String? // for impersonation: the user they're acting as
+  action           String // e.g. USER_SIGNED_IN, NOTE_SIGNED, ORG_BAA_UPDATED
   resourceType     String?
   resourceId       String?
-  metadata         Json?    // PHI-free (enforced at the writer; see src/lib/audit/phi-free-check.ts)
+  metadata         Json? // PHI-free (enforced at the writer; see src/lib/audit/phi-free-check.ts)
   createdAt        DateTime @default(now())
 
   @@index([orgId, createdAt])
@@ -271,7 +273,7 @@ model PlatformAuditLog {
   action       String
   resourceType String?
   resourceId   String?
-  metadata     Json?    // PHI-free
+  metadata     Json? // PHI-free
   createdAt    DateTime @default(now())
 
   @@index([actingUserId, createdAt])
@@ -304,9 +306,9 @@ model FeatureFlag {
 model SystemAnnouncement {
   id              String    @id @default(cuid())
   title           String
-  body            String    // markdown
-  severity        String    // 'info' | 'warning' | 'critical'
-  targetOrgIds    String[]  // empty array = visible to all orgs
+  body            String // markdown
+  severity        String // 'info' | 'warning' | 'critical'
+  targetOrgIds    String[] // empty array = visible to all orgs
   startsAt        DateTime
   endsAt          DateTime?
   createdAt       DateTime  @default(now())
@@ -465,11 +467,11 @@ enum CaptureMode {
 }
 
 model Patient {
-  id                String   @id @default(cuid())
+  id                String       @id @default(cuid())
   orgId             String
   organization      Organization @relation(fields: [orgId], references: [id])
   siteId            String?
-  site              Site?    @relation(fields: [siteId], references: [id])
+  site              Site?        @relation(fields: [siteId], references: [id])
   division          Division
   firstName         String
   lastName          String
@@ -479,10 +481,10 @@ model Patient {
   phone             String?
   email             String?
   preferredLanguage String?
-  isDeleted         Boolean  @default(false)
+  isDeleted         Boolean      @default(false)
   deletedAt         DateTime?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
 
   addresses                PatientAddress[]
   coverages                PatientCoverage[]
@@ -496,6 +498,8 @@ model Patient {
   schedules                Schedule[]
   episodes                 EpisodeOfCare[]
   notes                    Note[]
+  briefs                   NoteBrief[]
+  followUps                FollowUp[]
 
   @@unique([orgId, mrn])
   @@index([orgId, lastName, firstName])
@@ -503,24 +507,24 @@ model Patient {
 }
 
 model PatientAddress {
-  id         String  @id @default(cuid())
+  id         String             @id @default(cuid())
   patientId  String
-  patient    Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  patient    Patient            @relation(fields: [patientId], references: [id], onDelete: Cascade)
   kind       PatientAddressKind
   line1      String
   line2      String?
   city       String
   state      String
   postalCode String
-  country    String @default("US")
+  country    String             @default("US")
 
   @@index([patientId])
 }
 
 model PatientCoverage {
-  id              String   @id @default(cuid())
+  id              String                @id @default(cuid())
   patientId       String
-  patient         Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  patient         Patient               @relation(fields: [patientId], references: [id], onDelete: Cascade)
   carrier         String
   planName        String?
   memberId        String
@@ -558,10 +562,10 @@ model PatientGuarantor {
 }
 
 model PatientConsent {
-  id          String   @id @default(cuid())
+  id          String               @id @default(cuid())
   patientId   String
-  patient     Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
-  consentType String   // 'recording' | 'voice-id' | 'telehealth' | etc.
+  patient     Patient              @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  consentType String // 'recording' | 'voice-id' | 'telehealth' | etc.
   status      PatientConsentStatus
   version     String
   acceptedAt  DateTime?
@@ -574,7 +578,7 @@ model PatientCommunicationPreference {
   id        String  @id @default(cuid())
   patientId String
   patient   Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
-  channel   String  // 'email' | 'sms' | 'phone' | 'portal'
+  channel   String // 'email' | 'sms' | 'phone' | 'portal'
   optedIn   Boolean
 
   @@index([patientId])
@@ -584,11 +588,11 @@ model Department {
   id               String       @id @default(cuid())
   orgId            String
   organization     Organization @relation(fields: [orgId], references: [id])
-  siteId           String?      // null = org-wide
+  siteId           String? // null = org-wide
   site             Site?        @relation(fields: [siteId], references: [id])
   name             String
   division         Division
-  intakeFormSchema Json?        // JSON schema for intake form
+  intakeFormSchema Json? // JSON schema for intake form
 
   enrollments PatientDepartmentEnrollment[]
   intakes     PatientDepartmentIntake[]
@@ -641,7 +645,7 @@ model Schedule {
   scheduledStart     DateTime
   scheduledEnd       DateTime
   status             ScheduleStatus @default(SCHEDULED)
-  notes              String?        // admin note, not clinical
+  notes              String? // admin note, not clinical
   createdAt          DateTime       @default(now())
 
   encounter Encounter?
@@ -674,25 +678,26 @@ model Encounter {
 }
 
 model EpisodeOfCare {
-  id                 String   @id @default(cuid())
+  id                 String        @id @default(cuid())
   orgId              String
   patientId          String
-  patient            Patient  @relation(fields: [patientId], references: [id])
+  patient            Patient       @relation(fields: [patientId], references: [id])
   clinicianOrgUserId String
   departmentId       String
-  department         Department @relation(fields: [departmentId], references: [id])
+  department         Department    @relation(fields: [departmentId], references: [id])
   division           Division
   diagnosis          String
   bodyPart           String?
   status             EpisodeStatus @default(ACTIVE)
-  startedAt          DateTime @default(now())
+  startedAt          DateTime      @default(now())
   endedAt            DateTime?
   recertDueAt        DateTime?
-  visitsAuthorized  Int?
-  visitsCompleted    Int      @default(0)
+  visitsAuthorized   Int?
+  visitsCompleted    Int           @default(0)
 
   goals      EpisodeGoal[]
   encounters Encounter[]
+  followUps  FollowUp[]
 
   @@index([patientId, status])
 }
@@ -707,8 +712,8 @@ model EpisodeGoal {
   targetMeasure   String?
   currentMeasure  String?
   status          GoalStatus    @default(ACTIVE)
-  originNoteId    String?       // set when goal was created in a note (Unit 05)
-  resolvedNoteId  String?       // set when goal status changed (Unit 05)
+  originNoteId    String? // set when goal was created in a note (Unit 05)
+  resolvedNoteId  String? // set when goal status changed (Unit 05)
   createdAt       DateTime      @default(now())
 
   progressEntries GoalProgressEntry[]
@@ -718,7 +723,7 @@ model GoalProgressEntry {
   id           String      @id @default(cuid())
   goalId       String
   goal         EpisodeGoal @relation(fields: [goalId], references: [id], onDelete: Cascade)
-  noteId       String      // set when progress recorded in a note (Unit 05)
+  noteId       String // set when progress recorded in a note (Unit 05)
   measureValue String
   recordedAt   DateTime    @default(now())
 }
@@ -742,9 +747,9 @@ model Note {
 
   // Unit 03 — capture-mode metadata + transcript pre-AI-generation.
   captureMode     CaptureMode @default(LIVE)
-  audioFileKey    String?     // S3 key for the consolidated audio blob (rule 7: never hard-deleted)
-  transcriptRaw   Json?       // raw Soniox payload (final transcript + speaker tags) — Unit 04 cleans this into transcriptClean
-  transcriptClean Json?       // post-processed transcript (Unit 04 cleans LIVE/UPLOADED; Unit 03 writes PASTED directly)
+  audioFileKey    String? // S3 key for the consolidated audio blob (rule 7: never hard-deleted)
+  transcriptRaw   Json? // raw Soniox payload (final transcript + speaker tags) — Unit 04 cleans this into transcriptClean
+  transcriptClean Json? // post-processed transcript (Unit 04 cleans LIVE/UPLOADED; Unit 03 writes PASTED directly)
 
   // Unit 04 — worker pipeline metadata.
   // inferenceLog tracks per-section AI generation state (Unit 05 writes
@@ -752,25 +757,25 @@ model Note {
   // transitions. PHI-free shape; never embed transcript content or patient
   // identifiers in here.
   inferenceLog    Json?
-  interruptedAt   DateTime?   // set when a worker hits its retry limit
-  lastWorkerError String?     // class + message of the last fatal failure (PHI-free)
+  interruptedAt   DateTime? // set when a worker hits its retry limit
+  lastWorkerError String? // class + message of the last fatal failure (PHI-free)
 
   // Unit 05 — note generation + sign.
   // draftJson holds the in-progress structured note; finalJson is the FROZEN
   // attested artifact (anti-regression rule 3: NEVER modified after sign,
   // addenda are NoteArtifact rows). Both are TipTap-flavored JSON ({type:
   // 'doc', content: [...]}) keyed by section id; see lib/notes/sections.ts.
-  draftJson          Json?
-  finalJson          Json?  // IMMUTABLE after status === SIGNED
+  draftJson Json?
+  finalJson Json? // IMMUTABLE after status === SIGNED
 
-  templateId         String?
-  template           NoteTemplate? @relation(fields: [templateId], references: [id])
-  templateVersion    Int?
-  noteStyle          NoteStyle @default(HYBRID)
-  sensitivityLevel   NoteSensitivityLevel @default(STANDARD_CLINICAL)
+  templateId       String?
+  template         NoteTemplate?        @relation(fields: [templateId], references: [id])
+  templateVersion  Int?
+  noteStyle        NoteStyle            @default(HYBRID)
+  sensitivityLevel NoteSensitivityLevel @default(STANDARD_CLINICAL)
 
-  signedAt           DateTime?
-  signedByUserId     String?
+  signedAt       DateTime?
+  signedByUserId String?
 
   // Backfilled notes (rare; e.g. retroactive entry); not used in Unit 05's
   // happy path but reserved here so the migration matches the kit's
@@ -783,6 +788,12 @@ model Note {
 
   audioSegments AudioSegment[]
   artifacts     NoteArtifact[]
+
+  // Unit 06 — prior-context brief precomputed at sign + follow-ups extracted
+  // from this note's Plan section.
+  briefs           NoteBrief[]
+  originFollowUps  FollowUp[]  @relation("FollowUpOrigin")
+  closingFollowUps FollowUp[]  @relation("FollowUpClosing")
 
   @@index([orgId, status])
   @@index([patientId, createdAt])
@@ -799,22 +810,22 @@ model Note {
 // surface; Unit 05 ships only the seeded presets.
 // =============================================================================
 model NoteTemplate {
-  id                  String   @id @default(cuid())
-  orgId               String?
-  organization        Organization? @relation(fields: [orgId], references: [id])
-  name                String
-  description         String?
-  division            Division
-  specialty           String?
-  visibility          String   // 'PERSONAL' | 'TEAM' | 'PUBLIC'
-  isPreset            Boolean  @default(false)
-  sectionSchema       Json     // { sections: [{ id, label, required?, promptHint? }] }
-  promptHints         Json?
-  sensitivityDefault  NoteSensitivityLevel @default(STANDARD_CLINICAL)
-  version             Int      @default(1)
-  createdByOrgUserId  String?
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  id                 String               @id @default(cuid())
+  orgId              String?
+  organization       Organization?        @relation(fields: [orgId], references: [id])
+  name               String
+  description        String?
+  division           Division
+  specialty          String?
+  visibility         String // 'PERSONAL' | 'TEAM' | 'PUBLIC'
+  isPreset           Boolean              @default(false)
+  sectionSchema      Json // { sections: [{ id, label, required?, promptHint? }] }
+  promptHints        Json?
+  sensitivityDefault NoteSensitivityLevel @default(STANDARD_CLINICAL)
+  version            Int                  @default(1)
+  createdByOrgUserId String?
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
 
   notes Note[]
 
@@ -857,4 +868,82 @@ model AudioSegment {
   createdAt    DateTime  @default(now())
 
   @@index([noteId, segmentIndex])
+}
+
+// =============================================================================
+// Unit 06 — Prior-Context Brief + Follow-up lifecycle.
+//
+// NoteBrief is the precomputed 30-second pre-visit brief, 1:1 with a signed
+// Note. The note-brief BullMQ worker writes one of these post-sign so the
+// NEXT visit's /prepare + /capture surfaces render the brief in <1s from
+// cache. Sibling table (not a column on Note) per rule 3: Note.finalJson is
+// immutable, but the brief must remain regenerable when the prompt improves.
+//
+// FollowUp tracks clinician commitments across visits. Created at sign-time
+// by the FollowupExtractor from the just-signed note's Plan section.
+// Lifecycle: OPEN → MET / CARRIED / DROPPED / CLOSED_BY_DISCHARGE. Status
+// changes are audited and gate the sign flow (sign-time sweep modal).
+// =============================================================================
+
+enum FollowUpStatus {
+  OPEN
+  MET
+  CARRIED
+  DROPPED
+  CLOSED_BY_DISCHARGE
+}
+
+model NoteBrief {
+  id           String       @id @default(cuid())
+  noteId       String       @unique
+  note         Note         @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  patientId    String
+  patient      Patient      @relation(fields: [patientId], references: [id])
+  orgId        String
+  organization Organization @relation(fields: [orgId], references: [id])
+  episodeId    String?
+
+  sourceNoteIds    String[]
+  generatedAt      DateTime @default(now())
+  generatorVersion String
+  model            String // 'sonnet' | 'haiku' (we store the family, not the exact ID, for cross-region invalidation)
+
+  // Brief payload — PriorContextBriefContent (Zod-validated at write time).
+  // Shape lives in src/types/brief.ts. Stored as Json so prompt evolutions
+  // (Phase 13b measureKey registry etc.) don't require a migration.
+  content Json
+
+  @@index([patientId, generatedAt])
+  @@index([orgId, generatedAt])
+}
+
+model FollowUp {
+  id           String         @id @default(cuid())
+  orgId        String
+  organization Organization   @relation(fields: [orgId], references: [id])
+  patientId    String
+  patient      Patient        @relation(fields: [patientId], references: [id])
+  episodeId    String?
+  episode      EpisodeOfCare? @relation(fields: [episodeId], references: [id])
+
+  originNoteId  String
+  originNote    Note    @relation("FollowUpOrigin", fields: [originNoteId], references: [id])
+  closingNoteId String?
+  closingNote   Note?   @relation("FollowUpClosing", fields: [closingNoteId], references: [id])
+
+  text              String
+  patientFacingText String? // reserved for AVS workstream (deferred)
+  status            FollowUpStatus @default(OPEN)
+  closingNoteText   String? // required when MET (≥5 chars)
+  dropReason        String? // required when DROPPED (≥5 chars)
+
+  closedAt          DateTime?
+  closedByOrgUserId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([patientId, status])
+  @@index([orgId, status])
+  @@index([episodeId])
 }
