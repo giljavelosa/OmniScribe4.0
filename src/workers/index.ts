@@ -4,8 +4,8 @@ import { redis } from '@/lib/redis';
 import { QUEUE_NAMES } from '@/lib/queue';
 import { transcriptionHandler } from './transcription.worker';
 import { voiceIdHandler } from './voice-id.worker';
+import { aiGenerationHandler } from './ai-generation.worker';
 import {
-  aiGenerationStub,
   noteFinalizeStub,
   noteBriefStub,
   postSignArtifactsStub,
@@ -31,7 +31,7 @@ const baseOptions: WorkerOptions = { connection: redis };
 
 const workers = [
   new Worker(QUEUE_NAMES.transcription, transcriptionHandler, baseOptions),
-  new Worker(QUEUE_NAMES.aiGeneration, aiGenerationStub, baseOptions),
+  new Worker(QUEUE_NAMES.aiGeneration, aiGenerationHandler, baseOptions),
   new Worker(QUEUE_NAMES.noteFinalize, noteFinalizeStub, baseOptions),
   new Worker(QUEUE_NAMES.voiceId, voiceIdHandler, baseOptions),
   new Worker(QUEUE_NAMES.noteBrief, noteBriefStub, baseOptions),
