@@ -8,6 +8,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { PatientIdentityHeader } from '@/components/patients/patient-identity-header';
+import { BriefCard } from '@/components/brief/brief-card';
+import { EmptyBrief } from '@/components/brief/empty-brief';
+import type { PriorContextBriefContent } from '@/types/brief';
 import { PasteTranscriptForm } from './_components/paste-transcript-form';
 import { UploadAudioForm } from './_components/upload-audio-form';
 
@@ -23,23 +26,66 @@ export default async function PreparePage({ params }: { params: Promise<{ noteId
     where: { id: noteId, orgId: session.user.orgId },
     include: {
       patient: true,
-      encounter: { include: { schedule: true } },
+      encounter: { include: { schedule: true, episode: true } },
     },
   });
   if (!note) notFound();
 
   const isPreparing = note.status === 'PREPARING';
 
+  // Prior-context brief: prefer same-episode most-recent, fall back to
+  // patient-wide. The query is two indexed reads worst-case — well under the
+  // 1s render budget.
+  const episodeId = note.encounter?.episodeOfCareId ?? null;
+  const brief =
+    (episodeId
+      ? await prisma.noteBrief.findFirst({
+          where: { patientId: note.patientId, orgId: session.user.orgId, episodeId },
+          orderBy: { generatedAt: 'desc' },
+        })
+      : null) ??
+    (await prisma.noteBrief.findFirst({
+      where: { patientId: note.patientId, orgId: session.user.orgId },
+      orderBy: { generatedAt: 'desc' },
+    }));
+
+  const hasPriorSignedNote = await prisma.note.findFirst({
+    where: {
+      patientId: note.patientId,
+      orgId: session.user.orgId,
+      id: { not: noteId },
+      status: { in: ['SIGNED', 'TRANSFERRED'] },
+    },
+    select: { id: true },
+  });
+  const patientDisplayName = `${note.patient.firstName} ${note.patient.lastName[0] ?? ''}.`.trim();
+  // Server component runs once per request; "now" is request-scoped and safe.
+  // eslint-disable-next-line react-hooks/purity
+  const nowMs = Date.now();
+
   return (
     <div className="mx-auto max-w-4xl px-4 py-6 space-y-6">
       <PatientIdentityHeader patient={note.patient} />
+
+      {brief ? (
+        <BriefCard
+          content={brief.content as unknown as PriorContextBriefContent}
+          nowMs={nowMs}
+        />
+      ) : (
+        <EmptyBrief
+          variant={hasPriorSignedNote ? 'unavailable' : 'first-visit'}
+          patientName={patientDisplayName}
+          patientId={note.patient.id}
+        />
+      )}
 
       <Card>
         <CardHeader>
           <CardTitle>Prepare for visit</CardTitle>
           <CardDescription>
-            Prior-context brief lands in Unit 06; the setup form (template + style) lands in Unit 05.
-            For Unit 03 you can record live, upload an existing audio file, or paste a transcript.
+            Record live, upload an existing audio file, or paste a transcript. Template + note
+            style come from your saved defaults; the AI draft generates after capture finishes.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3 text-sm">
