@@ -91,6 +91,7 @@ model Organization {
   ipAllowlistEntries  IpAllowlistEntry[]
   patients            Patient[]
   departments         Department[]
+  noteTemplates       NoteTemplate[]
 
   @@index([baaExecutedAt])
 }
@@ -421,14 +422,16 @@ enum NoteSensitivityLevel {
 
 // NoteStatus — APPEND-ONLY per anti-regression rule 2.
 // Unit 02 shipped PREPARING; Unit 03 appended RECORDING/PAUSED/TRANSCRIBING.
-// Unit 04 appends DRAFTING + INTERRUPTED (worker-failure terminal state with
-// retry-restore semantics). Unit 05 will append DRAFT / REVIEWING / SIGNED /
-// TRANSFERRED / PENDING_REVIEW.
+// Unit 04 appended DRAFTING + INTERRUPTED.
+// Unit 05 appends DRAFT (sections all populated; ready for clinician review),
+// REVIEWING (clinician actively in /review), SIGNED (finalJson frozen),
+// TRANSFERRED (post-sign hand-off — EHR push when FHIR write lands),
+// PENDING_REVIEW (auto-paused waiting for clinician attention).
 //
 // Canonical transition graph (spec §G):
 //   PREPARING → RECORDING → (PAUSED ↔ RECORDING) → TRANSCRIBING → DRAFTING
-//                                                       ↓
-//                                                   INTERRUPTED (recoverable; retry restores)
+//                                                       ↓               ↓
+//                                                   INTERRUPTED     DRAFT → REVIEWING → SIGNED → (TRANSFERRED)
 enum NoteStatus {
   PREPARING
   RECORDING
@@ -436,6 +439,19 @@ enum NoteStatus {
   TRANSCRIBING
   DRAFTING
   INTERRUPTED
+  DRAFT
+  REVIEWING
+  SIGNED
+  TRANSFERRED
+  PENDING_REVIEW
+}
+
+// NoteArtifactKind — post-sign generated documents that are SEPARATE from
+// finalJson. They never modify the signed note (rule 3); they're sibling
+// records produced by the post-sign-artifacts worker.
+enum NoteArtifactKind {
+  PATIENT_INSTRUCTIONS
+  REFERRAL_LETTER
 }
 
 // CaptureMode — how the audio/transcript got into the system.
@@ -732,19 +748,93 @@ model Note {
 
   // Unit 04 — worker pipeline metadata.
   // inferenceLog tracks per-section AI generation state (Unit 05 writes
-  // _sectionStatus), worker retry counts, and recent transitions. PHI-free
-  // shape; never embed transcript content or patient identifiers in here.
+  // _sectionStatus + _regenerations), worker retry counts, and recent
+  // transitions. PHI-free shape; never embed transcript content or patient
+  // identifiers in here.
   inferenceLog    Json?
   interruptedAt   DateTime?   // set when a worker hits its retry limit
   lastWorkerError String?     // class + message of the last fatal failure (PHI-free)
+
+  // Unit 05 — note generation + sign.
+  // draftJson holds the in-progress structured note; finalJson is the FROZEN
+  // attested artifact (anti-regression rule 3: NEVER modified after sign,
+  // addenda are NoteArtifact rows). Both are TipTap-flavored JSON ({type:
+  // 'doc', content: [...]}) keyed by section id; see lib/notes/sections.ts.
+  draftJson          Json?
+  finalJson          Json?  // IMMUTABLE after status === SIGNED
+
+  templateId         String?
+  template           NoteTemplate? @relation(fields: [templateId], references: [id])
+  templateVersion    Int?
+  noteStyle          NoteStyle @default(HYBRID)
+  sensitivityLevel   NoteSensitivityLevel @default(STANDARD_CLINICAL)
+
+  signedAt           DateTime?
+  signedByUserId     String?
+
+  // Backfilled notes (rare; e.g. retroactive entry); not used in Unit 05's
+  // happy path but reserved here so the migration matches the kit's
+  // architecture.md model definition.
+  backfilledAt   DateTime?
+  backfillReason String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   audioSegments AudioSegment[]
+  artifacts     NoteArtifact[]
 
   @@index([orgId, status])
   @@index([patientId, createdAt])
+  @@index([patientId, status])
+}
+
+// =============================================================================
+// NoteTemplate — section schema + prompt hints used by the ai-generation
+// worker. Visibility scopes the template to org/team/public; preset templates
+// (isPreset=true) ship from the seed and can't be edited by clinicians.
+//
+// sectionSchema is the canonical shape: { sections: [{ id, label, required?,
+// promptHint? }] }. Unit 13 (templates editor maturity) ships the authoring
+// surface; Unit 05 ships only the seeded presets.
+// =============================================================================
+model NoteTemplate {
+  id                  String   @id @default(cuid())
+  orgId               String?
+  organization        Organization? @relation(fields: [orgId], references: [id])
+  name                String
+  description         String?
+  division            Division
+  specialty           String?
+  visibility          String   // 'PERSONAL' | 'TEAM' | 'PUBLIC'
+  isPreset            Boolean  @default(false)
+  sectionSchema       Json     // { sections: [{ id, label, required?, promptHint? }] }
+  promptHints         Json?
+  sensitivityDefault  NoteSensitivityLevel @default(STANDARD_CLINICAL)
+  version             Int      @default(1)
+  createdByOrgUserId  String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  notes Note[]
+
+  @@index([orgId, division, isPreset])
+}
+
+// =============================================================================
+// NoteArtifact — post-sign generated documents. SEPARATE from finalJson
+// (rule 3). Patient instructions + referral letters live here. The
+// post-sign-artifacts worker writes these AFTER the sign transaction commits.
+// =============================================================================
+model NoteArtifact {
+  id          String           @id @default(cuid())
+  noteId      String
+  note        Note             @relation(fields: [noteId], references: [id])
+  kind        NoteArtifactKind
+  content     Json
+  generatedAt DateTime         @default(now())
+
+  @@index([noteId, kind])
 }
 
 // =============================================================================
