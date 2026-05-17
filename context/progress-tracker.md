@@ -4,11 +4,11 @@
 
 ## Current Phase
 
-- **Wave 2 — opening.** Unit 10 shipped (PR #11 — branch `feat/unit-10-section-regen-maturity`). Wave 1 complete (PRs #6–#10). Wave 0 complete (PRs #1–#5). Wave 2 polishes the clinical surfaces: Unit 10 closes the trust gaps on the regenerate flow (SSE reconnect with backoff + visible connection status, per-section diff dialog with "show what changed", failure-recovery banner with retry-all-failed, regeneration observability via `_sectionStats` rolling-window p50/p95).
+- **Wave 2 — progressing.** Unit 11 shipped (PR #12 — branch `feat/unit-11-episode-maturity`). Unit 10 shipped (PR #11). Wave 1 complete (PRs #6–#10). Wave 0 complete (PRs #1–#5). Wave 2 maturing the clinical surfaces: Unit 10 closed regenerate-flow trust gaps; Unit 11 fills in the Episode-of-Care lifecycle (recert cycles with per-episode cadence, visit counter on sign, goal-progression with trail, episode close/reopen with cascading follow-up closure, division-override surfacing, cron-callable sweep endpoint).
 
 ## Current Goal
 
-- Await user confirmation before starting Unit 11 — Episode-of-care maturity (Wave 2 / unit 2), per Prompt B's stop-between-units contract.
+- Await user confirmation before starting Unit 12 — Patient detail redesign (Wave 2 / unit 3), per Prompt B's stop-between-units contract.
 
 ## Completed
 
@@ -150,6 +150,15 @@
   - Regeneration observability: `inferenceLog._sectionStats` aggregate (`totalAttempts`, `successCount`, `failureCount`, `latencyP50Ms`, `latencyP95Ms`, `lastUpdatedAt`, `recentLatenciesMs` rolling window capped at 50). `recordSectionAttempt()` helper called from both the generate-note loop and the regenerate-section path. `GET /api/notes/[id]/regen-stats` admin-scoped read for ops dashboards (5 unit tests on the percentile helper).
   - 17 new tests total (8 line-diff + 5 percentile + 4 existing + extensions); 102 tests across 15 files pass.
 
+- **2026-05-17 — Unit 11: Episode-of-care maturity** (PR #12 — `feat(unit-11): episode-of-care maturity`).
+  - Spec at `context/specs/11-episode-of-care-maturity.md`.
+  - 10 new AuditAction values (EPISODE_RECERT_TRIGGERED, EPISODE_RECERTIFIED, EPISODE_DISCHARGED, EPISODE_REOPENED, EPISODE_UPDATED, EPISODE_VISIT_COUNT_INCREMENTED, EPISODE_VISIT_LIMIT_OVERRIDE, EPISODE_SWEEP_RUN, GOAL_STATUS_CHANGED, GOAL_PROGRESS_ENTRY_ADDED).
+  - Schema: EpisodeOfCare gets `recertIntervalDays Int @default(90)` + `closeReason` + `reopenReason` + index `(orgId, status, recertDueAt)` driving the sweep query. GoalProgressEntry relaxed: `noteId` becomes optional, added `statusAtEntry` / `deltaNote` / `recordedByOrgUserId` so progression captured outside a note context can still write trail rows.
+  - APIs: `PATCH /api/episodes/[id]` (diagnosis / bodyPart / recertIntervalDays 7-365 / visitsAuthorized), `POST /api/episodes/[id]/recertify` (resets cycle, RECERT_DUE → ACTIVE), `POST /api/episodes/[id]/close` (DISCHARGED + cascades open follow-ups to CLOSED_BY_DISCHARGE in one $transaction), `POST /api/episodes/[id]/reopen` (DISCHARGED → ACTIVE; reason ≥10 chars), `POST /api/episodes/[id]/goals` (add goal), `PATCH /api/episodes/[id]/goals/[goalId]` (status + delta; MODIFIED + DISCONTINUED REQUIRE deltaNote; writes GoalProgressEntry trail row on status change or measure update), `POST /api/admin/episodes/sweep` (cron-callable; flips ACTIVE episodes past recertDueAt to RECERT_DUE; capped at 500 per run).
+  - Visit-counter hook in `/api/notes/[id]/sign`: after the sign transaction commits + before post-sign enqueues, increments EpisodeOfCare.visitsCompleted atomically via prisma `increment`. Audits with both new + cap so dashboards can spot patients approaching their auth limit.
+  - EpisodesPanel UI on `/patients/[id]`: per-episode card with division-override badge (warning when episode.division ≠ patient.division), recert chip (color by days-until-due), visit progress chip (color by % of cap), Recertify button, AlertDialog-driven Close + Reopen. GoalsSection per episode with inline "Update status" — MODIFIED + DISCONTINUED prompt the delta-note textarea client-side; the API also enforces.
+  - Patient detail query now includes DISCHARGED episodes so Reopen is reachable + close history visible. Sorted active-first.
+
 ## In Progress
 
 None.
@@ -158,7 +167,7 @@ None.
 
 In priority order:
 
-1. **Unit 11 — Episode-of-care maturity** — recert cycles (90-day default, customizable), visit counters + auth limits, goal-progression UX (clinician marks goal Met / Modified / Discontinued), episode close + reopen workflows, per-episode division override surfaced cleanly.
+1. **Unit 12 — Patient detail redesign** ([`references/patient-detail-spec.md`](../references/patient-detail-spec.md), [`references/patient-detail-ui-spec.md`](../references/patient-detail-ui-spec.md)) — full /patients/[id] implementation: identity header with inline-editable demographics, snapshot strip (division-keyed measure cards), visit history (2-line assessment per row), reference cards (active goals / watch / open follow-ups), recert/reopen AlertDialog replacing black-overlay pattern, SnapshotOverride table for clinician-edited measures.
 8. **Unit 07 — Encounter Copilot Watch v0** ([`context/specs/07-encounter-copilot-watch-v0.md`](specs/07-encounter-copilot-watch-v0.md)) — beacon + open-follow-ups + plan-for-today cards.
 9. **Unit 08 — Admin & Compliance Ready** ([`context/specs/08-admin-and-compliance-ready.md`](specs/08-admin-and-compliance-ready.md)) — Sites + Rooms CRUD, admin-initiated MFA reset + password reset, customer self-onboarding wizard, BAA admin UI.
 
@@ -298,6 +307,16 @@ These need user/PM decision before the depending unit can ship. Quote the source
 - **2026-05-17 — Batch retry is sequential, not parallel.** Bedrock rate limits + the LLM-cost model both favor serial. Per-row inline error feedback gives the clinician visibility into which retries failed without blocking the queue of remaining ones — a 503 on section 2 doesn't stop sections 3-5 from going through.
 - **2026-05-17 — `_sectionStats` is per-NOTE, not per-org.** v1 ships note-level observability; per-org/per-template aggregation is a Wave 3 ops console concern. The single-note grain is enough to spot a single visit's pipeline failure pattern; cross-visit trends need a different data shape (probably a separate `SectionAttempt` table indexed by orgId + day) and that's not Wave 2's problem.
 - **2026-05-17 — RECENT_LATENCY_CAP = 50 for the rolling window.** Smaller than a typical-visit attempt count (~20-30) means short-visit p50/p95 reflects the full visit; larger means cross-visit smoothing for high-volume notes. 50 is the compromise — single source of truth, easy to tune later. The window IS the data — once recentLatenciesMs[0] rotates out, the original timing is gone (totalAttempts/successCount/failureCount cumulative counters retain the long-horizon view).
+
+### Unit 11 (2026-05-17)
+
+- **2026-05-17 — Visit counter lives in the sign route, not on encounter completion.** The encounter is "complete" when the clinician finishes recording, but the visit isn't "billable" until the note is signed. Hooking on sign means a visit only counts when its documentation is legally attested — matches the auditor's mental model. The hook is OUTSIDE the sign transaction so a counter failure (e.g., the episode was deleted between sign and post-tx) doesn't roll back the sign itself; counter failures log + move on. We use prisma `increment` so the write is atomic at the DB layer — no read-modify-write race if two notes for the same episode somehow sign concurrently (rare but possible during a backfill).
+- **2026-05-17 — recertIntervalDays bounded at 7-365 days.** Real-world OT/PT auth periods are typically 30-90 days; medical follow-up cycles can stretch to 6 months. 7 day floor prevents accidental "recert every day" mistakes (a typo of 7 vs 70). 365 ceiling prevents accidental "recert never" — annual is the longest legitimate cycle and "never" should be CANCELLED or DISCHARGED instead. Bounds enforced at the API layer so future surfaces (template editor, owner-side policy) inherit them automatically.
+- **2026-05-17 — Episode close cascades open FollowUps to CLOSED_BY_DISCHARGE.** The lifecycle invariant from Unit 06 spec §6.3 lands here. Reasoning: a closed episode shouldn't leak open commitments into the next visit's brief (a CARRIED follow-up from a discharged episode is noise, not signal). The cascade runs in the same $transaction as the episode close so the two changes commit atomically — there's never a moment where the episode is DISCHARGED but its follow-ups are still OPEN.
+- **2026-05-17 — MODIFIED + DISCONTINUED goal statuses REQUIRE a deltaNote.** Server-enforced at PATCH /api/episodes/[id]/goals/[goalId]. Reasoning: these are the two transitions where "why" is load-bearing for the compliance trail — a MET goal is self-explanatory ("we hit the target"), but MODIFIED needs to record what changed and DISCONTINUED needs to record why we gave up. Other transitions (ACTIVE → PARTIALLY_MET, etc.) are optional. The deltaNote lands in the GoalProgressEntry row's deltaNote field; the API surfaces a 400 with explicit code if it's missing.
+- **2026-05-17 — Recert sweep is an HTTP endpoint, not a BullMQ scheduled job.** External cron calls the endpoint; the server runs the scan + flips synchronously. Reasoning: (a) the sweep is bounded (capped at 500 episodes per run); (b) bullmq scheduler integration is real ops work (timezone handling, retry backoff, dead-letter) that doesn't pay off until the org count grows past ~10; (c) the HTTP shape makes the sweep trivially debuggable + replayable from curl. Wave 3 ops console likely converts this to a managed job.
+- **2026-05-17 — Per-episode division override surfaced with a `≠ patient (DIVISION)` chip.** EpisodeOfCare.division can legitimately differ from Patient.division (a primarily-MEDICAL patient with a REHAB episode for ortho recovery). Showing the divergence as a warning-colored chip flags it without implying it's a bug. Clinicians notice it once and learn the system supports per-episode division; auditors see at a glance that the episode-level scoping is intentional.
+- **2026-05-17 — DISCHARGED episodes show on patient detail with Reopen action.** Spec only required ACTIVE + RECERT_DUE in the active-episodes list, but a buried Reopen action is bad UX — the clinician needs to see "this episode is closed" + "here's how to reopen it" in one place. CANCELLED still hidden (cancelled episodes shouldn't surface visually; they're admin-side noise).
 
 ### Pre-existing (foundational, from spec)
 
