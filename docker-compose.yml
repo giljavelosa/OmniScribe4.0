@@ -1,6 +1,7 @@
 # Local-only dev stack: Postgres (with pgvector) + Redis.
 # Production uses managed services (RDS + ElastiCache + S3) — see infra/ later.
-# Ports remap to host 5433/6380 to avoid collisions with locally-installed services.
+# Ports remap to host 5434/6381 to avoid collisions with locally-installed services
+# and with other running Docker stacks (e.g. legacy `genscribe_copy` already holds 5433/6380).
 
 services:
   postgres:
@@ -11,7 +12,7 @@ services:
       POSTGRES_USER: omniscribe
       POSTGRES_PASSWORD: localpassword
     ports:
-      - "5433:5432"
+      - "5434:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -26,7 +27,7 @@ services:
     container_name: omniscribe-redis
     command: redis-server --requirepass localpassword --appendonly yes
     ports:
-      - "6380:6379"
+      - "6381:6379"
     volumes:
       - redis_data:/data
     healthcheck:

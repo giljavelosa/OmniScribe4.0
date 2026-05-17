@@ -16,7 +16,7 @@
 cp .env.example .env
 # Fill NEXTAUTH_SECRET with: openssl rand -base64 32
 
-docker compose up -d                # postgres (host 5433) + redis (host 6380)
+docker compose up -d                # postgres (host 5434) + redis (host 6381)
 docker compose ps                   # both services should be "healthy"
 
 npm install                         # postinstall runs `prisma generate`
