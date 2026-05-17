@@ -4,7 +4,7 @@ import { prisma } from '@/lib/prisma';
 import { requireFeatureAccess } from '@/lib/authz/server';
 import { assertOrgScoped } from '@/lib/phi-access';
 import { writeAuditLog } from '@/lib/audit/log';
-import { readSectionStatus } from '@/lib/notes/section-status';
+import { readSectionStatus, readInferenceLog } from '@/lib/notes/section-status';
 import { deriveProgressStrip, isReadyForSign } from '@/lib/notes/derive-progress-strip';
 import type { NoteSectionDef } from '@/lib/notes/build-prompt';
 
@@ -73,6 +73,15 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const progress = deriveProgressStrip(sections, sectionStatus);
   const readyForSign = isReadyForSign(progress);
 
+  // Unit 10: per-section flag — does the section have at least one
+  // regeneration entry with captured previousContent? Drives the
+  // "Show what changed" link in the SectionAccordion.
+  const regenerations = readInferenceLog(note.inferenceLog)._regenerations ?? [];
+  const sectionHasRegenHistory: Record<string, boolean> = {};
+  for (const r of regenerations) {
+    if (r.previousContent !== undefined) sectionHasRegenHistory[r.sectionId] = true;
+  }
+
   await writeAuditLog({
     userId: user.id,
     orgId: orgUser.orgId,
@@ -101,6 +110,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       encounter: note.encounter,
       sections,
       sectionStatus,
+      sectionHasRegenHistory,
       progress,
       readyForSign,
       draftJson: note.draftJson,

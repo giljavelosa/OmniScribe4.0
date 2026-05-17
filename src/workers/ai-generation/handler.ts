@@ -255,6 +255,16 @@ async function regenerateOne(
     throw new Error(`regenerate-section: section ${sectionId} not in template`);
   }
 
+  // Snapshot the PREVIOUS content BEFORE we mark status=generating + overwrite.
+  // Unit 10: the diff dialog renders this against the new content so the
+  // clinician can confirm "what changed."
+  const beforeNote = await prisma.note.findUnique({
+    where: { id: noteId },
+    select: { draftJson: true },
+  });
+  const beforeDraft = (beforeNote?.draftJson as Record<string, { content: string }> | null) ?? {};
+  const previousContent = beforeDraft[sectionId]?.content;
+
   await markSectionStatus(noteId, sectionId, {
     status: 'generating',
     generationStartedAt: new Date().toISOString(),
@@ -282,6 +292,7 @@ async function regenerateOne(
       triggeredByUserId,
       at: new Date().toISOString(),
       overwroteEdited: !!overwroteEdited,
+      previousContent,
     });
     await writeAuditLog({
       orgId,

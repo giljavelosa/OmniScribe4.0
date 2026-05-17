@@ -36,6 +36,9 @@ type ReviewSnapshot = {
   };
   sections: NoteSectionDef[];
   sectionStatus: Record<string, SectionStatusEntry>;
+  /** Per-section flag — see /api/notes/[id] route. Drives the
+   *  "Show what changed" link visibility in SectionAccordion. */
+  sectionHasRegenHistory: Record<string, boolean>;
   draftJson: Record<string, { content: string; updatedAt: string }> | null;
   finalJson: Record<string, { content: string; updatedAt: string }> | null;
   lastWorkerError: string | null;
@@ -151,6 +154,7 @@ export function ReviewClient({ noteId, initial, copilotFollowUps }: Props) {
                 isRequired={!!section.required}
                 initialContent={draftMap[section.id]?.content ?? ''}
                 initialStatus={snap.sectionStatus[section.id]?.status ?? 'empty'}
+                hasRegenHistory={snap.sectionHasRegenHistory?.[section.id] ?? false}
                 readOnly={isSigned}
               />
             ))

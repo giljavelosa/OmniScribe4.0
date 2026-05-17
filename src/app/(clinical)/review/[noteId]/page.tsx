@@ -4,7 +4,7 @@ import { notFound, redirect } from 'next/navigation';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { writeAuditLog } from '@/lib/audit/log';
-import { readSectionStatus } from '@/lib/notes/section-status';
+import { readSectionStatus, readInferenceLog } from '@/lib/notes/section-status';
 import type { NoteSectionDef } from '@/lib/notes/build-prompt';
 import { CopilotShell } from '@/components/copilot/copilot-shell';
 import type { CopilotFollowUp } from '@/components/copilot/cards/open-followups-card';
@@ -49,6 +49,13 @@ export default async function ReviewPage({ params }: { params: Promise<{ noteId:
   const sections =
     (note.template?.sectionSchema as { sections: NoteSectionDef[] } | null)?.sections ?? [];
   const sectionStatus = readSectionStatus(note.inferenceLog);
+  // Same per-section regen flag as the GET /api/notes/[id] response uses.
+  // Drives the "Show what changed" link visibility in SectionAccordion.
+  const regenerations = readInferenceLog(note.inferenceLog)._regenerations ?? [];
+  const sectionHasRegenHistory: Record<string, boolean> = {};
+  for (const r of regenerations) {
+    if (r.previousContent !== undefined) sectionHasRegenHistory[r.sectionId] = true;
+  }
 
   // Live open follow-ups for the Watch v0 OpenFollowUpsCard in the sidebar.
   // Rule 20: rows derive from extraction over SIGNED notes only (Unit 06).
@@ -89,6 +96,7 @@ export default async function ReviewPage({ params }: { params: Promise<{ noteId:
           },
           sections,
           sectionStatus,
+          sectionHasRegenHistory,
           draftJson: note.draftJson as Record<string, { content: string; updatedAt: string }> | null,
           finalJson: note.finalJson as Record<string, { content: string; updatedAt: string }> | null,
           lastWorkerError: note.lastWorkerError,

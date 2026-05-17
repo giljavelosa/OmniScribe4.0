@@ -1,11 +1,12 @@
 'use client';
 
 import { useEffect, useRef, useState, useTransition } from 'react';
-import { ChevronDown, RotateCw, Loader2, AlertCircle, Check, Pencil, Circle } from 'lucide-react';
+import { ChevronDown, RotateCw, Loader2, AlertCircle, Check, Pencil, Circle, History } from 'lucide-react';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/cn';
 import { SectionRegenerateConfirmDialog } from './section-regenerate-confirm-dialog';
+import { SectionDiffDialog } from './section-diff-dialog';
 
 type Status = 'empty' | 'generating' | 'populated' | 'edited' | 'failed';
 
@@ -18,6 +19,10 @@ type Props = {
   initialStatus: Status;
   /** Disable editing + regenerate (e.g. SIGNED note). */
   readOnly?: boolean;
+  /** True when at least one entry in inferenceLog._regenerations carries
+   *  previousContent for this section. Unlocks the "Show what changed"
+   *  link that opens the diff dialog. */
+  hasRegenHistory?: boolean;
   onLocalEdit?: () => void;
 };
 
@@ -40,6 +45,7 @@ export function SectionAccordion({
   initialContent,
   initialStatus,
   readOnly,
+  hasRegenHistory,
   onLocalEdit,
 }: Props) {
   const [expanded, setExpanded] = useState(true);
@@ -47,6 +53,7 @@ export function SectionAccordion({
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmRegenOpen, setConfirmRegenOpen] = useState(false);
+  const [diffOpen, setDiffOpen] = useState(false);
   const [regenPending, startRegen] = useTransition();
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasUserEditedRef = useRef(false);
@@ -157,6 +164,18 @@ export function SectionAccordion({
           )}
           {!readOnly && (
             <div className="flex items-center justify-end gap-2">
+              {hasRegenHistory && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setDiffOpen(true)}
+                  className="gap-1"
+                  type="button"
+                >
+                  <History className="h-3 w-3" aria-hidden />
+                  Show what changed
+                </Button>
+              )}
               <Button
                 variant="outline"
                 size="sm"
@@ -179,6 +198,13 @@ export function SectionAccordion({
           setConfirmRegenOpen(false);
           regenerate(true);
         }}
+      />
+      <SectionDiffDialog
+        open={diffOpen}
+        onOpenChange={setDiffOpen}
+        noteId={noteId}
+        sectionId={sectionId}
+        sectionLabel={label}
       />
     </div>
   );
