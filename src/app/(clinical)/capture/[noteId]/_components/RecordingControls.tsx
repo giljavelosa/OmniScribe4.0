@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Pause, Play, Mic, Sparkles, ArrowRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -33,6 +33,15 @@ export function RecordingControls({ noteId, draftStarted = false }: Props) {
   const { start, pause, resume, finish } = useCaptureControls();
   const router = useRouter();
   const [leaveOpen, setLeaveOpen] = useState(false);
+
+  // After finish() resolves to state.kind === 'complete', route to
+  // /processing so the clinician sees the reassurance screen while the
+  // transcription + ai-generation workers run.
+  useEffect(() => {
+    if (state.kind === 'complete') {
+      router.push(`/processing/${noteId}`);
+    }
+  }, [state.kind, noteId, router]);
 
   const isIdle = state.kind === 'idle' || state.kind === 'error';
   const isRecording = state.kind === 'recording';
@@ -73,25 +82,27 @@ export function RecordingControls({ noteId, draftStarted = false }: Props) {
         </Button>
       )}
 
-      {/* Pre-draft: Start Drafting is the LOUD primary CTA. */}
+      {/* Start Drafting placeholder — in Unit 05 the worker auto-drafts AFTER
+          Finish & Review (no manual button). Kept disabled with an updated
+          tooltip in case a clinician's muscle memory still reaches for it. */}
       {!draftStarted && (
         <Button
           disabled
+          variant="ghost"
           className="gap-2"
-          title="Start Drafting wakes up in Unit 05 (LLM abstraction + division prompts)."
+          title="Drafting starts automatically after Finish & Review."
         >
           <Sparkles className="h-4 w-4" aria-hidden />
-          Start Drafting
+          Auto-draft on finish
         </Button>
       )}
 
-      {/* Finish & Review:
-            - pre-draft: outlined neutral (QUIET so the clinician doesn't hit
-              it before drafting starts — design-critique-capture-flow.md
-              identifies this as the #1 prior-prototype friction)
-            - post-draft: filled primary teal (the affirmative end-of-flow) */}
+      {/* Finish & Review — the affirmative end-of-flow CTA. Since drafting
+          is auto-triggered server-side (Unit 04 transcription worker enqueues
+          ai-generation on TRANSCRIBING → DRAFTING), this button is the
+          intentional loud action in both pre-draft and post-draft states. */}
       <Button
-        variant={draftStarted ? 'default' : 'outline'}
+        variant="default"
         onClick={() => void finish()}
         disabled={isBusy}
         className="gap-2"
