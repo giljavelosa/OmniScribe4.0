@@ -49,8 +49,11 @@ const episode = projectEpisodeForBrief({
   startedAt: new Date(),
   endedAt: null,
   recertDueAt: null,
+  recertIntervalDays: 90,
   visitsAuthorized: 6,
   visitsCompleted: 4,
+  closeReason: null,
+  reopenReason: null,
 });
 
 const buildPriorNote = (id: string, dateIso: string, content: string) =>

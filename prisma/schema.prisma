@@ -692,14 +692,22 @@ model EpisodeOfCare {
   startedAt          DateTime      @default(now())
   endedAt            DateTime?
   recertDueAt        DateTime?
+  /** Configurable per-episode recert cadence. Default 90 days; API layer
+   *  enforces min 7, max 365 (Unit 11). */
+  recertIntervalDays Int           @default(90)
   visitsAuthorized   Int?
   visitsCompleted    Int           @default(0)
+  /** DISCHARGED close-out reason (optional). */
+  closeReason        String?
+  /** DISCHARGED → ACTIVE re-open reason (required at API). */
+  reopenReason       String?
 
   goals      EpisodeGoal[]
   encounters Encounter[]
   followUps  FollowUp[]
 
   @@index([patientId, status])
+  @@index([orgId, status, recertDueAt])
 }
 
 model EpisodeGoal {
