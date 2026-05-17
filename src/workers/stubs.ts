@@ -7,11 +7,11 @@ import type { Job } from 'bullmq';
  *
  * - ai-generation handler   → REAL in Unit 05 (lives in ./ai-generation.worker.ts)
  * - post-sign-artifacts     → REAL in Unit 05 (lives in ./post-sign-artifacts.worker.ts)
+ * - note-brief handler      → REAL in Unit 06 (lives in ./note-brief.worker.ts)
  * - note-finalize handler   → no production use today; sign is a synchronous
  *   transaction in /api/notes/[id]/sign (spec §H). The queue is retained for
  *   future async-finalize use cases (telehealth post-call handoff, batch
  *   re-sign workflows).
- * - note-brief handler      → REAL in Unit 06 (BriefGenerator).
  */
 
 function logStub(name: string) {
@@ -22,4 +22,3 @@ function logStub(name: string) {
 }
 
 export const noteFinalizeStub = logStub('note-finalize');
-export const noteBriefStub = logStub('note-brief');

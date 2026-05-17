@@ -6,7 +6,8 @@ import { transcriptionHandler } from './transcription.worker';
 import { voiceIdHandler } from './voice-id.worker';
 import { aiGenerationHandler } from './ai-generation.worker';
 import { postSignArtifactsHandler } from './post-sign-artifacts.worker';
-import { noteFinalizeStub, noteBriefStub } from './stubs';
+import { noteBriefHandler } from './note-brief.worker';
+import { noteFinalizeStub } from './stubs';
 
 /**
  * OmniScribe worker fleet entry point.
@@ -31,7 +32,7 @@ const workers = [
   new Worker(QUEUE_NAMES.aiGeneration, aiGenerationHandler, baseOptions),
   new Worker(QUEUE_NAMES.noteFinalize, noteFinalizeStub, baseOptions),
   new Worker(QUEUE_NAMES.voiceId, voiceIdHandler, baseOptions),
-  new Worker(QUEUE_NAMES.noteBrief, noteBriefStub, baseOptions),
+  new Worker(QUEUE_NAMES.noteBrief, noteBriefHandler, baseOptions),
   new Worker(QUEUE_NAMES.postSignArtifacts, postSignArtifactsHandler, baseOptions),
 ];
 
