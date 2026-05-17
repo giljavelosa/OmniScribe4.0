@@ -1,0 +1,41 @@
+# Local-only dev stack: Postgres (with pgvector) + Redis.
+# Production uses managed services (RDS + ElastiCache + S3) — see infra/ later.
+# Ports remap to host 5433/6380 to avoid collisions with locally-installed services.
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: omniscribe-postgres
+    environment:
+      POSTGRES_DB: omniscribe_dev
+      POSTGRES_USER: omniscribe
+      POSTGRES_PASSWORD: localpassword
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U omniscribe -d omniscribe_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: omniscribe-redis
+    command: redis-server --requirepass localpassword --appendonly yes
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "localpassword", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
