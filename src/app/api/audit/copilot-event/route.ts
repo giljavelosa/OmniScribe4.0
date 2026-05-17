@@ -21,6 +21,10 @@ const ALLOWED_ACTIONS: ReadonlyArray<AuditAction> = [
   // FailureRecoveryBanner on /review. itemCount carries the count of
   // sections being retried; no PHI.
   'SECTION_REGEN_RETRY_BATCH',
+  // Unit 14 — per-section copy-to-clipboard for EHR-paste workflows.
+  // itemCount carries the character count of what was copied (no
+  // content; the route's schema only accepts numbers).
+  'SECTION_COPIED_TO_CLIPBOARD',
 ];
 
 const bodySchema = z.object({
@@ -28,7 +32,7 @@ const bodySchema = z.object({
   surface: z.enum(SURFACES),
   noteId: z.string().min(1).max(64),
   cardType: z.enum(['open-followups', 'plan-for-today']).optional(),
-  itemCount: z.number().int().min(0).max(1000).optional(),
+  itemCount: z.number().int().min(0).max(100_000).optional(),
 });
 
 /**

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, useTransition } from 'react';
-import { ChevronDown, RotateCw, Loader2, AlertCircle, Check, Pencil, Circle, History } from 'lucide-react';
+import { ChevronDown, Copy, RotateCw, Loader2, AlertCircle, Check, Pencil, Circle, History } from 'lucide-react';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/cn';
@@ -52,6 +52,7 @@ export function SectionAccordion({
   const [content, setContent] = useState(initialContent);
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [justCopied, setJustCopied] = useState(false);
   const [confirmRegenOpen, setConfirmRegenOpen] = useState(false);
   const [diffOpen, setDiffOpen] = useState(false);
   const [regenPending, startRegen] = useTransition();
@@ -123,8 +124,38 @@ export function SectionAccordion({
     });
   }
 
+  async function copyToClipboard(e: React.MouseEvent) {
+    e.stopPropagation();
+    try {
+      // Header line + content — handy for EHR paste workflows where the
+      // payer system labels each section by name.
+      await navigator.clipboard.writeText(`${label}\n${'='.repeat(label.length)}\n${content}`);
+      setJustCopied(true);
+      setTimeout(() => setJustCopied(false), 2000);
+      // Best-effort audit: fire the copilot-event endpoint with the
+      // SECTION_COPIED_TO_CLIPBOARD action (added to the allowlist in
+      // Unit 14). Render isn't blocked by audit failure.
+      void fetch('/api/audit/copilot-event', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'SECTION_COPIED_TO_CLIPBOARD',
+          surface: 'review',
+          noteId,
+          itemCount: content.length,
+        }),
+      }).catch(() => {});
+    } catch {
+      // Clipboard write can fail under restricted contexts; silent —
+      // the lack of "copied" badge is feedback enough.
+    }
+  }
+
   return (
-    <div className="rounded-lg border border-border bg-card overflow-hidden">
+    <div
+      className="rounded-lg border border-border bg-card overflow-hidden transition-all"
+      data-state={expanded ? 'open' : 'closed'}
+    >
       <header
         className="flex items-center justify-between px-4 py-3 cursor-pointer select-none"
         onClick={() => setExpanded((x) => !x)}
@@ -137,10 +168,30 @@ export function SectionAccordion({
           </p>
           {savedAt && <span className="text-xs text-muted-foreground">saved {savedAt}</span>}
         </div>
-        <ChevronDown
-          className={cn('h-4 w-4 text-muted-foreground transition-transform', expanded && 'rotate-180')}
-          aria-hidden
-        />
+        <div className="flex items-center gap-1">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={copyToClipboard}
+            aria-label={`Copy ${label} section to clipboard`}
+            className="h-7 w-7"
+            disabled={!content.trim()}
+          >
+            {justCopied ? (
+              <Check className="h-3 w-3 text-[var(--status-success-fg)]" aria-hidden="true" />
+            ) : (
+              <Copy className="h-3 w-3" aria-hidden="true" />
+            )}
+          </Button>
+          <ChevronDown
+            className={cn(
+              'h-4 w-4 text-muted-foreground transition-transform duration-200',
+              expanded && 'rotate-180',
+            )}
+            aria-hidden
+          />
+        </div>
       </header>
       {expanded && (
         <div className="border-t border-border p-4 space-y-3">
