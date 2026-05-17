@@ -1,0 +1,136 @@
+import { z } from 'zod';
+
+/**
+ * Prior-Context Brief — canonical JSON shape stored in NoteBrief.content.
+ *
+ * Source: references/prior-context-brief-spec.md §5.1 + prior-context-brief-prompt.md §4.
+ *
+ * Every text field in the brief MUST be grounded in source notes (the three
+ * absolute prompt rules). The schema enforces shape; the prompt enforces
+ * source-groundedness. Both run on every brief.
+ *
+ * `measureKey` is the Phase-13b registry tag (rehab: pain-nrs / rom-primary /
+ * strength-primary / gait-speed / outcome-tool-score; medical: bp / hr /
+ * weight / bmi / spo2 / temp; BH: phq9-total / gad7-total / mood-rating).
+ * Optional + nullable: pre-13b briefs and unmappable measures stay null,
+ * never invented.
+ */
+
+export const TrendSchema = z.enum(['improving', 'stable', 'worsening', 'unknown']);
+export type Trend = z.infer<typeof TrendSchema>;
+
+export const TrajectoryDirectionSchema = z.enum([
+  'improving',
+  'plateau',
+  'regressing',
+  'mixed',
+]);
+export type TrajectoryDirection = z.infer<typeof TrajectoryDirectionSchema>;
+
+export const SourcePillSchema = z.object({
+  noteId: z.string().min(1),
+  date: z.string().min(1),
+});
+export type SourcePill = z.infer<typeof SourcePillSchema>;
+
+export const ObjectiveMeasureSchema = z.object({
+  measure: z.string().min(1),
+  unit: z.string().nullable(),
+  lastValue: z.string().min(1),
+  priorValues: z.array(z.string()),
+  trend: TrendSchema,
+  sourceNoteId: z.string().min(1),
+  // Phase 13b — null when unmapped. Never invent a near-miss key.
+  measureKey: z.string().min(1).nullable().optional(),
+});
+export type ObjectiveMeasure = z.infer<typeof ObjectiveMeasureSchema>;
+
+export const GoalSnippetSchema = z.object({
+  text: z.string().min(1),
+  status: z.enum(['active', 'met', 'carried']),
+  delta: z.string().max(50).nullable(),
+  originNoteId: z.string().min(1),
+});
+export type GoalSnippet = z.infer<typeof GoalSnippetSchema>;
+
+export const FollowUpPreviewSchema = z.object({
+  followUpId: z.string().min(1),
+  text: z.string().min(1),
+  status: z.enum(['OPEN', 'MET', 'CARRIED', 'DROPPED', 'CLOSED_BY_DISCHARGE']),
+  source: SourcePillSchema,
+});
+export type FollowUpPreview = z.infer<typeof FollowUpPreviewSchema>;
+
+/**
+ * What the LLM returns (strict). The worker post-stamps generatedAt +
+ * generatorVersion + openFollowUps (we derive open follow-ups from the DB,
+ * not the LLM) before writing to NoteBrief.
+ */
+export const BriefLLMOutputSchema = z.object({
+  patientOneLine: z.string().nullable(),
+  episodeContext: z
+    .object({
+      episodeId: z.string().min(1),
+      label: z.string().min(1),
+      visitNumber: z.number().int().nullable(),
+      plannedVisits: z.number().int().nullable(),
+    })
+    .nullable(),
+  lastVisit: z.object({
+    noteId: z.string().min(1),
+    date: z.string().min(1),
+    daysAgo: z.number().int().min(0),
+    clinicianName: z.string().min(1),
+    noteType: z.string().nullable(),
+    templateName: z.string().nullable(),
+  }),
+  chiefConcern: z.string().nullable(),
+  priorAssessment: z.string().nullable(),
+  trajectory: z
+    .object({
+      summary: z.string().nullable(),
+      direction: TrajectoryDirectionSchema.nullable(),
+    })
+    .nullable(),
+  objectiveMeasures: z.array(ObjectiveMeasureSchema),
+  interventionsPerformed: z.array(z.string()),
+  homeProgram: z.string().nullable(),
+  educationGiven: z.array(z.string()),
+  carryForwardPlan: z.array(z.string()),
+  topActiveGoals: z.array(GoalSnippetSchema).max(3),
+  watch: z.object({
+    recentMedChanges: z.array(z.string()),
+    recentResults: z.array(z.string()),
+    precautions: z.array(z.string()),
+    redFlagsFromPriorNote: z.array(z.string()),
+  }),
+  sourceNoteIds: z.array(z.string().min(1)).min(1),
+});
+export type BriefLLMOutput = z.infer<typeof BriefLLMOutputSchema>;
+
+/**
+ * The full brief stored in NoteBrief.content. Adds metadata the worker stamps
+ * AFTER the LLM call returns + openFollowUps derived from the DB (so we don't
+ * let the model hallucinate follow-ups).
+ */
+export const PriorContextBriefContentSchema = BriefLLMOutputSchema.extend({
+  generatedAt: z.string().min(1),
+  generatorVersion: z.string().min(1),
+  openFollowUps: z.array(FollowUpPreviewSchema),
+});
+export type PriorContextBriefContent = z.infer<typeof PriorContextBriefContentSchema>;
+
+/**
+ * The FollowupExtractor returns this shape. We use it as input when creating
+ * the DB row (worker fills in orgId / patientId / episodeId / originNoteId).
+ */
+export const FollowupExtractionSchema = z.object({
+  items: z
+    .array(
+      z.object({
+        text: z.string().min(3).max(280),
+      }),
+    )
+    .max(20),
+});
+export type FollowupExtraction = z.infer<typeof FollowupExtractionSchema>;
