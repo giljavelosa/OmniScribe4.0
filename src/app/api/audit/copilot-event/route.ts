@@ -30,6 +30,12 @@ const ALLOWED_ACTIONS: ReadonlyArray<AuditAction> = [
   // onReconnected callback. itemCount carries the count of buffered
   // chunks replayed.
   'TELEHEALTH_AUDIO_RECONNECTED',
+  // Unit 18 — clinician's pre-call diagnostic failed one of the three
+  // checks (mic / network / browser_compat). The noteId field carries
+  // the scheduleId here since the preflight runs before a Note exists;
+  // resourceType still resolves as Note in the audit row (acceptable
+  // join compromise — the scheduleId is the natural anchor anyway).
+  'TELEHEALTH_PRECALL_CHECK_FAILED',
 ];
 
 const bodySchema = z.object({
