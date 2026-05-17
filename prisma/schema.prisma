@@ -728,12 +728,23 @@ model EpisodeGoal {
 }
 
 model GoalProgressEntry {
-  id           String      @id @default(cuid())
-  goalId       String
-  goal         EpisodeGoal @relation(fields: [goalId], references: [id], onDelete: Cascade)
-  noteId       String // set when progress recorded in a note (Unit 05)
-  measureValue String
-  recordedAt   DateTime    @default(now())
+  id            String      @id @default(cuid())
+  goalId        String
+  goal          EpisodeGoal @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  /** Optional — present when the entry was captured inside a note (Unit 05);
+   *  absent when captured directly from the patient detail (Unit 11). */
+  noteId        String?
+  /** Optional — when the entry records a status transition (Unit 11) instead
+   *  of a measurement, measureValue stays null. */
+  measureValue  String?
+  /** Status snapshot at the time of the entry (Unit 11). */
+  statusAtEntry GoalStatus?
+  /** Optional free-text from the clinician explaining the update (Unit 11). */
+  deltaNote     String?
+  recordedAt    DateTime    @default(now())
+  recordedByOrgUserId String?
+
+  @@index([goalId, recordedAt])
 }
 
 // =============================================================================
