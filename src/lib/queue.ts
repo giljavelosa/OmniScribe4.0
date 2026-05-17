@@ -65,7 +65,7 @@ export function enqueueTranscriptionJob(payload: {
   });
 }
 
-export type AiGenerationJobType = 'generate-note' | 'regenerate-section';
+export type AiGenerationJobType = 'generate-note' | 'regenerate-section' | 'analyze-flags';
 
 export function enqueueAiGenerationJob(payload: {
   noteId: string;
