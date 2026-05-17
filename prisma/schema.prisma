@@ -1,0 +1,320 @@
+// OmniScribe — Unit 01 schema (Foundation Auth & Tenancy)
+// Spec: context/specs/01-foundation-auth-tenant.md
+//
+// Anti-regression rule reminders that bear on this file:
+//   #1  Never remove or rename existing models without a migration.
+//   #2  Never change NoteStatus enum values (append only). N/A here; lands in Unit 04/05.
+//   #4  Run `npx prisma db seed` after schema changes — seed.ts lives next to this file.
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = []
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// -----------------------------------------------------------------------------
+// Enums
+// -----------------------------------------------------------------------------
+
+enum ComplianceProfile {
+  STANDARD
+  BH_42CFR2
+  RESEARCH
+}
+
+enum OrgRole {
+  SUPER_ADMIN
+  ORG_ADMIN
+  SITE_ADMIN
+  CLINICIAN
+  VIEWER
+}
+
+enum PlatformRole {
+  PLATFORM_OWNER
+  NONE
+}
+
+enum Division {
+  MEDICAL
+  REHAB
+  BEHAVIORAL_HEALTH
+  MULTI
+}
+
+enum SeatTier {
+  SOLO
+  TEAM
+  ENTERPRISE
+}
+
+enum NoteStyle {
+  NARRATIVE
+  HYBRID
+  HYBRID_BULLET
+  STRUCTURED
+}
+
+// -----------------------------------------------------------------------------
+// Tenancy
+// -----------------------------------------------------------------------------
+
+model Organization {
+  id                  String            @id @default(cuid())
+  name                String
+  division            Division
+  defaultDivision     Division?
+  billingEmail        String
+  stripeCustomerId    String?
+  forceMfa            Boolean           @default(false)
+
+  // BAA tracking — required for the Owner console to mark an org "BAA on file".
+  // Required at the application layer for new orgs created via /owner/orgs/new;
+  // optional at the DB layer so legacy/dev rows can exist without it.
+  baaExecutedAt       DateTime?
+  baaVersion          String?
+  baaCountersignedBy  String?           // userId of the platform owner who countersigned
+  complianceProfile   ComplianceProfile @default(STANDARD)
+
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+
+  sites               Site[]
+  orgUsers            OrgUser[]
+  seats               Seat[]
+  invites             Invite[]
+  featureFlags        FeatureFlag[]
+  ipAllowlistEntries  IpAllowlistEntry[]
+
+  @@index([baaExecutedAt])
+}
+
+model Site {
+  id              String       @id @default(cuid())
+  orgId           String
+  organization    Organization @relation(fields: [orgId], references: [id])
+  name            String
+  address         String?
+  phone           String?
+  primaryDivision Division?
+  isArchived      Boolean      @default(false)
+  archivedAt      DateTime?
+  createdAt       DateTime     @default(now())
+
+  rooms           Room[]
+
+  @@index([orgId])
+}
+
+model Room {
+  id          String    @id @default(cuid())
+  siteId      String
+  site        Site      @relation(fields: [siteId], references: [id])
+  name        String
+  isArchived  Boolean   @default(false)
+  archivedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([siteId])
+}
+
+// -----------------------------------------------------------------------------
+// Identity
+// -----------------------------------------------------------------------------
+
+model User {
+  id                  String               @id @default(cuid())
+  email               String               @unique
+  name                String?
+  image               String?
+  passwordHash        String
+  mfaSecret           String?
+  mfaEnabled          Boolean              @default(false)
+  // JSON array of bcrypt-hashed recovery codes; each element is consumed when used.
+  mfaRecoveryCodes    Json?
+  platformRole        PlatformRole         @default(NONE)
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+
+  orgUsers            OrgUser[]
+  sessions            UserSession[]
+  passwordResetTokens PasswordResetToken[]
+}
+
+model OrgUser {
+  id                  String               @id @default(cuid())
+  userId              String
+  user                User                 @relation(fields: [userId], references: [id])
+  orgId               String
+  organization        Organization         @relation(fields: [orgId], references: [id])
+  role                OrgRole
+  division            Division
+  profession          String?
+  canManagePatients   Boolean              @default(false)
+  preferredNoteStyle  NoteStyle            @default(HYBRID)
+  isActive            Boolean              @default(true)
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+
+  seatId              String?              @unique
+  seat                Seat?                @relation(fields: [seatId], references: [id])
+  practitionerProfile PractitionerProfile?
+
+  @@unique([userId, orgId])
+  @@index([orgId, role])
+}
+
+model Seat {
+  id           String       @id @default(cuid())
+  orgId        String
+  organization Organization @relation(fields: [orgId], references: [id])
+  tier         SeatTier
+  expiresAt    DateTime
+  createdAt    DateTime     @default(now())
+
+  assignedTo   OrgUser?
+
+  @@index([orgId])
+}
+
+model UserSession {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model PractitionerProfile {
+  id          String   @id @default(cuid())
+  orgUserId   String   @unique
+  orgUser     OrgUser  @relation(fields: [orgUserId], references: [id])
+  npi         String?
+  specialty   String?
+  displayName String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Invite {
+  id                String       @id @default(cuid())
+  email             String
+  orgId             String
+  organization      Organization @relation(fields: [orgId], references: [id])
+  role              OrgRole
+  division          Division
+  profession        String?
+  canManagePatients Boolean      @default(false)
+  token             String       @unique
+  expiresAt         DateTime
+  consumedAt        DateTime?
+  consumedByUserId  String?
+  invitedByUserId   String
+  createdAt         DateTime     @default(now())
+
+  @@index([orgId, email])
+}
+
+// -----------------------------------------------------------------------------
+// Password reset (D6 — separate model preserves audit history; chosen over
+// transient fields on User so consumed/expired tokens stay queryable).
+// -----------------------------------------------------------------------------
+
+model PasswordResetToken {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id])
+  tokenHash  String    @unique  // bcrypt-hashed; never store raw token
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId, consumedAt])
+}
+
+// -----------------------------------------------------------------------------
+// Audit (anti-regression rule 8: audit writes NEVER wrapped in swallowing
+// try-catch. Both tables are append-only at the application layer.)
+// -----------------------------------------------------------------------------
+
+model AuditLog {
+  id               String   @id @default(cuid())
+  userId           String?
+  orgId            String?
+  actingUserId     String?  // for impersonation: the platform owner acting
+  onBehalfOfUserId String?  // for impersonation: the user they're acting as
+  action           String   // e.g. USER_SIGNED_IN, NOTE_SIGNED, ORG_BAA_UPDATED
+  resourceType     String?
+  resourceId       String?
+  metadata         Json?    // PHI-free (enforced at the writer; see src/lib/audit/phi-free-check.ts)
+  createdAt        DateTime @default(now())
+
+  @@index([orgId, createdAt])
+  @@index([userId, createdAt])
+}
+
+model PlatformAuditLog {
+  id           String   @id @default(cuid())
+  actingUserId String
+  action       String
+  resourceType String?
+  resourceId   String?
+  metadata     Json?    // PHI-free
+  createdAt    DateTime @default(now())
+
+  @@index([actingUserId, createdAt])
+}
+
+model PlatformSession {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+// -----------------------------------------------------------------------------
+// Org config / ops controls
+// -----------------------------------------------------------------------------
+
+model FeatureFlag {
+  id           String       @id @default(cuid())
+  orgId        String
+  organization Organization @relation(fields: [orgId], references: [id])
+  key          String
+  value        Json
+
+  @@unique([orgId, key])
+}
+
+model SystemAnnouncement {
+  id              String    @id @default(cuid())
+  title           String
+  body            String    // markdown
+  severity        String    // 'info' | 'warning' | 'critical'
+  targetOrgIds    String[]  // empty array = visible to all orgs
+  startsAt        DateTime
+  endsAt          DateTime?
+  createdAt       DateTime  @default(now())
+  createdByUserId String
+}
+
+model IpAllowlistEntry {
+  id           String       @id @default(cuid())
+  orgId        String
+  organization Organization @relation(fields: [orgId], references: [id])
+  cidr         String
+  description  String?
+  createdAt    DateTime     @default(now())
+
+  @@index([orgId])
+}
