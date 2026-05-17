@@ -6,6 +6,8 @@ import { prisma } from '@/lib/prisma';
 import { writeAuditLog } from '@/lib/audit/log';
 import { readSectionStatus } from '@/lib/notes/section-status';
 import type { NoteSectionDef } from '@/lib/notes/build-prompt';
+import { CopilotShell } from '@/components/copilot/copilot-shell';
+import type { CopilotFollowUp } from '@/components/copilot/cards/open-followups-card';
 import { ReviewClient } from './_components/review-client';
 
 export const dynamic = 'force-dynamic';
@@ -48,31 +50,53 @@ export default async function ReviewPage({ params }: { params: Promise<{ noteId:
     (note.template?.sectionSchema as { sections: NoteSectionDef[] } | null)?.sections ?? [];
   const sectionStatus = readSectionStatus(note.inferenceLog);
 
+  // Live open follow-ups for the Watch v0 OpenFollowUpsCard in the sidebar.
+  // Rule 20: rows derive from extraction over SIGNED notes only (Unit 06).
+  const openFollowUps = await prisma.followUp.findMany({
+    where: { patientId: note.patientId, orgId: session.user.orgId, status: 'OPEN' },
+    orderBy: { createdAt: 'desc' },
+    include: { originNote: { select: { signedAt: true } } },
+    take: 20,
+  });
+  const copilotFollowUps: CopilotFollowUp[] = openFollowUps.map((fu) => ({
+    id: fu.id,
+    text: fu.text,
+    status: fu.status,
+    source: {
+      noteId: fu.originNoteId,
+      date: (fu.originNote?.signedAt ?? fu.createdAt).toISOString().slice(0, 10),
+    },
+  }));
+
   return (
-    <ReviewClient
-      noteId={note.id}
-      initial={{
-        id: note.id,
-        status: note.status,
-        division: note.division,
-        noteStyle: note.noteStyle,
-        patient: {
-          firstName: note.patient.firstName,
-          lastName: note.patient.lastName,
-          mrn: note.patient.mrn,
-          dob: note.patient.dob.toISOString(),
-          sex: note.patient.sex,
-          division: note.patient.division,
-          preferredLanguage: note.patient.preferredLanguage,
-          isDeleted: note.patient.isDeleted,
-        },
-        sections,
-        sectionStatus,
-        draftJson: note.draftJson as Record<string, { content: string; updatedAt: string }> | null,
-        finalJson: note.finalJson as Record<string, { content: string; updatedAt: string }> | null,
-        lastWorkerError: note.lastWorkerError,
-        interruptedAt: note.interruptedAt?.toISOString() ?? null,
-      }}
-    />
+    <>
+      <ReviewClient
+        noteId={note.id}
+        initial={{
+          id: note.id,
+          status: note.status,
+          division: note.division,
+          noteStyle: note.noteStyle,
+          patient: {
+            firstName: note.patient.firstName,
+            lastName: note.patient.lastName,
+            mrn: note.patient.mrn,
+            dob: note.patient.dob.toISOString(),
+            sex: note.patient.sex,
+            division: note.patient.division,
+            preferredLanguage: note.patient.preferredLanguage,
+            isDeleted: note.patient.isDeleted,
+          },
+          sections,
+          sectionStatus,
+          draftJson: note.draftJson as Record<string, { content: string; updatedAt: string }> | null,
+          finalJson: note.finalJson as Record<string, { content: string; updatedAt: string }> | null,
+          lastWorkerError: note.lastWorkerError,
+          interruptedAt: note.interruptedAt?.toISOString() ?? null,
+        }}
+        copilotFollowUps={copilotFollowUps}
+      />
+      <CopilotShell surface="review" noteId={note.id} />
+    </>
   );
 }
