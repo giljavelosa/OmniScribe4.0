@@ -17,6 +17,7 @@
 const SONIOX_API_BASE = process.env.SONIOX_API_BASE ?? 'https://api.soniox.com';
 const SONIOX_WS_URL = process.env.SONIOX_REALTIME_WS_URL ?? 'wss://stt-rt.soniox.com/transcribe-websocket';
 const SONIOX_MODEL = process.env.SONIOX_REALTIME_MODEL ?? 'stt-rt-v4';
+const SONIOX_BATCH_MODEL = process.env.SONIOX_BATCH_MODEL ?? 'stt-async-preview';
 const SONIOX_API_KEY = process.env.SONIOX_API_KEY ?? '';
 const SONIOX_BAA_ON_FILE = process.env.SONIOX_BAA_ON_FILE === 'true';
 
@@ -140,4 +141,91 @@ export const sonioxConfig = {
   isStubMode: !SONIOX_API_KEY,
   baaOnFile: SONIOX_BAA_ON_FILE,
   model: SONIOX_MODEL,
+  batchModel: SONIOX_BATCH_MODEL,
 };
+
+// =============================================================================
+// Batch transcription — for UPLOADED capture mode.
+// =============================================================================
+
+import type { SonioxBatchTranscript } from './types';
+
+export type TranscribeBatchArgs = {
+  audio: Uint8Array | Buffer;
+  contentType: string;
+  noteId: string;
+};
+
+/**
+ * Synchronous-from-the-caller's-perspective batch transcription. Internally
+ * may use Soniox's async-job API + poll, or the sync API depending on tier.
+ *
+ * Stub mode: returns a single "Soniox stub transcript" token so the worker
+ * pipeline + cleaner exercise end-to-end without a real API call. Useful for
+ * local dev without a Soniox account.
+ *
+ * Rule 11 reminder: this is the SOLE entry point for batch transcription —
+ * never import the Soniox SDK directly from worker code.
+ */
+export async function transcribeBatch(args: TranscribeBatchArgs): Promise<SonioxBatchTranscript> {
+  assertSonioxAllowedForPHI();
+
+  if (!SONIOX_API_KEY) {
+    return {
+      tokens: [
+        {
+          text: '[Soniox stub mode — no real transcription. UPLOADED audio was stored but not transcribed.]',
+          speaker: 1,
+          start_ms: 0,
+          end_ms: 1,
+          is_final: true,
+        },
+      ],
+      duration_ms: 1,
+      language: 'en',
+    };
+  }
+
+  // Real Soniox async path: POST audio, poll for the result. The exact
+  // endpoint shape is tier-dependent; we attempt the documented
+  // /v1/transcribe-async surface and surface failures loudly to the caller
+  // so the worker can mark the Note INTERRUPTED rather than silently lose
+  // the audio.
+  const formData = new FormData();
+  const blob = new Blob([args.audio as BlobPart], { type: args.contentType || 'audio/wav' });
+  formData.append('file', blob, 'audio');
+  formData.append('model', SONIOX_BATCH_MODEL);
+  formData.append('enable_speaker_diarization', 'true');
+  formData.append('client_reference_id', args.noteId);
+
+  const submitRes = await fetch(`${SONIOX_API_BASE}/v1/transcribe-async`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${SONIOX_API_KEY}` },
+    body: formData,
+  });
+  if (!submitRes.ok) {
+    throw new Error(`Soniox batch submit failed: ${submitRes.status} ${submitRes.statusText}`);
+  }
+  const submitBody = (await submitRes.json()) as { id?: string };
+  const jobId = submitBody.id;
+  if (!jobId) throw new Error('Soniox batch submit returned no job id.');
+
+  // Poll. Cap at ~10 minutes (300 attempts × 2 sec).
+  const POLL_MS = 2_000;
+  const MAX_ATTEMPTS = 300;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    await new Promise((r) => setTimeout(r, POLL_MS));
+    const pollRes = await fetch(`${SONIOX_API_BASE}/v1/transcribe-async/${jobId}`, {
+      headers: { Authorization: `Bearer ${SONIOX_API_KEY}` },
+    });
+    if (!pollRes.ok) {
+      throw new Error(`Soniox batch poll failed: ${pollRes.status} ${pollRes.statusText}`);
+    }
+    const pollBody = (await pollRes.json()) as { status?: string; result?: SonioxBatchTranscript; error?: string };
+    if (pollBody.status === 'completed' && pollBody.result) return pollBody.result;
+    if (pollBody.status === 'failed') {
+      throw new Error(`Soniox batch job failed: ${pollBody.error ?? 'unknown'}`);
+    }
+  }
+  throw new Error(`Soniox batch job timed out after ${(MAX_ATTEMPTS * POLL_MS) / 1000}s`);
+}
