@@ -823,6 +823,9 @@ model Note {
   // Unit 14 — AI compliance flags surfaced on /review.
   reviewFlags ReviewFlag[]
 
+  // Unit 16 — telehealth session this note belongs to (1:1, optional).
+  telehealthSession TelehealthSession?
+
   @@index([orgId, status])
   @@index([patientId, createdAt])
   @@index([patientId, status])
@@ -1146,6 +1149,11 @@ model TelehealthSession {
   endedAt        DateTime?
   endedReason    String?
   createdByOrgUserId String?
+  /** Unit 16 — Note this session's live transcript writes into. Created in
+   *  the same $transaction as the Daily.co room on session start. 1:1; null
+   *  until the clinician starts the call. */
+  noteId         String?                 @unique
+  note           Note?                   @relation(fields: [noteId], references: [id])
   createdAt      DateTime                @default(now())
   updatedAt      DateTime                @updatedAt
 
