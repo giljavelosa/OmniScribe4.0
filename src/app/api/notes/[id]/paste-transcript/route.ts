@@ -4,7 +4,10 @@ import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
 import { requireFeatureAccess } from '@/lib/authz/server';
 import { writeAuditLog } from '@/lib/audit/log';
-import { NoteStatus, CaptureMode } from '@prisma/client';
+import { enqueueTranscriptionJob } from '@/lib/queue';
+import { cleanPastedTranscript } from '@/services/transcription';
+import { NoteStatus, CaptureMode, Prisma } from '@prisma/client';
+import { randomBytes } from 'node:crypto';
 
 export const runtime = 'nodejs';
 
@@ -42,11 +45,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: { code: 'invalid_state' } }, { status: 409 });
   }
 
+  // Clean immediately into the canonical TranscriptClean shape so the
+  // worker's cleanup-pasted-transcript branch is a true pass-through and
+  // downstream consumers (Unit 05 LLM prompt builders) get the same
+  // structure regardless of capture mode.
+  const cleaned = cleanPastedTranscript({ source: 'pasted', text: parsed.data.text });
+
   await prisma.note.update({
     where: { id: noteId },
     data: {
       captureMode: CaptureMode.PASTED,
-      transcriptClean: { source: 'pasted', text: parsed.data.text } as object,
+      transcriptClean: cleaned as unknown as Prisma.InputJsonValue,
       status: NoteStatus.TRANSCRIBING,
     },
   });
@@ -57,7 +66,23 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     action: 'TRANSCRIPT_PASTED',
     resourceType: 'Note',
     resourceId: noteId,
-    metadata: { charCount: parsed.data.text.length },
+    metadata: { charCount: parsed.data.text.length, wordCount: cleaned.wordCount },
+  });
+
+  const requestId = randomBytes(8).toString('hex');
+  await enqueueTranscriptionJob({
+    noteId,
+    orgId: orgUser.orgId,
+    type: 'cleanup-pasted-transcript',
+    requestId,
+  });
+  await writeAuditLog({
+    userId: user.id,
+    orgId: orgUser.orgId,
+    action: 'TRANSCRIPTION_JOB_ENQUEUED',
+    resourceType: 'Note',
+    resourceId: noteId,
+    metadata: { type: 'cleanup-pasted-transcript', requestId },
   });
 
   return NextResponse.json({ data: { ok: true } });
