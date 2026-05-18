@@ -75,15 +75,19 @@ export async function POST(req: Request) {
     );
   }
 
-  // Pre-count existing seats for the audit metadata.
-  const existingCount = await prisma.seat.count({
-    where: { orgId: authorizationUser.orgId, tier: parsed.data.tier },
-  });
-  const newTotal = existingCount + parsed.data.count;
-
-  let result: { createdIds: string[]; subscription: Awaited<ReturnType<typeof upsertSubscription>> };
+  let result: {
+    createdIds: string[];
+    subscription: Awaited<ReturnType<typeof upsertSubscription>>;
+    newTotal: number;
+  };
   try {
     result = await prisma.$transaction(async (tx) => {
+      // Read the count INSIDE the tx so concurrent allocations don't both see
+      // the pre-state and each report an incorrect newTotal upstream.
+      const existingCount = await tx.seat.count({
+        where: { orgId: authorizationUser.orgId, tier: parsed.data.tier },
+      });
+      const newTotal = existingCount + parsed.data.count;
       const created = await Promise.all(
         Array.from({ length: parsed.data.count }, () =>
           tx.seat.create({
@@ -101,7 +105,7 @@ export async function POST(req: Request) {
         tier: parsed.data.tier,
         expiresAt,
       });
-      return { createdIds: created.map((s) => s.id), subscription };
+      return { createdIds: created.map((s) => s.id), subscription, newTotal };
     });
   } catch (err) {
     return NextResponse.json(
@@ -125,7 +129,7 @@ export async function POST(req: Request) {
     metadata: {
       tier: parsed.data.tier,
       countAllocated: parsed.data.count,
-      newTotalForTier: newTotal,
+      newTotalForTier: result.newTotal,
       expiresAt: expiresAt.toISOString(),
     },
   });
