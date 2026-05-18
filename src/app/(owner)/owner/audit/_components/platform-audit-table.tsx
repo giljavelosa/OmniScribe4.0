@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { StatusBanner } from '@/components/ui/status-banner';
+import { AuditMetadataDiff } from '@/components/audit/audit-metadata-diff';
 
 type AuditRow = {
   id: string;
@@ -180,7 +181,7 @@ export function PlatformAuditTable({
                     <td className="px-3 py-2"><StatusBadge variant="neutral" noIcon>{r.action}</StatusBadge></td>
                     <td className="px-3 py-2 font-mono text-[11px]">{r.resourceType ? `${r.resourceType}:${r.resourceId ?? '?'}` : '—'}</td>
                     <td className="px-3 py-2 max-w-md">
-                      <pre className="whitespace-pre-wrap break-all text-[11px]">{r.metadata ? JSON.stringify(r.metadata, null, 0) : '—'}</pre>
+                      <AuditMetadataDiff metadata={r.metadata} />
                     </td>
                   </tr>
                 ))
