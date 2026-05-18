@@ -114,7 +114,7 @@ To call a tool:
 
 To give a definitive answer:
   { "action": "answer", "text": "<short answer>", "sources": [
-      { "kind": "note" | "follow-up" | "goal" | "patient",
+      { "kind": "note" | "follow-up" | "goal" | "patient" | "fhir",
         "id": "<id>",
         "label": "<short human label>" } ] }
 
