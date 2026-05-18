@@ -120,6 +120,14 @@ export type AuditAction =
   | 'COPILOT_ASK_QUERY'
   | 'COPILOT_TOOL_CALL'
   | 'COPILOT_ASK_ANSWERED'
+  // ---- Unit 29: Research mode ----
+  // Server-side audit from /api/copilot/research. Tool calls still
+  // use COPILOT_TOOL_CALL (same shape); final answer reuses
+  // COPILOT_ASK_ANSWERED with metadata.mode === 'research' so the
+  // auditor lens can count chart-vs-research answers from one row
+  // type. PHI-fenced: question LENGTH only (research questions can
+  // still mention PHI if the clinician types it — better not logged).
+  | 'COPILOT_RESEARCH_QUERY'
   // ---- Unit 08: Admin & Compliance Ready ----
   | 'SITE_CREATED'
   | 'SITE_UPDATED'
