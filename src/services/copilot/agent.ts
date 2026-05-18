@@ -1,6 +1,7 @@
 import type { LLMService } from '@/services/llm';
 import { getLLMService } from '@/services/llm';
 import { runTool, type AskSource } from './tools';
+import { RESEARCH_TOOL_NAMES, runResearchTool } from './research-tools';
 
 /**
  * Ask-mode agent runner — Unit 27.
@@ -29,14 +30,26 @@ export type AgentTurn = {
   content: string;
 };
 
+export type AgentMode = 'chart' | 'research';
+
 export type AgentInput = {
+  /** Required in chart mode; ignored in research mode (research is
+   *  patient-agnostic by design — the agent has no patient context). */
   patientId: string;
+  /** Required in chart mode for tool calls + audit anchoring. In
+   *  research mode the route still passes it so the audit row anchors
+   *  somewhere, but the agent's system prompt has no patient block. */
   noteId: string;
   /** Optional — passed through to the model in the system prompt so it
-   *  knows which episode to ask about for goal lookups. */
+   *  knows which episode to ask about for goal lookups. Chart mode only. */
   episodeId?: string | null;
   history: AgentTurn[];
   question: string;
+  /** Unit 29 — 'chart' (default) routes through Unit 27/28 chart tools
+   *  + ASK_SYSTEM_PROMPT. 'research' routes through the research tool
+   *  set + RESEARCH_SYSTEM_PROMPT. Mode mismatch on a tool call returns
+   *  a wrong_mode_tool error so the model can't blend sources. */
+  mode?: AgentMode;
 };
 
 export type AgentToolCall = {
@@ -67,31 +80,12 @@ export type AgentContext = {
 
 export const ASK_SYSTEM_PROMPT = `
 You are a clinical co-pilot answering a clinician's question about a specific
-patient during their visit. You have access to read-only lookup tools:
+patient during their visit. You have access to four read-only lookup tools:
 
-  In-app (always available):
   - lookupSignedNote({ noteId })             → returns sections + signedAt
   - lookupFollowUp({ patientId, status? })   → returns up to 10 follow-ups
   - lookupEpisodeGoals({ episodeId })        → returns active goals
   - lookupPatientDemographics({ patientId }) → returns name, dob, sex, mrn
-
-  EHR-backed (require a verified patient-to-EHR link — Rule 20):
-  - lookupFhirCondition({ patientId, clinicalStatus? })
-  - lookupFhirMedication({ patientId, status? })
-  - lookupFhirObservation({ patientId, code? })
-  - lookupFhirAllergy({ patientId })
-  - lookupFhirCarePlan({ patientId })
-
-When a FHIR tool returns { error: "verified_link_required" }, tell the clinician:
-"This patient isn't linked to an EHR record yet. Confirm the match on the
-patient page to enable EHR-backed answers." Use a single source of
-{ kind: "patient", id: <patientId>, label: "Confirm EHR link" }.
-
-When a FHIR tool returns { error: "fhir_rate_limit_exceeded" }, answer with
-what you already have and tell the clinician you've hit the session lookup
-budget for EHR data.
-
-Sources for FHIR-derived facts use { kind: "fhir", id: <fhirResourceId>, label }.
 
 ═══ ABSOLUTE RULES ═══
 
@@ -124,6 +118,48 @@ To ask the clinician a clarifying question (when you can't answer):
 The very first character of every response is { and the very last is }.
 `.trim();
 
+export const RESEARCH_SYSTEM_PROMPT = `
+You are a clinical research assistant. The clinician is asking about evidence
+in the medical literature — NOT about a specific patient. You have NO access
+to any patient's chart in this mode; do not reference patient data.
+
+You have access to TWO research lookup tools:
+
+  - searchPMC({ query, limit? })                  → PubMed Central
+  - searchAttestedLiterature({ query, limit? })   → vetted clinical corpus
+
+═══ ABSOLUTE RULES ═══
+
+1. EVIDENCE SUMMARIES, NOT RECOMMENDATIONS.
+   Surface what the literature says about a topic. Do NOT prescribe, diagnose,
+   or recommend for a specific patient. The clinician decides whether the
+   evidence applies.
+
+2. CITE EVERY CLAIM.
+   Every fact in your answer must cite at least one entry from a tool result
+   via the sources array. Use kind: "literature" with the source id (PMC id
+   or attested-literature id) and a short citation label like
+   "Smith 2024 (NEJM)".
+
+3. NO PATIENT-SPECIFIC TAILORING.
+   If the clinician asks "should I prescribe X for my patient?" answer with
+   "I can't answer questions about specific patients in research mode — switch
+   to the Chart tab for that. The literature on X says: …" and use a single
+   { kind: "literature", id, label } source for the evidence summary.
+
+═══ OUTPUT FORMAT (strict JSON, nothing else) ═══
+
+To call a tool:
+  { "action": "tool", "tool": "<name>", "args": { ... } }
+
+To answer:
+  { "action": "answer", "text": "<short evidence summary>", "sources": [
+      { "kind": "literature", "id": "<PMC or lit id>",
+        "label": "<Author Year (Journal)>" } ] }
+
+The very first character of every response is { and the very last is }.
+`.trim();
+
 export async function runAgent(
   input: AgentInput,
   ctx: AgentContext,
@@ -140,13 +176,19 @@ export async function runAgent(
   // (NOT global; a new ask starts fresh). Non-FHIR tools (Unit 27)
   // ignore the field.
   const toolCtx = { orgId: ctx.orgId, fhirRowsConsumed: { count: 0 } };
+  // Unit 29 — mode dispatch picks the system prompt + locks the tool
+  // dispatcher to one half of the registry. Cross-mode tool calls
+  // return wrong_mode_tool — fail-closed against the model blending
+  // chart + research sources.
+  const mode: AgentMode = input.mode ?? 'chart';
+  const systemPrompt = mode === 'research' ? RESEARCH_SYSTEM_PROMPT : ASK_SYSTEM_PROMPT;
 
   let stub = false;
   let iterations = 0;
   while (iterations < MAX_ITERATIONS) {
     iterations += 1;
-    const userPrompt = buildUserPrompt(input, turns, iterations === MAX_ITERATIONS);
-    const result = await llm.generate(ASK_SYSTEM_PROMPT, userPrompt, {
+    const userPrompt = buildUserPrompt(input, turns, iterations === MAX_ITERATIONS, mode);
+    const result = await llm.generate(systemPrompt, userPrompt, {
       phi: true,
       temperature: 0,
       jsonMode: true,
@@ -184,7 +226,25 @@ export async function runAgent(
       // iterations see the reasoning chain (without this, the model loses
       // its own prior outputs and re-calls or contradicts itself).
       turns.push({ role: 'assistant', content: result.text });
-      const toolResult = await runTool(parsed.value.tool, parsed.value.args, toolCtx);
+      const toolName = parsed.value.tool;
+      const isResearchTool = RESEARCH_TOOL_NAMES.has(toolName);
+      // Cross-mode gate — fail-closed against blended sources.
+      let toolResult;
+      if (mode === 'research' && !isResearchTool) {
+        toolResult = {
+          ok: false as const,
+          error: `wrong_mode_tool:${toolName}_is_chart_only`,
+        };
+      } else if (mode === 'chart' && isResearchTool) {
+        toolResult = {
+          ok: false as const,
+          error: `wrong_mode_tool:${toolName}_is_research_only`,
+        };
+      } else if (isResearchTool) {
+        toolResult = await runResearchTool(toolName, parsed.value.args);
+      } else {
+        toolResult = await runTool(toolName, parsed.value.args, toolCtx);
+      }
       toolCalls.push({
         tool: parsed.value.tool,
         args: parsed.value.args,
@@ -228,16 +288,28 @@ export async function runAgent(
   };
 }
 
-function buildUserPrompt(input: AgentInput, turns: AgentTurn[], lastChance: boolean): string {
-  const head = [
-    `<context>`,
-    `  patientId: ${input.patientId}`,
-    `  noteId: ${input.noteId}`,
-    input.episodeId ? `  episodeId: ${input.episodeId}` : null,
-    `</context>`,
-  ]
-    .filter(Boolean)
-    .join('\n');
+function buildUserPrompt(
+  input: AgentInput,
+  turns: AgentTurn[],
+  lastChance: boolean,
+  mode: AgentMode = 'chart',
+): string {
+  // Research mode is patient-agnostic — no patient context block in the
+  // user prompt. The system prompt locks the "do not tailor to a specific
+  // patient" rule; omitting the ids here removes any temptation for the
+  // model to leak patient identifiers into search queries.
+  const head =
+    mode === 'research'
+      ? '<context>\n  research mode — no patient context\n</context>'
+      : [
+          `<context>`,
+          `  patientId: ${input.patientId}`,
+          `  noteId: ${input.noteId}`,
+          input.episodeId ? `  episodeId: ${input.episodeId}` : null,
+          `</context>`,
+        ]
+          .filter(Boolean)
+          .join('\n');
 
   const conversation = turns
     .map((t) => {
@@ -297,7 +369,8 @@ function parseSources(raw: unknown): AskSource[] {
         s.kind === 'follow-up' ||
         s.kind === 'goal' ||
         s.kind === 'patient' ||
-        s.kind === 'fhir') &&
+        s.kind === 'fhir' ||
+        s.kind === 'literature') &&
       typeof s.id === 'string' &&
       typeof s.label === 'string'
     ) {
