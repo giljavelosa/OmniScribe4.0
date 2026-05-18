@@ -95,6 +95,7 @@ model Organization {
   noteBriefs         NoteBrief[]
   followUps          FollowUp[]
   telehealthSessions TelehealthSession[]
+  fhirIdentities     FhirIdentity[]
 
   @@index([baaExecutedAt])
 }
@@ -171,6 +172,7 @@ model OrgUser {
   seatId              String?              @unique
   seat                Seat?                @relation(fields: [seatId], references: [id])
   practitionerProfile PractitionerProfile?
+  fhirIdentities      FhirIdentity[]       @relation("FhirIdentityClinician")
 
   @@unique([userId, orgId])
   @@index([orgId, role])
@@ -503,6 +505,8 @@ model Patient {
   followUps                FollowUp[]
   snapshotOverrides        SnapshotOverride[]
   telehealthSessions       TelehealthSession[]
+  fhirIdentities           PatientFhirIdentity[]
+  fhirCachedResources      FhirCachedResource[]
 
   @@unique([orgId, mrn])
   @@index([orgId, lastName, firstName])
@@ -1163,4 +1167,103 @@ model TelehealthSession {
 
   @@index([orgId, status])
   @@index([magicExpiresAt])
+}
+
+// =============================================================================
+// Unit 19 — FHIR / SMART on FHIR auth foundations (Wave 4 / F1)
+// =============================================================================
+
+/**
+ * Per-clinician, per-EHR SMART on FHIR token + identity binding.
+ *
+ * Token columns are AES-256-GCM-encrypted before insert (see
+ * src/lib/fhir/token-crypto.ts). The envelope format is versioned so a
+ * future key rotation can recognize stale ciphertexts and re-encrypt.
+ */
+model FhirIdentity {
+  id                  String       @id @default(cuid())
+  orgId               String
+  organization        Organization @relation(fields: [orgId], references: [id])
+  clinicianOrgUserId  String
+  clinician           OrgUser      @relation("FhirIdentityClinician", fields: [clinicianOrgUserId], references: [id])
+  ehrSystem           String       // 'nextgen' | 'epic' | 'cerner' | 'stub'
+  fhirBaseUrl         String
+  accessTokenEnc      String       @db.Text
+  refreshTokenEnc     String       @db.Text
+  scope               String       @db.Text
+  expiresAt           DateTime
+  /** Set on each successful refresh; null until the first refresh fires. */
+  refreshedAt         DateTime?
+  /** Patient context from the launch (NextGen typically includes it); used
+   *  as a hint for Unit 20's identity matching, not as the match itself. */
+  launchPatientFhirId String?
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+
+  @@unique([clinicianOrgUserId, ehrSystem])
+  @@index([orgId, ehrSystem])
+}
+
+/**
+ * Bidirectional patient ↔ EHR identity mapping. Schema ships in F1 so the
+ * launch flow can persist a partial row when the EHR returns patient
+ * context; full CRUD + matching UI is F2 / Unit 20.
+ */
+model PatientFhirIdentity {
+  id                  String   @id @default(cuid())
+  patientId           String
+  patient             Patient  @relation(fields: [patientId], references: [id])
+  ehrSystem           String
+  fhirPatientId       String
+  fhirIdentifier      String?
+  /** 'verified' = clinician confirmed | 'high' = strong auto-match | 'manual' = needs review */
+  matchConfidence     String
+  verifiedAt          DateTime?
+  verifiedByOrgUserId String?
+  createdAt           DateTime @default(now())
+
+  @@unique([ehrSystem, fhirPatientId])
+  @@index([patientId, ehrSystem])
+}
+
+/**
+ * Cached FHIR resource snapshots. Schema ships in F1; the sync worker
+ * that populates it lands in F3 / Unit 21. Sensitivity propagation per
+ * 42 CFR Part 2: if the source EHR flagged it, downstream MUST honor.
+ */
+model FhirCachedResource {
+  id               String   @id @default(cuid())
+  patientId        String
+  patient          Patient  @relation(fields: [patientId], references: [id])
+  ehrSystem        String
+  resourceType     String
+  fhirResourceId   String
+  resource         Json
+  fetchedAt        DateTime @default(now())
+  sensitivityLevel String?
+
+  @@unique([ehrSystem, resourceType, fhirResourceId])
+  @@index([patientId, resourceType, fetchedAt])
+}
+
+/**
+ * Short-lived row that carries SMART launch context between
+ * /api/fhir/launch and /api/fhir/callback. The state value is the OAuth
+ * `state` parameter (opaque random); the codeVerifier never leaves the
+ * server. expiresAt is createdAt + 10 min; periodic sweeper cleans the
+ * abandoned rows.
+ */
+model FhirLaunchState {
+  state              String   @id
+  orgId              String
+  clinicianOrgUserId String
+  iss                String
+  launchToken        String?
+  codeVerifier       String
+  redirectUri        String
+  ehrSystem          String
+  createdAt          DateTime @default(now())
+  expiresAt          DateTime
+
+  @@index([expiresAt])
 }
