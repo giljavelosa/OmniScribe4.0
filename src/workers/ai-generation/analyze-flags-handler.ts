@@ -70,11 +70,6 @@ export async function handleAnalyzeFlags(job: Job<AnalyzeFlagsJob>) {
     if (!content) continue;
     sectionsAnalyzed += 1;
 
-    // Replace prior OPEN flags for this section (re-analyze pattern).
-    await prisma.reviewFlag.deleteMany({
-      where: { noteId, sectionId: section.id, status: ReviewFlagStatus.OPEN },
-    });
-
     let flags: Awaited<ReturnType<typeof analyzer.analyzeSection>>;
     try {
       flags = await analyzer.analyzeSection({
@@ -84,36 +79,46 @@ export async function handleAnalyzeFlags(job: Job<AnalyzeFlagsJob>) {
         requestId: `${requestId}:${section.id}`,
       });
     } catch (err) {
+      // LLM call failed — do NOT delete the existing OPEN flags. The clinician
+      // keeps visibility into the previously-flagged compliance issues; the
+      // worker will retry on the next regenerate.
       console.warn(`[analyze-flags] section ${section.id} failed:`, err);
       continue;
     }
 
-    if (flags.flags.length === 0) continue;
-    const created = await prisma.$transaction(
-      flags.flags.map((f) =>
-        prisma.reviewFlag.create({
-          data: {
-            noteId,
-            orgId,
-            sectionId: section.id,
-            severity: f.severity as ReviewFlagSeverity,
-            // GREEN auto-resolves as AUTO_VERIFIED — no need for clinician action.
-            status:
-              f.severity === 'GREEN'
-                ? ReviewFlagStatus.RESOLVED
-                : ReviewFlagStatus.OPEN,
-            resolutionAction: f.severity === 'GREEN' ? 'AUTO_VERIFIED' : null,
-            resolvedAt: f.severity === 'GREEN' ? new Date() : null,
-            claim: f.claim,
-            rationale: f.rationale,
-            evidence: f.evidence ?? null,
-            suggestion: f.suggestion ?? null,
-            confidence: f.confidence ?? 0.5,
-          },
-          select: { id: true },
-        }),
-      ),
-    );
+    // Delete + create atomically AFTER a successful analyze. Failure here
+    // rolls back the delete, preserving prior flags.
+    const created = await prisma.$transaction(async (tx) => {
+      await tx.reviewFlag.deleteMany({
+        where: { noteId, sectionId: section.id, status: ReviewFlagStatus.OPEN },
+      });
+      if (flags.flags.length === 0) return [] as Array<{ id: string }>;
+      return Promise.all(
+        flags.flags.map((f) =>
+          tx.reviewFlag.create({
+            data: {
+              noteId,
+              orgId,
+              sectionId: section.id,
+              severity: f.severity as ReviewFlagSeverity,
+              // GREEN auto-resolves as AUTO_VERIFIED — no need for clinician action.
+              status:
+                f.severity === 'GREEN'
+                  ? ReviewFlagStatus.RESOLVED
+                  : ReviewFlagStatus.OPEN,
+              resolutionAction: f.severity === 'GREEN' ? 'AUTO_VERIFIED' : null,
+              resolvedAt: f.severity === 'GREEN' ? new Date() : null,
+              claim: f.claim,
+              rationale: f.rationale,
+              evidence: f.evidence ?? null,
+              suggestion: f.suggestion ?? null,
+              confidence: f.confidence ?? 0.5,
+            },
+            select: { id: true },
+          }),
+        ),
+      );
+    });
     totalCreated += created.length;
   }
 
