@@ -4,11 +4,11 @@
 
 ## Current Phase
 
-- **Wave 5 Ask mode v2 shipped — Unit 28.** PR #29 (branch `feat/unit-28-ask-fhir-tools`, stacked on `feat/unit-27-ask-mode-agent`). Ask agent's tool registry grows from 4 in-app lookups to 9 total — 5 new EHR-backed lookups (`lookupFhirCondition`, `lookupFhirMedication`, `lookupFhirObservation`, `lookupFhirAllergy`, `lookupFhirCarePlan`) read from Unit 21's `FhirCachedResource`. Rule 20 gate at every FHIR tool (verified PatientFhirIdentity required). Per-tool 20-row cap + per-session 100-row ceiling via `fhirRowsConsumed` budget. Staleness honors Unit 21's 7-day threshold. New `'fhir'` source kind renders as text chip in the chat surface.
+- **Wave 5 Research mode shipped — Unit 29.** PR #30 (branch `feat/unit-29-research-mode`, stacked on `feat/unit-28-ask-fhir-tools`). CopilotShell Sheet gains Chart / Research tabs. Each tab owns its own state + endpoint + tool set; switching preserves both conversations within a single Sheet-open session. Research mode is patient-agnostic (system prompt + endpoint both omit patientId); cross-mode tool calls return `wrong_mode_tool` (fail-closed against blended sources). 2 stub-mode research tools (`searchPMC`, `searchAttestedLiterature`); new `'literature'` source kind with PMC ids linking to ncbi.nlm.nih.gov.
 
 ## Current Goal
 
-- Await user confirmation before starting Unit 29 — Wave 5 Research mode. Separate tool registry: `searchPMC`, `searchAttestedLiterature`; research-mode UI clearly distinct from chart mode; never co-mingled; per-message provenance. Per Prompt B's stop-between-units contract.
+- Await user confirmation before starting Unit 30 — Wave 5 Action tools (drafts). Add `draftPatientMessage`, `proposeFollowUpCadence`, `suggestReferralLetterContent`. Always require explicit clinician initiation + confirmation; never autonomous; audit on draft + confirm separately. Per Prompt B's stop-between-units contract.
 
 ## Completed
 
@@ -386,6 +386,20 @@
   - Chat surface's `SourceChip` dispatch: `'fhir'` falls through to the text-chip render (StatusBadge) automatically. Future polish: deep-link to ProvenanceDrawer (Unit 23) on FHIR pill click.
   - 247 tests pass (was 241); build/lint/typecheck clean. 6 new integration tests (real Postgres fixtures, cleaned up afterAll): active conditions returned + stale dropped, clinicalStatus arg filter, unverified patient → `verified_link_required`, unknown patient → `patient_not_found`, rate-limit budget exhausted → `fhir_rate_limit_exceeded`, empty allergies + carePlans don't error.
 
+- **2026-05-17 — Unit 29: Research mode** (PR #30 — `feat(unit-29): research mode`).
+  - Spec at `context/specs/29-research-mode.md`. Wave 5 Phase 54.
+  - 1 new AuditAction value: `COPILOT_RESEARCH_QUERY`. Tool calls reuse `COPILOT_TOOL_CALL`; answers reuse `COPILOT_ASK_ANSWERED` with `metadata.mode === 'research'` so the auditor counts chart-vs-research from one row type. PHI-fenced throughout.
+  - Locked decisions: two tabs in the Sheet (Chart / Research) with separate state + endpoint + tool sets; 2 research tools in v1 (`searchPMC`, `searchAttestedLiterature` — both stub-mode with deterministic seeded results, real-mode PMC eutils + attested-lit service are follow-up units); new source kind `'literature'` (PMC ids link to ncbi.nlm.nih.gov, attested entries as text chips); research system prompt locks evidence-summary tone + no-patient-tailoring rule; per-session per-tab in-memory history.
+  - `src/services/copilot/research-tools.ts` — 2 stub-mode tools. PMC ids generated from sha256(query) so repeated dev queries see stable rows. Title template pulls a few significant words from the query so synthesized citations look plausibly relevant. RESEARCH_TOOL_NAMES exported as a Set for the agent's mode-gate dispatcher.
+  - `runAgent` extended with `mode: 'chart' | 'research'` on `AgentInput`. Mode drives system prompt + tool dispatcher routing. Cross-mode tool calls return `wrong_mode_tool:<name>_is_<other>_only` — fail-closed against the model blending sources.
+  - `RESEARCH_SYSTEM_PROMPT` — separate from `ASK_SYSTEM_PROMPT`. Locks 3 absolute rules: evidence summaries only, cite every claim via `kind: 'literature'`, no patient-specific tailoring. Output format JSON contract identical.
+  - `buildUserPrompt` skips the `<context>` patient block in research mode — removes the temptation for the model to leak patient identifiers into search queries.
+  - `AskSource` gains `'literature'` kind. Agent parser accepts it.
+  - `POST /api/copilot/research` — separate endpoint from /ask. Body omits patientId/noteId by design. NOTE_REVIEW-gated. resourceType: 'Copilot' (not 'Note') — research not anchored to a specific note. Writes the 3-action audit chain with `mode: 'research'` in TOOL_CALL + ANSWERED metadata.
+  - `src/components/copilot/research-surface.tsx` — research-tier chat surface. Status-warning-bg tint on assistant bubbles distinguishes research from chart visually. BookOpen icon. PMC source pills link out; attested as text chips. Empty state offers 3 research-style example questions.
+  - `CopilotShell` Sheet body wrapped in Tabs (Chart default + Research). Each tab preserves state independently within a single Sheet-open session.
+  - 250 tests pass (was 247); build/lint/typecheck clean. 3 new agent tests cover: chart tool in research mode → wrong_mode_tool, research tool in chart mode → wrong_mode_tool, research tool in research mode → literature source in answer.
+
 ## In Progress
 
 None.
@@ -394,7 +408,7 @@ None.
 
 In priority order:
 
-1. **Unit 29 — Wave 5 Research mode** ([`context/specs/00-build-plan.md`](specs/00-build-plan.md) Wave 5). Separate tool registry: `searchPMC`, `searchAttestedLiterature`; research-mode UI clearly distinct from chart mode; never co-mingled (visual separation + sources never blend); per-message provenance with literature citation format.
+1. **Unit 30 — Wave 5 Action tools (drafts)** ([`context/specs/00-build-plan.md`](specs/00-build-plan.md) Wave 5). Three draft-producing tools: `draftPatientMessage`, `proposeFollowUpCadence`, `suggestReferralLetterContent`. Always require explicit clinician initiation + confirmation; never autonomous. Audit on draft AND confirm separately so the auditor can see both the agent's suggestion and the clinician's accept/reject decision.
 
 Deferred polish (non-blocking; land in priority order):
 - Wave 3.5 — Daily SDK swap for patient audio track; TitaNet voice-ID on post-call review; schedule-list "Start telehealth" CTA.
@@ -591,6 +605,15 @@ These need user/PM decision before the depending unit can ship. Quote the source
 - **2026-05-17 — Copy-to-clipboard fires SECTION_COPIED_TO_CLIPBOARD via the copilot-event endpoint with itemCount = char count.** PHI-free at the audit layer (content never leaves the client beyond the clipboard write). The cap raise (1000 → 100_000) accommodates real section sizes; the prior cap was sized for "items in a list" not "characters in a section."
 - **2026-05-17 — Accordion animation polish ships data-state + transition-duration classes only — no CSS keyframes.** The simplest cross-browser solution that works inside Tailwind v4 without custom @keyframes. Future polish (CSS-only height animation for collapse/expand) can hook the data-state attribute when the design asks for it.
 - **2026-05-17 — Wave 2 COMPLETE.** Units 10–14 close the clinical-surface trust gaps. /review now has: SSE reconnect indicator (10), section regenerate with diff (10), failure-recovery banner (10), per-section observability (10), inline goal progression on the patient panel (11), snapshot strip + override-wins on /patients/[id] (12), templates authoring with version history (13), and AI compliance flags with severity-grouped review (14). The clinical surfaces are no longer "works" — they're "trusted daily."
+
+### Unit 29 (2026-05-17)
+
+- **2026-05-17 — Two tabs in the Sheet, not a mode toggle on a single chat.** Toggling modes on a single chat would mix sources (chart pills next to literature pills) AND would require state migration semantics on toggle ("did the previous turn's tool-results carry over?"). Two separate state silos + two separate endpoints prevents the entire class of mixing bugs at the structural level. Audit-side benefit: COPILOT_ASK_ANSWERED with `metadata.mode` lets the auditor count chart-vs-research from one row type without parsing the question text.
+- **2026-05-17 — Mode dispatch fails closed at the agent layer, not just the prompt.** Even if the system prompt drifts and the model picks the wrong tool name (e.g. `searchPMC` while in chart mode), the agent's tool dispatcher refuses (`wrong_mode_tool` error) and feeds it back as a tool-result. The model sees the error on the next turn and self-corrects. Belt-and-suspenders against blended sources — the prompt is the first line of defense, the dispatcher is the second.
+- **2026-05-17 — Research endpoint omits patientId/noteId in the body shape (not just unused).** The route's Zod schema rejects requests carrying these fields by accepting only `{ question, history }`. Removes the temptation for a future caller to "save a round trip" by passing the patient context; if research ever needs patient context, that's a deliberate new endpoint, not an opt-in field.
+- **2026-05-17 — `buildUserPrompt` skips the patient context block entirely in research mode.** Could have included it for completeness; chose not to, so the model literally cannot reference patient identifiers in search queries. Defense against the "search for X in patient Smith" footgun where the model might leak a patient name into PMC search terms.
+- **2026-05-17 — Stub-mode research results seeded off the query.** `sha256(query)` → deterministic PMC ids per query string. Repeated dev queries see stable rows; UI development gets reproducible state without needing a real PMC API key. Title template pulls a few significant words from the query so citations look plausibly relevant (not gibberish).
+- **2026-05-17 — Research-tier background tint on assistant bubbles.** Subtle warning-bg (yellow-ish) instead of muted (gray-ish). Visual reminder that this is evidence, not chart data — clinician scanning the chat history can tell at a glance "this answer is research-mode" without reading the source pills.
 
 ### Unit 28 (2026-05-17)
 
