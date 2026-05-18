@@ -4,11 +4,11 @@
 
 ## Current Phase
 
-- **Wave 5 Ask mode v1 shipped — Unit 27.** PR #28 (branch `feat/unit-27-ask-mode-agent`, stacked on `feat/unit-26-watch-live-triggers`). CopilotShell's placeholder Sheet graduates to a multi-turn chat surface backed by a prompt-engineered agent loop with 4 read-only lookup tools (lookupSignedNote, lookupFollowUp, lookupEpisodeGoals, lookupPatientDemographics). Per-session in-memory history (cleared on Sheet close per spec). Source-grounded — empty sources flagged as clarification questions, not answers. 3-action audit chain (QUERY → TOOL_CALL × N → ANSWERED) with PHI-fenced metadata throughout. Stub-mode safe.
+- **Wave 5 Ask mode v2 shipped — Unit 28.** PR #29 (branch `feat/unit-28-ask-fhir-tools`, stacked on `feat/unit-27-ask-mode-agent`). Ask agent's tool registry grows from 4 in-app lookups to 9 total — 5 new EHR-backed lookups (`lookupFhirCondition`, `lookupFhirMedication`, `lookupFhirObservation`, `lookupFhirAllergy`, `lookupFhirCarePlan`) read from Unit 21's `FhirCachedResource`. Rule 20 gate at every FHIR tool (verified PatientFhirIdentity required). Per-tool 20-row cap + per-session 100-row ceiling via `fhirRowsConsumed` budget. Staleness honors Unit 21's 7-day threshold. New `'fhir'` source kind renders as text chip in the chat surface.
 
 ## Current Goal
 
-- Await user confirmation before starting Unit 28 — Wave 5 Ask mode v2 (FHIR tools). Extends the Ask agent's tool set with `lookupFhirCondition`, `lookupFhirMedication`, `lookupFhirObservation`, `lookupFhirAllergy`, `lookupFhirCarePlan` reading from Unit 21's FhirCachedResource. Rate-limit handling. Per Prompt B's stop-between-units contract.
+- Await user confirmation before starting Unit 29 — Wave 5 Research mode. Separate tool registry: `searchPMC`, `searchAttestedLiterature`; research-mode UI clearly distinct from chart mode; never co-mingled; per-message provenance. Per Prompt B's stop-between-units contract.
 
 ## Completed
 
@@ -374,6 +374,18 @@
   - `CopilotShell` rewritten: SheetDescription removed (took vertical space the chat needs); Sheet content is now AskSurface. `patientId` prop required on the 3 mount sites (prepare/review/capture — all had it in scope from the Note lookup).
   - 241 tests pass (was 234); build/lint/typecheck clean. 7 new agent tests.
 
+- **2026-05-17 — Unit 28: Ask mode v2 — FHIR tools** (PR #29 — `feat(unit-28): ask mode v2 fhir tools`).
+  - Spec at `context/specs/28-ask-mode-v2-fhir-tools.md`. Wave 5 Phase 53 continuation.
+  - 5 new tool names added to `AskToolName` union + 1 new source kind `'fhir'`. No new audit actions (reuses Unit 27's `COPILOT_TOOL_CALL`).
+  - Locked decisions: 5 tools (`lookupFhirCondition`, `lookupFhirMedication`, `lookupFhirObservation`, `lookupFhirAllergy`, `lookupFhirCarePlan` — CarePlan ships before its Wave 4.5 adapter, forward-compatible against empty cache); Rule 20 gate at every tool (verified PatientFhirIdentity required); per-tool cap 20 rows; per-session ceiling 100 rows; staleness via Unit 21 `isStale` (7d); source kind `'fhir'` renders as text chip.
+  - `assertFhirReadable(patientId, ctx)` — shared pre-flight: rate-limit budget check → patient lookup + `assertOrgScoped` → verified link required → return ok. Keeps boilerplate to one line per tool.
+  - `loadFreshFhirRows(patientId, resourceType)` — Prisma query + isStale filter. Matches Unit 22's "no EHR data > stale EHR data" rule.
+  - `ToolContext.fhirRowsConsumed = { count: number }` — object mutated by reference inside `chargeFhirBudget` after each successful FHIR fetch. Non-FHIR tools ignore the field.
+  - `runAgent` constructs `toolCtx = { orgId, fhirRowsConsumed: { count: 0 } }` per call (per-runAgent-call budget, not global — fresh budget per ask).
+  - `ASK_SYSTEM_PROMPT` extended with FHIR LOOKUPS section: tool list, error-response behavior (`verified_link_required` → "confirm EHR match on patient page" clarification; `fhir_rate_limit_exceeded` → "session lookup budget hit"), source kind `'fhir'`.
+  - Chat surface's `SourceChip` dispatch: `'fhir'` falls through to the text-chip render (StatusBadge) automatically. Future polish: deep-link to ProvenanceDrawer (Unit 23) on FHIR pill click.
+  - 247 tests pass (was 241); build/lint/typecheck clean. 6 new integration tests (real Postgres fixtures, cleaned up afterAll): active conditions returned + stale dropped, clinicalStatus arg filter, unverified patient → `verified_link_required`, unknown patient → `patient_not_found`, rate-limit budget exhausted → `fhir_rate_limit_exceeded`, empty allergies + carePlans don't error.
+
 ## In Progress
 
 None.
@@ -382,7 +394,7 @@ None.
 
 In priority order:
 
-1. **Unit 28 — Wave 5 Ask mode v2: FHIR tools** ([`context/specs/00-build-plan.md`](specs/00-build-plan.md) Wave 5). Extends the agent's tool registry with 5 new FHIR-backed lookups: `lookupFhirCondition`, `lookupFhirMedication`, `lookupFhirObservation`, `lookupFhirAllergy`, `lookupFhirCarePlan`. Reads `FhirCachedResource` against `'verified'` PatientFhirIdentity (Rule 20 still holds). Rate-limit handling per tool category.
+1. **Unit 29 — Wave 5 Research mode** ([`context/specs/00-build-plan.md`](specs/00-build-plan.md) Wave 5). Separate tool registry: `searchPMC`, `searchAttestedLiterature`; research-mode UI clearly distinct from chart mode; never co-mingled (visual separation + sources never blend); per-message provenance with literature citation format.
 
 Deferred polish (non-blocking; land in priority order):
 - Wave 3.5 — Daily SDK swap for patient audio track; TitaNet voice-ID on post-call review; schedule-list "Start telehealth" CTA.
@@ -579,6 +591,15 @@ These need user/PM decision before the depending unit can ship. Quote the source
 - **2026-05-17 — Copy-to-clipboard fires SECTION_COPIED_TO_CLIPBOARD via the copilot-event endpoint with itemCount = char count.** PHI-free at the audit layer (content never leaves the client beyond the clipboard write). The cap raise (1000 → 100_000) accommodates real section sizes; the prior cap was sized for "items in a list" not "characters in a section."
 - **2026-05-17 — Accordion animation polish ships data-state + transition-duration classes only — no CSS keyframes.** The simplest cross-browser solution that works inside Tailwind v4 without custom @keyframes. Future polish (CSS-only height animation for collapse/expand) can hook the data-state attribute when the design asks for it.
 - **2026-05-17 — Wave 2 COMPLETE.** Units 10–14 close the clinical-surface trust gaps. /review now has: SSE reconnect indicator (10), section regenerate with diff (10), failure-recovery banner (10), per-section observability (10), inline goal progression on the patient panel (11), snapshot strip + override-wins on /patients/[id] (12), templates authoring with version history (13), and AI compliance flags with severity-grouped review (14). The clinical surfaces are no longer "works" — they're "trusted daily."
+
+### Unit 28 (2026-05-17)
+
+- **2026-05-17 — Per-runAgent-call budget, NOT global rate-limit.** The 100-row ceiling resets for each new Ask question. Rationale: a single answer shouldn't drain the chart, but a clinician asking 3 follow-up questions about the same patient shouldn't accumulate against a global cap. The cost concern (Bedrock token usage on huge tool-result blobs) is bounded per-conversation; cross-conversation cost lives at the org / day level (Unit 35 LLM cost rollup).
+- **2026-05-17 — assertFhirReadable shared helper + chargeFhirBudget side-effect helper.** Pre-flight is 3 distinct checks (rate-limit, org-scope, verified link) repeated across 5 tools. Inlining would mean 30+ lines of repeated boilerplate; the helper makes the per-tool boilerplate one line (`const guard = await assertFhirReadable(...); if ('error' in guard) return guard;`). Budget mutation via `chargeFhirBudget(ctx, rowCount)` rather than returning the count: consistent with the "ctx is owned by caller" pattern and avoids each tool repeating the if-check on whether fhirRowsConsumed is even present.
+- **2026-05-17 — CarePlan tool ships before its adapter (Wave 4.5).** Forward-compatible: tool reads `FhirCachedResource` against resourceType='CarePlan' directly; cache returns empty until the adapter+sync land. Avoids needing a follow-up unit just to add this tool when the adapter eventually arrives. Returns raw FHIR instead of simplified shape so the model can read whatever the EHR returned without an adapter pass.
+- **2026-05-17 — Staleness filter at the tool, not at the source spec.** Could have said "tools return whatever's in cache; model decides if stale data is useful." Decided against — model is too eager to use any data it has; better to enforce the 7-day threshold at the boundary and let the model see "no rows returned" than "1 row but from 30 days ago." Matches Unit 22's brief enrichment rule and Unit 21's general staleness policy.
+- **2026-05-17 — 'fhir' source kind falls through to text-chip render (no /review link).** The chat surface's SourceChip dispatch only deep-links 'note' (→ /review/[id]); 'fhir' uses the default StatusBadge. v2 polish can wire the FHIR pill to open Unit 23's ProvenanceDrawer — same drawer the brief uses — for the raw FHIR resource view. v1 keeps the surface simple.
+- **2026-05-17 — Per-tool 20-row cap independent of per-session 100-row cap.** Per-tool cap bounds prompt growth on the next agent turn (a 200-row Observation result would blow the context budget). Per-session cap bounds total LLM token cost. Both are needed; neither subsumes the other.
 
 ### Unit 27 (2026-05-17)
 
