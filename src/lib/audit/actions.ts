@@ -198,4 +198,13 @@ export type AuditAction =
   | 'FHIR_PATIENT_SEARCH'
   | 'FHIR_PATIENT_LINK_CREATED'
   | 'FHIR_PATIENT_LINK_VERIFIED'
-  | 'FHIR_PATIENT_LINK_REMOVED';
+  | 'FHIR_PATIENT_LINK_REMOVED'
+  // ---- Unit 21: FHIR / Resource sync + cache (Wave 4 / F3) ----
+  // SYNC_TRIGGERED + SYNC_COMPLETED bracket a clinician-initiated sync;
+  // RESOURCE_CACHED fires per resource type that wrote ≥1 row (suppressed
+  // when count === 0 to keep audit row volume sane). All PHI-free —
+  // fhirPatientId + fhirResourceId are EHR-side identifiers, counts are
+  // aggregates.
+  | 'FHIR_SYNC_TRIGGERED'
+  | 'FHIR_SYNC_COMPLETED'
+  | 'FHIR_RESOURCE_CACHED';
