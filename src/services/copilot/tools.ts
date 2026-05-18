@@ -24,10 +24,18 @@ export type AskToolName =
   | 'lookupSignedNote'
   | 'lookupFollowUp'
   | 'lookupEpisodeGoals'
-  | 'lookupPatientDemographics';
+  | 'lookupPatientDemographics'
+  // Unit 28 — FHIR-backed lookups against verified PatientFhirIdentity
+  | 'lookupFhirCondition'
+  | 'lookupFhirMedication'
+  | 'lookupFhirObservation'
+  | 'lookupFhirAllergy'
+  | 'lookupFhirCarePlan';
 
 export type AskSource = {
-  kind: 'note' | 'follow-up' | 'goal' | 'patient';
+  /** 'fhir' added in Unit 28 — kind dispatches the chat surface's render
+   *  per pill (note → /review link; fhir → text chip; others → text chip). */
+  kind: 'note' | 'follow-up' | 'goal' | 'patient' | 'fhir';
   id: string;
   label: string;
 };

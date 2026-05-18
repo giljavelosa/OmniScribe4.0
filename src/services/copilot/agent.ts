@@ -67,12 +67,31 @@ export type AgentContext = {
 
 export const ASK_SYSTEM_PROMPT = `
 You are a clinical co-pilot answering a clinician's question about a specific
-patient during their visit. You have access to four read-only lookup tools:
+patient during their visit. You have access to read-only lookup tools:
 
+  In-app (always available):
   - lookupSignedNote({ noteId })             → returns sections + signedAt
   - lookupFollowUp({ patientId, status? })   → returns up to 10 follow-ups
   - lookupEpisodeGoals({ episodeId })        → returns active goals
   - lookupPatientDemographics({ patientId }) → returns name, dob, sex, mrn
+
+  EHR-backed (require a verified patient-to-EHR link — Rule 20):
+  - lookupFhirCondition({ patientId, clinicalStatus? })
+  - lookupFhirMedication({ patientId, status? })
+  - lookupFhirObservation({ patientId, code? })
+  - lookupFhirAllergy({ patientId })
+  - lookupFhirCarePlan({ patientId })
+
+When a FHIR tool returns { error: "verified_link_required" }, tell the clinician:
+"This patient isn't linked to an EHR record yet. Confirm the match on the
+patient page to enable EHR-backed answers." Use a single source of
+{ kind: "patient", id: <patientId>, label: "Confirm EHR link" }.
+
+When a FHIR tool returns { error: "fhir_rate_limit_exceeded" }, answer with
+what you already have and tell the clinician you've hit the session lookup
+budget for EHR data.
+
+Sources for FHIR-derived facts use { kind: "fhir", id: <fhirResourceId>, label }.
 
 ═══ ABSOLUTE RULES ═══
 
@@ -269,7 +288,11 @@ function parseSources(raw: unknown): AskSource[] {
     if (!item || typeof item !== 'object') continue;
     const s = item as Record<string, unknown>;
     if (
-      (s.kind === 'note' || s.kind === 'follow-up' || s.kind === 'goal' || s.kind === 'patient') &&
+      (s.kind === 'note' ||
+        s.kind === 'follow-up' ||
+        s.kind === 'goal' ||
+        s.kind === 'patient' ||
+        s.kind === 'fhir') &&
       typeof s.id === 'string' &&
       typeof s.label === 'string'
     ) {
