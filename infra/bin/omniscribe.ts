@@ -19,8 +19,18 @@ import { OmniScribeDataStack } from '../lib/data-stack';
 const app = new cdk.App();
 
 type EnvName = 'dev' | 'staging' | 'prod';
+const VALID_ENVS: readonly EnvName[] = ['dev', 'staging', 'prod'];
 
-const envName = (app.node.tryGetContext('env') as EnvName | undefined) ?? 'dev';
+const envRaw = (app.node.tryGetContext('env') as string | undefined) ?? 'dev';
+if (!VALID_ENVS.includes(envRaw as EnvName)) {
+  // Bail loudly — a typo like `-c env=production` or `-c env=Prod` would
+  // otherwise silently fail the isProd check and disable all production
+  // safeguards (deletion protection, RETAIN removal policy, Multi-AZ, etc.).
+  throw new Error(
+    `Invalid -c env=${envRaw}. Must be one of: ${VALID_ENVS.join(', ')}.`,
+  );
+}
+const envName = envRaw as EnvName;
 const region =
   (app.node.tryGetContext('region') as string | undefined) ??
   process.env.CDK_DEFAULT_REGION ??
