@@ -4,11 +4,11 @@
 
 ## Current Phase
 
-- **Wave 1 — opening.** Unit 06 shipped (PR #7 — branch `feat/unit-06-prior-context-brief`). Wave 0 complete (PRs #1–#6). OmniScribe now goes beyond "scribe" into "scribe + clinical context system": precomputed 30-second brief renders on /prepare + /capture, follow-up commitments are extracted from signed notes and held across visits, and the sign flow blocks until each open follow-up has a decision.
+- **Wave 1 — progressing.** Unit 07 shipped (PR #8 — branch `feat/unit-07-copilot-watch-v0`). Unit 06 shipped (PR #7). Wave 0 complete (PRs #1–#6). The Co-Pilot's first surface is live: bottom-right Sparkles Beacon across /prepare + /capture + /review, two Watch cards (open follow-ups + plan-for-today) source-grounded only with provenance pills on every fact.
 
 ## Current Goal
 
-- Await user confirmation before starting Unit 07 — Encounter Copilot Watch v0, per Prompt B's stop-between-units contract.
+- Await user confirmation before starting Unit 08 — Admin & Compliance Ready, per Prompt B's stop-between-units contract.
 
 ## Completed
 
@@ -107,6 +107,16 @@
   - /sign integration: sign route refuses 409 `open_followups_present` + the list when any FollowUp is still OPEN and `sweepAcknowledged` is not set. `SignFollowUpSweep` AlertDialog (rule 22; new sibling component — never modifies review-shell files) forces a decision on every open item with batch "Carry all" / "Drop all…" + safety-net "Skip — auto-carry" path. Continue → disabled until every row has a non-OPEN decision. SignClient holds the MFA token in a ref so post-sweep retry doesn't re-prompt.
   - 10 new AuditAction values appended (BRIEF_GENERATED / _FAILED / _FALLBACK_HAIKU / _VIEWED; FOLLOWUP_CREATED / _STATUS_CHANGED / _CLOSED / _SWEEP_OPENED / _SWEEP_SKIPPED / _SWEEP_RESOLVED).
 
+- **2026-05-17 — Unit 07: Encounter Copilot Watch v0 + Beacon** (PR #8 — `feat(unit-07): copilot watch v0`).
+  - 4 new AuditAction values (`COPILOT_BEACON_OPENED`, `COPILOT_BEACON_CLOSED`, `COPILOT_CARD_RENDERED`, `COPILOT_CARD_DISMISSED`) + dedicated `POST /api/audit/copilot-event` ingress endpoint with a SHAPE-LOCKED schema (only the 4 actions + `{ surface, noteId, cardType?, itemCount? }` accepted) so client-side audit ingress can't smuggle PHI.
+  - `<CopilotShell>` (`src/components/copilot/copilot-shell.tsx`) — single client component owning both the bottom-right Sparkles Beacon (48×48, fixed-position, `aria-label="Open Co-Pilot"`) and the slide-in Sheet. Open/close state lives in local `useState` (no Zustand dependency — consistent with Unit 03 D). Surface gating is at the caller (only `/prepare`, `/capture`, `/review` mount it; `/sign`, `/admin/*`, `/owner/*`, `/login` never do).
+  - `<OpenFollowUpsCard>` — lists `FollowUp` rows for the patient with inline Met / Drop / Carry chips that PATCH `/api/follow-ups/[id]` (Unit 06 endpoint). CARRIED stays visible with a "→ Carried" badge (commitment alive, deferred); MET / DROPPED remove the row. Inline closing-note + drop-reason inputs (rule 22 — no native confirm). Empty state: "No open follow-ups from the last visit."
+  - `<PlanForTodayCard>` — verbatim carry-forward plan items from `NoteBrief.content.carryForwardPlan`. NOT actionable — reminders, not commitments. Empty state: "No carry-forward plan from the last visit."
+  - Both cards fire `COPILOT_CARD_RENDERED` once on mount (best-effort, render not blocked by audit network failure). Both source-pill every fact; both consume brief data only (rule 20 — attested sources only).
+  - `/prepare` integration: two-column grid below `BriefCard` with `OpenFollowUpsCard` + `PlanForTodayCard`. Cards consume `brief.content.openFollowUps` (snapshot at brief time) + `brief.content.carryForwardPlan` — no new queries.
+  - `/capture` integration: `PlanForTodayCard` rendered as sibling below `PriorContextPanel` (desktop right pane + mobile History tab). `OpenFollowUpsCard` deliberately NOT rendered here (PriorContextPanel already surfaces open follow-ups interactively via `followUpsSlot` from Unit 06 — two interactive surfaces would risk state drift). `CopilotShell` mounted at page root.
+  - `/review` integration: `OpenFollowUpsCard` in the sticky right sidebar below `ReadinessPanel`. PlanForTodayCard NOT rendered here per spec §J ("too late for plan for today"). `CopilotShell` at page root.
+
 ## In Progress
 
 None.
@@ -115,7 +125,7 @@ None.
 
 In priority order:
 
-1. **Unit 07 — Encounter Copilot Watch v0** ([`context/specs/07-encounter-copilot-watch-v0.md`](specs/07-encounter-copilot-watch-v0.md)) — beacon + open-follow-ups + plan-for-today cards.
+1. **Unit 08 — Admin & Compliance Ready** ([`context/specs/08-admin-and-compliance-ready.md`](specs/08-admin-and-compliance-ready.md)) — Sites + Rooms CRUD, admin-initiated MFA reset + password reset polish, customer self-onboarding wizard polish, BAA admin UI.
 8. **Unit 07 — Encounter Copilot Watch v0** ([`context/specs/07-encounter-copilot-watch-v0.md`](specs/07-encounter-copilot-watch-v0.md)) — beacon + open-follow-ups + plan-for-today cards.
 9. **Unit 08 — Admin & Compliance Ready** ([`context/specs/08-admin-and-compliance-ready.md`](specs/08-admin-and-compliance-ready.md)) — Sites + Rooms CRUD, admin-initiated MFA reset + password reset, customer self-onboarding wizard, BAA admin UI.
 
@@ -131,7 +141,7 @@ These need user/PM decision before the depending unit can ship. Quote the source
 
 2. ~~**Default templates to seed**~~ — RESOLVED in Unit 05 (4 platform-level presets: 2 MEDICAL + 1 BH + 1 REHAB). See Architecture Decisions / Unit 05 for the rationale on shipping a leaner set than the spec's "2 per division" suggestion.
 
-3. **Watch v0 card content scope** — Watch v0 includes both open-follow-ups + plan-for-today cards. Should they ship as one PR or sequentially? Recommend one PR (they share the same data source); decide before starting Unit 07.
+3. ~~**Watch v0 card content scope**~~ — RESOLVED in Unit 07 (one PR; both cards land together since they share `NoteBrief.content` as the data source — splitting would have added merge overhead without meaningful blast-radius separation).
 
 4. **Telehealth provider** — Daily.co is recommended in `references/telehealth-architecture-spec.md`. Confirm before Wave 3 starts.
 
@@ -214,6 +224,14 @@ These need user/PM decision before the depending unit can ship. Quote the source
 - **2026-05-17 — Sweep skip path is a real workflow, not an escape hatch.** "Skip — auto-carry" patches every still-open item to CARRIED + retries sign with `sweepAcknowledged: true`. Audited (FOLLOWUP_SWEEP_RESOLVED on the sign side). Reasoning: forcing the clinician to manually carry each item when they're in a hurry just teaches them to mash the button — the skip path is the honest version of that behavior, and audit trails make it visible.
 - **2026-05-17 — Source pill = "no pill, no render" trust contract.** Every fact in the BriefCard carries a SourcePill linking to /review/<sourceNoteId>. Reasoning: the brief's whole value proposition is "you can verify any line in one tap." If we ever surface a fact without a pill (e.g., a derived value), the trust contract breaks and clinicians fall back to manual chart review — which is the failure mode we're trying to eliminate.
 - **2026-05-17 — Watch section omits itself entirely when empty.** Reasoning: the spec called for four sub-arrays (med changes / recent results / precautions / red flags). When all four are empty, rendering an empty section adds visual noise without information. `isWatchEmpty()` gates the section at the card layer.
+
+### Unit 07 (2026-05-17)
+
+- **2026-05-17 — Single `<CopilotShell>` owns beacon + sheet + open/close state via local `useState`. NO Zustand dependency.** Consistent with Unit 03 D ("Context over Zustand for single-provider state"). The spec showed a Zustand snippet; we deviated because (a) we already established a no-Zustand pattern, (b) one boolean toggle doesn't need a store, and (c) future units that need cross-component coordination (e.g., Unit 27 Ask-mode chat history) can extract a real store at that time without retroactive churn. Logged as an architecture decision so future agents know the rationale before reaching for Zustand.
+- **2026-05-17 — `OpenFollowUpsCard` not rendered on `/capture`.** Spec §J literal text places it below `PriorContextPanel`, but Unit 06's PriorContextPanel already wires the same FollowUp rows interactively into BriefCard's followUpsSlot. Two interactive surfaces on the same page would (a) duplicate the same data visually, (b) cause state drift (a chip closed in card A wouldn't reflect in card B without an extra round-trip), (c) confuse users about which surface "matters." We render only `PlanForTodayCard` as the new Watch v0 surface on /capture; the follow-up surface stays inside PriorContextPanel. /prepare + /review both have OpenFollowUpsCard because neither has another live follow-up surface.
+- **2026-05-17 — Audit endpoint accepts only 4 fenced actions + fenced metadata.** `POST /api/audit/copilot-event` deliberately restricts both the action union AND the metadata shape (`surface`, optional `cardType`, optional `itemCount`) at the route boundary. Client code can only emit what the schema permits — the PHI denylist enforced by `writeAuditLog` never has to fight client-supplied data because the route itself rejects ill-formed payloads with 400. Tighter than a generic audit endpoint would have been, but it's the right blast-radius posture for a client-side ingress.
+- **2026-05-17 — Beacon mounting gating lives at the caller, not the component.** Pages that should NOT render the beacon (/sign, /admin/*, /owner/*, /login) simply don't import or mount `<CopilotShell>`. Reasoning: a single explicit caller decision is easier to audit than a deny-list inside the component (which can drift as routes are renamed). The spec's "NOT rendered on /sign, /admin/*, /owner/*, /login" becomes a CI grep target on `<CopilotShell>` usage.
+- **2026-05-17 — Cards are SOURCE-GROUNDED ONLY — no AI inference.** v0 surfaces only what the prior clinician explicitly wrote (FollowUp rows extracted from signed Plan sections; carryForwardPlan items quoted from signed notes). No LLM inference at the card layer. If a future card needs reasoning, that's Ask-mode (Unit 27), not Watch — distinct architecture, distinct UX contract.
 
 ### Pre-existing (foundational, from spec)
 

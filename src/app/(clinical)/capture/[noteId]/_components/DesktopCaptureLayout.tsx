@@ -7,6 +7,7 @@ import { TranscriptWorkspace } from './TranscriptWorkspace';
 import { PriorContextPanel } from './PriorContextPanel';
 import { LiveNotePanel } from './LiveNotePanel';
 import { RecordingControls } from './RecordingControls';
+import { PlanForTodayCard } from '@/components/copilot/cards/plan-for-today-card';
 import type { PriorContextBriefContent } from '@/types/brief';
 
 type LiveFollowUp = {
@@ -74,6 +75,16 @@ export function DesktopCaptureLayout({
             nowMs={nowMs}
             hasPriorSignedNote={hasPriorSignedNote}
           />
+          {brief && (
+            <PlanForTodayCard
+              items={brief.carryForwardPlan.map((text) => ({
+                text,
+                source: { noteId: brief.lastVisit.noteId, date: brief.lastVisit.date },
+              }))}
+              surface="capture"
+              noteId={noteId}
+            />
+          )}
           <LiveNotePanel />
         </aside>
       </div>

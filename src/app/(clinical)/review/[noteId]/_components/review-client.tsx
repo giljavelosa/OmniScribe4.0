@@ -6,6 +6,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { StatusBanner } from '@/components/ui/status-banner';
 import { PatientIdentityHeader } from '@/components/patients/patient-identity-header';
 import { SectionProgressStrip } from '@/components/notes/section-progress-strip';
+import { OpenFollowUpsCard, type CopilotFollowUp } from '@/components/copilot/cards/open-followups-card';
 import { SectionAccordion } from './section-accordion';
 import { ReadinessPanel } from './readiness-panel';
 import {
@@ -42,6 +43,11 @@ type ReviewSnapshot = {
 type Props = {
   noteId: string;
   initial: ReviewSnapshot;
+  /** Live open follow-ups for this patient (server-fetched once per request).
+   *  Rendered in the sticky sidebar below ReadinessPanel as a Watch v0
+   *  surface. Optimistic chip mutations stay local to the card; the next
+   *  navigation re-fetches authoritative state. */
+  copilotFollowUps: CopilotFollowUp[];
 };
 
 /**
@@ -52,7 +58,7 @@ type Props = {
  * Re-fetches /api/notes/[id] on every SECTIONS event so the SectionAccordion's
  * content stays current with what the worker wrote.
  */
-export function ReviewClient({ noteId, initial }: Props) {
+export function ReviewClient({ noteId, initial, copilotFollowUps }: Props) {
   const router = useRouter();
   const [snap, setSnap] = useState<ReviewSnapshot>(initial);
 
@@ -140,12 +146,17 @@ export function ReviewClient({ noteId, initial }: Props) {
             ))
           )}
         </div>
-        <aside className="lg:sticky lg:top-4 self-start">
+        <aside className="lg:sticky lg:top-4 self-start space-y-3">
           <ReadinessPanel
             noteId={noteId}
             cells={progress}
             readyForSign={readyForSign}
             noteStatus={snap.status}
+          />
+          <OpenFollowUpsCard
+            followUps={copilotFollowUps}
+            surface="review"
+            noteId={noteId}
           />
         </aside>
       </div>

@@ -10,6 +10,7 @@ import { PriorContextPanel } from './PriorContextPanel';
 import { LiveNotePanel } from './LiveNotePanel';
 import { RecordingControls } from './RecordingControls';
 import { useTranscript } from '../_hooks/capture-state';
+import { PlanForTodayCard } from '@/components/copilot/cards/plan-for-today-card';
 import type { PriorContextBriefContent } from '@/types/brief';
 
 type LiveFollowUp = {
@@ -104,7 +105,7 @@ export function MobileCaptureLayout({
         <TabsContent value="note" className="flex-1 p-2 min-h-0">
           <LiveNotePanel />
         </TabsContent>
-        <TabsContent value="history" className="flex-1 p-2 min-h-0 overflow-y-auto">
+        <TabsContent value="history" className="flex-1 p-2 min-h-0 overflow-y-auto space-y-3">
           <PriorContextPanel
             brief={brief}
             initialOpenFollowUps={initialOpenFollowUps}
@@ -113,6 +114,16 @@ export function MobileCaptureLayout({
             nowMs={nowMs}
             hasPriorSignedNote={hasPriorSignedNote}
           />
+          {brief && (
+            <PlanForTodayCard
+              items={brief.carryForwardPlan.map((text) => ({
+                text,
+                source: { noteId: brief.lastVisit.noteId, date: brief.lastVisit.date },
+              }))}
+              surface="capture"
+              noteId={noteId}
+            />
+          )}
         </TabsContent>
         <TabsContent value="setup" className="flex-1 p-2 min-h-0">
           <p className="text-sm text-muted-foreground p-2">

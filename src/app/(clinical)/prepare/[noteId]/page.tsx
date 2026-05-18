@@ -10,6 +10,9 @@ import { StatusBadge } from '@/components/ui/status-badge';
 import { PatientIdentityHeader } from '@/components/patients/patient-identity-header';
 import { BriefCard } from '@/components/brief/brief-card';
 import { EmptyBrief } from '@/components/brief/empty-brief';
+import { CopilotShell } from '@/components/copilot/copilot-shell';
+import { OpenFollowUpsCard, type CopilotFollowUp } from '@/components/copilot/cards/open-followups-card';
+import { PlanForTodayCard, type PlanItem } from '@/components/copilot/cards/plan-for-today-card';
 import type { PriorContextBriefContent } from '@/types/brief';
 import { PasteTranscriptForm } from './_components/paste-transcript-form';
 import { UploadAudioForm } from './_components/upload-audio-form';
@@ -63,21 +66,55 @@ export default async function PreparePage({ params }: { params: Promise<{ noteId
   // eslint-disable-next-line react-hooks/purity
   const nowMs = Date.now();
 
+  const briefContent = brief?.content
+    ? (brief.content as unknown as PriorContextBriefContent)
+    : null;
+
+  // Watch v0 cards consume brief data (no new queries — spec §F). Open
+  // follow-ups come from the brief snapshot at last sign; live mutation
+  // lands on /capture where the action chips matter most.
+  const copilotFollowUps: CopilotFollowUp[] = briefContent
+    ? briefContent.openFollowUps.map((fu) => ({
+        id: fu.followUpId,
+        text: fu.text,
+        status: fu.status,
+        source: fu.source,
+      }))
+    : [];
+
+  const planForTodayItems: PlanItem[] = briefContent
+    ? briefContent.carryForwardPlan.map((text) => ({
+        text,
+        source: {
+          noteId: briefContent.lastVisit.noteId,
+          date: briefContent.lastVisit.date,
+        },
+      }))
+    : [];
+
   return (
     <div className="mx-auto max-w-4xl px-4 py-6 space-y-6">
       <PatientIdentityHeader patient={note.patient} />
 
-      {brief ? (
-        <BriefCard
-          content={brief.content as unknown as PriorContextBriefContent}
-          nowMs={nowMs}
-        />
+      {briefContent ? (
+        <BriefCard content={briefContent} nowMs={nowMs} />
       ) : (
         <EmptyBrief
           variant={hasPriorSignedNote ? 'unavailable' : 'first-visit'}
           patientName={patientDisplayName}
           patientId={note.patient.id}
         />
+      )}
+
+      {briefContent && (
+        <div className="grid gap-4 lg:grid-cols-2">
+          <OpenFollowUpsCard
+            followUps={copilotFollowUps}
+            surface="prepare"
+            noteId={note.id}
+          />
+          <PlanForTodayCard items={planForTodayItems} surface="prepare" noteId={note.id} />
+        </div>
       )}
 
       <Card>
@@ -141,6 +178,8 @@ export default async function PreparePage({ params }: { params: Promise<{ noteId
           </CardContent>
         </Card>
       </div>
+
+      <CopilotShell surface="prepare" noteId={note.id} />
     </div>
   );
 }
