@@ -1,0 +1,193 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+/* Dark mode is class-driven. The root layout reads `prefers-color-scheme` and
+   toggles `.dark` on <html>. */
+@custom-variant dark (&:is(.dark *));
+
+/* -------------------------------------------------------------------------- */
+/* @theme — Tailwind v4 design tokens. Type scale, radius, fonts, motion.    */
+/* No hex literals anywhere downstream — all colors come from CSS vars below. */
+/* -------------------------------------------------------------------------- */
+@theme inline {
+  /* Fonts (mapped from next/font CSS variables set in layout.tsx) */
+  --font-sans: var(--font-inter);
+  --font-mono: var(--font-geist-mono);
+  --font-display: var(--font-geist-sans);
+
+  /* Type scale (px values calibrated to 17px html base; see ui-context.md) */
+  --text-2xs: 0.6875rem;     /* 11px @ 16 base; 11.6875px @ 17 base */
+  --text-xs: 0.75rem;        /* 12 / 12.75 */
+  --text-sm: 0.8125rem;      /* 13 / 13.8 */
+  --text-sm-loose: 0.875rem; /* 14 / 14.9 */
+  --text-base: 0.9375rem;    /* 15 / 15.9 */
+  --text-md: 1rem;           /* 16 / 17 */
+  --text-lg: 1.3125rem;      /* 21 / 22.3 */
+  --text-2lg: 1.5rem;        /* 24 / 25.5 */
+  --text-xl: 1.75rem;        /* 28 / 29.75 */
+
+  /* Border radius */
+  --radius: 0.625rem;                       /* 10px base */
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
+
+  /* Touch target (Apple HIG minimum) */
+  --touch-min: 2.75rem;
+
+  /* Map Tailwind color tokens → CSS vars so `bg-background`, `text-foreground`,
+     `border-border`, `bg-primary`, etc. resolve correctly. */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+}
+
+/* -------------------------------------------------------------------------- */
+/* :root — light-mode tokens (OKLCH per ui-context.md "visual law")          */
+/* -------------------------------------------------------------------------- */
+:root {
+  --background: oklch(0.985 0.002 90);
+  --foreground: oklch(0.145 0.015 260);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0.015 260);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0.015 260);
+
+  --primary: oklch(0.44 0.08 167);                /* deep teal */
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.965 0.005 260);
+  --secondary-foreground: oklch(0.145 0.015 260);
+
+  --muted: oklch(0.965 0.005 260);
+  --muted-foreground: oklch(0.35 0.01 260);
+
+  --accent: oklch(0.96 0.015 167);                /* faint teal tint */
+  --accent-foreground: oklch(0.145 0.015 260);
+
+  --destructive: oklch(0.577 0.245 27.325);       /* red */
+  --destructive-foreground: oklch(0.99 0 0);
+
+  --border: oklch(0.925 0.005 260);
+  --input: oklch(0.925 0.005 260);
+  --ring: oklch(0.44 0.08 167);
+
+  /* Status semantics — consumed only by <StatusBadge> / <StatusBanner> */
+  --status-success-fg: oklch(0.55 0.15 145);
+  --status-success-bg: oklch(0.96 0.04 145);
+  --status-success-border: oklch(0.85 0.08 145);
+  --status-warning-fg: oklch(0.55 0.18 75);
+  --status-warning-bg: oklch(0.96 0.05 75);
+  --status-warning-border: oklch(0.85 0.10 75);
+  --status-danger-fg: oklch(0.55 0.22 25);
+  --status-danger-bg: oklch(0.96 0.05 25);
+  --status-danger-border: oklch(0.85 0.10 25);
+  --status-info-fg: oklch(0.55 0.15 240);
+  --status-info-bg: oklch(0.96 0.04 240);
+  --status-info-border: oklch(0.85 0.08 240);
+  --status-violet-fg: oklch(0.50 0.18 295);
+  --status-violet-bg: oklch(0.96 0.04 295);
+  --status-violet-border: oklch(0.85 0.08 295);
+
+  /* Specialized */
+  --highlight-bg: oklch(0.92 0.15 95);            /* search inactive (yellow) */
+  --highlight-active-bg: oklch(0.78 0.18 65);     /* search active (orange) */
+  --speaker-1: oklch(0.45 0.10 200);              /* clinician voice (blue) */
+  --speaker-2: oklch(0.45 0.10 260);              /* patient voice (purple) */
+}
+
+/* -------------------------------------------------------------------------- */
+/* .dark — dark-mode overrides. Status fg lifted for legibility on dark bg.  */
+/* -------------------------------------------------------------------------- */
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+
+  --primary: oklch(0.65 0.10 167);
+  --primary-foreground: oklch(0.145 0 0);
+  --secondary: oklch(0.265 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+
+  --muted: oklch(0.265 0 0);
+  --muted-foreground: oklch(0.70 0 0);
+
+  --accent: oklch(0.30 0.04 167);
+  --accent-foreground: oklch(0.985 0 0);
+
+  --destructive: oklch(0.70 0.21 22);
+  --destructive-foreground: oklch(0.99 0 0);
+
+  --border: oklch(0.30 0 0);
+  --input: oklch(0.30 0 0);
+  --ring: oklch(0.65 0.10 167);
+
+  /* Lift the fg L channel so status colors stay legible on dark bg */
+  --status-success-fg: oklch(0.78 0.16 145);
+  --status-success-bg: oklch(0.25 0.05 145);
+  --status-success-border: oklch(0.40 0.08 145);
+  --status-warning-fg: oklch(0.80 0.18 75);
+  --status-warning-bg: oklch(0.27 0.06 75);
+  --status-warning-border: oklch(0.42 0.10 75);
+  --status-danger-fg: oklch(0.78 0.22 25);
+  --status-danger-bg: oklch(0.27 0.06 25);
+  --status-danger-border: oklch(0.42 0.10 25);
+  --status-info-fg: oklch(0.78 0.16 240);
+  --status-info-bg: oklch(0.25 0.05 240);
+  --status-info-border: oklch(0.40 0.08 240);
+  --status-violet-fg: oklch(0.78 0.18 295);
+  --status-violet-bg: oklch(0.27 0.05 295);
+  --status-violet-border: oklch(0.42 0.08 295);
+
+  --highlight-bg: oklch(0.50 0.15 95);
+  --highlight-active-bg: oklch(0.58 0.18 65);
+  --speaker-1: oklch(0.70 0.12 200);
+  --speaker-2: oklch(0.70 0.12 260);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Base reset / antialiasing                                                  */
+/* -------------------------------------------------------------------------- */
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    /* 17px base — every rem in the type scale assumes this */
+    font-size: 17px;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: var(--font-sans), system-ui, -apple-system, sans-serif;
+  }
+  /* Honor reduced motion across the app */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}

@@ -1,4 +1,51 @@
-# OmniScribe — Greenfield Implementation Kit
+# OmniScribe
+
+> HIPAA-grade medical AI scribe with an integrated agentic clinical copilot.
+
+## Implementation status
+
+- **Phase:** Wave 0 — Foundation. Unit 01 (Foundation Auth & Tenancy) in progress.
+- **Stack pins:** Next.js 16 (App Router) + React 19 + TypeScript strict, Prisma 7 + Postgres 16 + pgvector, Redis 7 + BullMQ 5, NextAuth v5 + MFA TOTP, AWS Bedrock (Sonnet 4.5 / Haiku 4.5), Soniox real-time STT.
+- **Live ledger:** [`context/progress-tracker.md`](context/progress-tracker.md).
+
+## Local-dev quickstart
+
+```bash
+# Prerequisites: Node 20+, Docker Desktop, openssl
+
+cp .env.example .env
+# Fill NEXTAUTH_SECRET with: openssl rand -base64 32
+
+docker compose up -d                # postgres (host 5434) + redis (host 6381)
+docker compose ps                   # both services should be "healthy"
+
+npm install                         # postinstall runs `prisma generate`
+npx prisma migrate dev --name init  # creates schema + runs seed
+npx prisma studio                   # browse seeded org / users (optional)
+
+# Two terminals — rule 16: workers process transcription, AI, voice-id, brief.
+# Without `dev:workers`, notes stick in DRAFTING forever.
+npm run dev                         # Terminal 1 — Next.js on localhost:3000
+npm run dev:workers                 # Terminal 2 — BullMQ workers
+```
+
+Demo credentials seeded by `prisma db seed`:
+
+| Email                    | Role         | Password    | MFA |
+|--------------------------|--------------|-------------|-----|
+| `admin@demo.local`       | SUPER_ADMIN  | `Demo1234!` | enrolled (see `docs/SEED_CREDENTIALS.md`) |
+| `clinician@demo.local`   | CLINICIAN    | `Demo1234!` | enroll on first sign-in |
+| `viewer@demo.local`      | VIEWER       | `Demo1234!` | enroll on first sign-in |
+| `siteadmin@demo.local`   | SITE_ADMIN   | `Demo1234!` | enroll on first sign-in |
+| `owner@demo.local`       | PLATFORM_OWNER | `Demo1234!` | enroll on first sign-in |
+
+## Building the next unit
+
+Open `KickOffPrompts.md`. Prompt B is the canonical "start the next unit" prompt — paste into your AI coding agent and let it work the spec. Stop between units (per Prompt A's contract — clinical software).
+
+---
+
+# Greenfield Implementation Kit (handoff document below)
 
 > A self-contained handoff kit for a senior engineer and implementation team to build **OmniScribe** — a HIPAA-grade medical AI scribe with an integrated agentic clinical copilot — **from a clean slate**. No prior codebase required, no inherited bugs, no migration baggage.
 
