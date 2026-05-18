@@ -233,8 +233,10 @@ function MessageBubble({
   }
   function submitRedirect() {
     const text = redirectDraft ?? '';
-    // Guard: clinician must add SOMETHING past the prefix.
-    if (text.trim() === REDIRECT_PREFIX.trim()) return;
+    const trimmed = text.trim();
+    // Guard: must include the prefix AND have actual content past it.
+    if (!trimmed.startsWith(REDIRECT_PREFIX.trim())) return;
+    if (trimmed === REDIRECT_PREFIX.trim()) return;
     onRedirect(text);
     setRedirectDraft(null);
   }
@@ -342,7 +344,11 @@ function MessageBubble({
               type="button"
               size="sm"
               onClick={submitRedirect}
-              disabled={disabled || redirectDraft.trim() === REDIRECT_PREFIX.trim()}
+              disabled={
+                disabled ||
+                !redirectDraft.trim().startsWith(REDIRECT_PREFIX.trim()) ||
+                redirectDraft.trim() === REDIRECT_PREFIX.trim()
+              }
               className="gap-1"
             >
               <Send className="h-3 w-3" aria-hidden />
