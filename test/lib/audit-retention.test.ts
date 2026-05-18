@@ -17,12 +17,16 @@ import { purgeAuditAllOrgs, purgeAuditForOrg } from '@/lib/audit/retention';
  *   - All-orgs runner aggregates row counts correctly
  */
 
-const prisma = new PrismaClient();
+// Skipped in CI (no Postgres). Run locally via `npm test` with DATABASE_URL set.
+const hasDb = !!process.env.DATABASE_URL;
+const describeMaybe = hasDb ? describe : describe.skip;
+const prisma = hasDb ? new PrismaClient() : (null as unknown as PrismaClient);
 
 const ORG_RETAIN_ID = 'test-org-unit-34-retain';
 const ORG_FOREVER_ID = 'test-org-unit-34-forever';
 
 beforeAll(async () => {
+  if (!hasDb) return;
   await prisma.organization.upsert({
     where: { id: ORG_RETAIN_ID },
     update: { auditRetentionDays: 30 },
@@ -55,6 +59,7 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
+  if (!hasDb) return;
   await prisma.auditLog.deleteMany({
     where: { orgId: { in: [ORG_RETAIN_ID, ORG_FOREVER_ID] } },
   });
@@ -64,7 +69,7 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
-describe('purgeAuditForOrg', () => {
+describeMaybe('purgeAuditForOrg', () => {
   it('skips when org has no retention configured', async () => {
     const result = await purgeAuditForOrg(ORG_FOREVER_ID);
     expect(result.skipped).toBe('no_retention');
@@ -157,7 +162,7 @@ describe('purgeAuditForOrg', () => {
   });
 });
 
-describe('purgeAuditAllOrgs', () => {
+describeMaybe('purgeAuditAllOrgs', () => {
   it('processes only orgs with retention set + aggregates totals', async () => {
     const now = new Date();
     const sixtyDaysAgo = new Date(now.getTime() - 60 * 86_400_000);
