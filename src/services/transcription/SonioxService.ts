@@ -100,15 +100,19 @@ export async function mintEphemeralKey(args: MintEphemeralKeyArgs): Promise<Real
   // bare minimum is that the key never reaches the browser without explicit
   // server mediation.)
   try {
-    const res = await fetch(`${SONIOX_API_BASE}/v1/auth/temporary-api-keys`, {
+    // Soniox 2025 API: path `/v1/auth/temporary-api-key` (singular);
+    // body `usage_type: 'transcribe_websocket'`, `expires_in_seconds`,
+    // optional `client_reference_id`. Response: `{ api_key, expires_at }`.
+    // Docs: https://soniox.com/docs/api-reference/auth/create_temporary_api_key
+    const res = await fetch(`${SONIOX_API_BASE}/v1/auth/temporary-api-key`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${SONIOX_API_KEY}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        usage: 'stt-ws',
-        ttl_seconds: ttl,
+        usage_type: 'transcribe_websocket',
+        expires_in_seconds: ttl,
         client_reference_id: args.noteId,
       }),
     });

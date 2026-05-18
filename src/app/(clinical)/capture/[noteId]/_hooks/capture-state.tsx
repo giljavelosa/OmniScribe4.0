@@ -375,21 +375,35 @@ function parseSonioxMessage(
   }
   const tokens = msg.tokens ?? msg.words ?? [];
   if (tokens.length) {
-    const newFinal: TranscriptSegment[] = [];
+    const finals: Array<{ text: string; speaker: number | null }> = [];
     let runningPartial = '';
     for (const tok of tokens) {
       if (tok.is_final) {
-        newFinal.push({
-          id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-          text: tok.text,
-          speaker: tok.speaker ?? null,
-          isFinal: true,
-        });
+        finals.push({ text: tok.text, speaker: tok.speaker ?? null });
       } else {
         runningPartial += tok.text;
       }
     }
-    if (newFinal.length) setTranscript((prev) => [...prev, ...newFinal]);
+    if (finals.length) {
+      // Coalesce same-speaker finals into one segment so the UI shows running text, not one word per row.
+      setTranscript((prev) => {
+        const next = prev.slice();
+        for (const f of finals) {
+          const last = next[next.length - 1];
+          if (last && last.isFinal && last.speaker === f.speaker) {
+            next[next.length - 1] = { ...last, text: last.text + f.text };
+          } else {
+            next.push({
+              id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              text: f.text,
+              speaker: f.speaker,
+              isFinal: true,
+            });
+          }
+        }
+        return next;
+      });
+    }
     setPartial(runningPartial);
   }
   if (msg.partial_transcript) setPartial(msg.partial_transcript);
