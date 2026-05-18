@@ -287,4 +287,9 @@ export type AuditAction =
   // ---- Unit 35: Per-org LLM cost rollup ----
   | 'LLM_BUDGET_UPDATED'
   // ---- Unit 36: Mobile / PWA polish ----
-  | 'PWA_INSTALL_PROMPTED';
+  | 'PWA_INSTALL_PROMPTED'
+  // ---- Unit 37: Public signup + self-serve org creation ----
+  | 'ORG_SELF_PROVISIONED'
+  | 'USER_LOCKED'
+  | 'USER_UNLOCKED'
+  | 'INVITE_EXPIRED_SWEPT';
