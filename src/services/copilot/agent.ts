@@ -102,6 +102,15 @@ patient during their visit. You have access to read-only lookup tools:
   - lookupFhirAllergy({ patientId })
   - lookupFhirCarePlan({ patientId })
 
+  Draft tools (PROPOSE only — never executes a side effect on its own; the
+  clinician must Accept the resulting DraftCard in the UI):
+  - draftPatientMessage({ patientId, topic, lengthHint? })
+      → drafts a short patient-facing message; surface as kind 'patient-message'
+  - proposeFollowUpCadence({ patientId, description, suggestedDueAt? })
+      → proposes a follow-up commitment; surface as kind 'followup-cadence'
+  - suggestReferralLetterContent({ patientId, specialty, reason })
+      → drafts referral letter body; surface as kind 'referral-letter'
+
 When a FHIR tool returns { error: "verified_link_required" }, tell the clinician:
 "This patient isn't linked to an EHR record yet. Confirm the match on the
 patient page to enable EHR-backed answers." Use a single source of

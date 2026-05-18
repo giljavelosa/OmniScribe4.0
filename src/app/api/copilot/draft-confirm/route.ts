@@ -60,6 +60,22 @@ export async function POST(req: Request) {
   }
   const body = parsed.data;
 
+  // Side-effect dispatch by KIND, not by client preference (locked decision).
+  // Reject mismatched (kind, sideEffect) tuples — e.g. a 'patient-message'
+  // draft must NEVER trigger followup-create regardless of what the client
+  // sent.
+  const expectedSideEffect: Record<typeof body.kind, typeof body.sideEffect> = {
+    'patient-message': 'clipboard',
+    'referral-letter': 'clipboard',
+    'followup-cadence': 'followup-create',
+  };
+  if (body.sideEffect !== expectedSideEffect[body.kind]) {
+    return NextResponse.json(
+      { error: { code: 'kind_side_effect_mismatch' } },
+      { status: 400 },
+    );
+  }
+
   let actionTaken: 'noop' | 'followup-created' = 'noop';
   let createdFollowUpId: string | null = null;
 
