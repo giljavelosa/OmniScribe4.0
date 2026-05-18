@@ -145,7 +145,9 @@ export async function runAgent(
 
     const parsed = parseModelOutput(result.text);
     if (!parsed.ok) {
-      // Retry once more with a parse-error hint, otherwise bail.
+      // Record the model's own (invalid) response in history so its retry
+      // can see what failed.
+      turns.push({ role: 'assistant', content: result.text });
       turns.push({
         role: 'tool-result',
         content: `previous response failed validation: ${parsed.error}. Return strict JSON.`,
@@ -154,6 +156,10 @@ export async function runAgent(
     }
 
     if (parsed.value.action === 'tool') {
+      // Record the model's tool-call decision in history so subsequent
+      // iterations see the reasoning chain (without this, the model loses
+      // its own prior outputs and re-calls or contradicts itself).
+      turns.push({ role: 'assistant', content: result.text });
       const toolResult = await runTool(parsed.value.tool, parsed.value.args, { orgId: ctx.orgId });
       toolCalls.push({
         tool: parsed.value.tool,

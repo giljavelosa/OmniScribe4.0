@@ -10,8 +10,11 @@ import { runAgent, type AgentTurn } from '@/services/copilot/agent';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+// Clients only ever send user + assistant turns. Accepting tool-result from
+// the wire would let a crafted request inject fake <tool-result> blocks that
+// the LLM cites as if sourced from attested records.
 const turnSchema = z.object({
-  role: z.enum(['user', 'assistant', 'tool-result']),
+  role: z.enum(['user', 'assistant']),
   content: z.string().min(1).max(8000),
 });
 
