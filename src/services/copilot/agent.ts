@@ -67,12 +67,31 @@ export type AgentContext = {
 
 export const ASK_SYSTEM_PROMPT = `
 You are a clinical co-pilot answering a clinician's question about a specific
-patient during their visit. You have access to four read-only lookup tools:
+patient during their visit. You have access to read-only lookup tools:
 
+  In-app (always available):
   - lookupSignedNote({ noteId })             → returns sections + signedAt
   - lookupFollowUp({ patientId, status? })   → returns up to 10 follow-ups
   - lookupEpisodeGoals({ episodeId })        → returns active goals
   - lookupPatientDemographics({ patientId }) → returns name, dob, sex, mrn
+
+  EHR-backed (require a verified patient-to-EHR link — Rule 20):
+  - lookupFhirCondition({ patientId, clinicalStatus? })
+  - lookupFhirMedication({ patientId, status? })
+  - lookupFhirObservation({ patientId, code? })
+  - lookupFhirAllergy({ patientId })
+  - lookupFhirCarePlan({ patientId })
+
+When a FHIR tool returns { error: "verified_link_required" }, tell the clinician:
+"This patient isn't linked to an EHR record yet. Confirm the match on the
+patient page to enable EHR-backed answers." Use a single source of
+{ kind: "patient", id: <patientId>, label: "Confirm EHR link" }.
+
+When a FHIR tool returns { error: "fhir_rate_limit_exceeded" }, answer with
+what you already have and tell the clinician you've hit the session lookup
+budget for EHR data.
+
+Sources for FHIR-derived facts use { kind: "fhir", id: <fhirResourceId>, label }.
 
 ═══ ABSOLUTE RULES ═══
 
@@ -95,7 +114,7 @@ To call a tool:
 
 To give a definitive answer:
   { "action": "answer", "text": "<short answer>", "sources": [
-      { "kind": "note" | "follow-up" | "goal" | "patient",
+      { "kind": "note" | "follow-up" | "goal" | "patient" | "fhir",
         "id": "<id>",
         "label": "<short human label>" } ] }
 
@@ -116,6 +135,11 @@ export async function runAgent(
     ...input.history,
     { role: 'user', content: input.question },
   ];
+  // Unit 28 — per-session FHIR row budget. Mutated by reference inside
+  // each FHIR tool. Initialized here so the budget is per-runAgent-call
+  // (NOT global; a new ask starts fresh). Non-FHIR tools (Unit 27)
+  // ignore the field.
+  const toolCtx = { orgId: ctx.orgId, fhirRowsConsumed: { count: 0 } };
 
   let stub = false;
   let iterations = 0;
@@ -160,7 +184,7 @@ export async function runAgent(
       // iterations see the reasoning chain (without this, the model loses
       // its own prior outputs and re-calls or contradicts itself).
       turns.push({ role: 'assistant', content: result.text });
-      const toolResult = await runTool(parsed.value.tool, parsed.value.args, { orgId: ctx.orgId });
+      const toolResult = await runTool(parsed.value.tool, parsed.value.args, toolCtx);
       toolCalls.push({
         tool: parsed.value.tool,
         args: parsed.value.args,
@@ -269,7 +293,11 @@ function parseSources(raw: unknown): AskSource[] {
     if (!item || typeof item !== 'object') continue;
     const s = item as Record<string, unknown>;
     if (
-      (s.kind === 'note' || s.kind === 'follow-up' || s.kind === 'goal' || s.kind === 'patient') &&
+      (s.kind === 'note' ||
+        s.kind === 'follow-up' ||
+        s.kind === 'goal' ||
+        s.kind === 'patient' ||
+        s.kind === 'fhir') &&
       typeof s.id === 'string' &&
       typeof s.label === 'string'
     ) {
