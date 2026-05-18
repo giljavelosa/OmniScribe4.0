@@ -151,7 +151,13 @@ export function projectCachedRows(input: {
       }
       case 'MedicationStatement': {
         const m = simplified as SimplifiedMedicationStatement;
-        if ((m.status === 'active' || m.status === 'intended') && m.display) {
+        // Include on-hold per the locked decision in progress-tracker.md
+        // ("active/intended/on-hold meds") — temporarily paused medications
+        // are clinically relevant.
+        if (
+          (m.status === 'active' || m.status === 'intended' || m.status === 'on-hold') &&
+          m.display
+        ) {
           medications.push({
             display: m.display,
             status: m.status,

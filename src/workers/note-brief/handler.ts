@@ -118,10 +118,18 @@ export async function handle(job: Job<NoteBriefJob>) {
   // Unit 22 / F4 — pull EHR enrichment if the patient has a verified
   // PatientFhirIdentity. Silent skip on absent link or empty/stale cache;
   // BRIEF_GENERATED audit metadata records whether the brief was enriched.
-  const externalEhrContext = await loadExternalEhrContext({
-    patientId: note.patientId,
-    ehrSystem: 'nextgen',
-  });
+  // Wrap in its own try/catch so an infra failure (Prisma timeout, missing
+  // table during migration) in the OPTIONAL enrichment path doesn't block
+  // core brief generation — projection is purely additive by contract.
+  let externalEhrContext: Awaited<ReturnType<typeof loadExternalEhrContext>> | null = null;
+  try {
+    externalEhrContext = await loadExternalEhrContext({
+      patientId: note.patientId,
+      ehrSystem: 'nextgen',
+    });
+  } catch (err) {
+    console.warn('[note-brief] loadExternalEhrContext failed; continuing without enrichment:', err);
+  }
 
   const briefInput = {
     division: note.division,
