@@ -96,7 +96,7 @@ export function UsersSearch() {
                 <th className="text-left px-3 py-2 font-medium">Email</th>
                 <th className="text-left px-3 py-2 font-medium">Name</th>
                 <th className="text-left px-3 py-2 font-medium">Orgs</th>
-                <th className="text-left px-3 py-2 font-medium">MFA</th>
+                <th className="text-left px-3 py-2 font-medium">Authenticator</th>
                 <th className="text-left px-3 py-2 font-medium">Platform</th>
                 <th className="text-left px-3 py-2 font-medium">Created</th>
               </tr>

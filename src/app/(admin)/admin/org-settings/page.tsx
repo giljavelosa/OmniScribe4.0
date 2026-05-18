@@ -8,7 +8,7 @@ import { StatusBadge } from '@/components/ui/status-badge';
 import { OrgSettingsForm } from './_components/org-settings-form';
 
 export const dynamic = 'force-dynamic';
-export const metadata: Metadata = { title: 'Org settings' };
+export const metadata: Metadata = { title: 'Organization settings' };
 
 export default async function AdminOrgSettingsPage() {
   const session = await auth();

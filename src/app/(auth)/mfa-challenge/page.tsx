@@ -4,7 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { auth } from '@/lib/auth';
 import { MfaChallengeForm } from './_components/mfa-challenge-form';
 
-export const metadata: Metadata = { title: 'Verify MFA' };
+export const metadata: Metadata = { title: 'Verify with authenticator' };
 export const dynamic = 'force-dynamic';
 
 export default async function MfaChallengePage() {
@@ -16,7 +16,7 @@ export default async function MfaChallengePage() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Verify MFA</CardTitle>
+        <CardTitle>Verify with authenticator</CardTitle>
         <CardDescription>Enter the 6-digit code from your authenticator app.</CardDescription>
       </CardHeader>
       <CardContent>

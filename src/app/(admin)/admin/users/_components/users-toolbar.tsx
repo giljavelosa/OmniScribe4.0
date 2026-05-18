@@ -67,7 +67,7 @@ export function UsersToolbar() {
         <SheetHeader>
           <SheetTitle>Invite user</SheetTitle>
           <SheetDescription>
-            They&apos;ll receive an email with a single-use 7-day link to set their password and enroll MFA.
+            They&apos;ll receive an email with a single-use 7-day link to set their password and set up their authenticator.
           </SheetDescription>
         </SheetHeader>
 
