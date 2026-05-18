@@ -39,6 +39,7 @@ export const QUEUE_NAMES = {
   voiceId: 'voice-id',
   noteBrief: 'note-brief',
   postSignArtifacts: 'post-sign-artifacts',
+  externalContextTranscription: 'external-context-transcription',
 } as const;
 
 export const transcriptionQueue = new Queue(QUEUE_NAMES.transcription, defaultOptions);
@@ -47,6 +48,10 @@ export const noteFinalizeQueue = new Queue(QUEUE_NAMES.noteFinalize, defaultOpti
 export const voiceIdQueue = new Queue(QUEUE_NAMES.voiceId, voiceIdOptions);
 export const noteBriefQueue = new Queue(QUEUE_NAMES.noteBrief, defaultOptions);
 export const postSignArtifactsQueue = new Queue(QUEUE_NAMES.postSignArtifacts, defaultOptions);
+export const externalContextTranscriptionQueue = new Queue(
+  QUEUE_NAMES.externalContextTranscription,
+  defaultOptions,
+);
 
 // ---------------------------------------------------------------------------
 // Enqueue helpers — keep the call sites typed + idempotent.
@@ -117,5 +122,21 @@ export function enqueuePostSignArtifactJob(payload: {
 }) {
   return postSignArtifactsQueue.add(payload.type, payload, {
     jobId: `post-sign:${payload.noteId}:${payload.type}:${payload.requestId}`,
+  });
+}
+
+/**
+ * External-context transcription — enqueued by the upload-mode POST after the
+ * audio bytes land in S3. Stable jobId follows the 3-part rule:
+ *   `external-ctx:{externalContextId}:{requestId}`
+ * so a retried POST collapses to the same Redis entry.
+ */
+export function enqueueExternalContextTranscriptionJob(payload: {
+  externalContextId: string;
+  orgId: string;
+  requestId: string;
+}) {
+  return externalContextTranscriptionQueue.add('transcribe-external-context', payload, {
+    jobId: `external-ctx:${payload.externalContextId}:${payload.requestId}`,
   });
 }

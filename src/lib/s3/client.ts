@@ -101,4 +101,14 @@ export function audioKeyFor(noteId: string, segmentId: string) {
   return `audio/raw/${noteId}/${segmentId}.wav`;
 }
 
+/**
+ * S3 key for external-context audio uploads. Kept separate from audioKeyFor
+ * so the bucket-listing UI / lifecycle policies can tell visit-audio from
+ * prior-context-audio at a glance.
+ */
+export function externalContextAudioKeyFor(externalContextId: string, ext: string) {
+  const safeExt = ext.replace(/[^a-z0-9]/gi, '').toLowerCase() || 'wav';
+  return `audio/external-context/${externalContextId}.${safeExt}`;
+}
+
 export const isS3StubMode = !BUCKET;

@@ -8,6 +8,10 @@ import { StatusBadge } from '@/components/ui/status-badge';
 import { PatientIdentityHeader } from '@/components/patients/patient-identity-header';
 import { StartVisitButton } from './_components/start-visit-button';
 import { EpisodesPanel } from './_components/episodes-panel';
+import {
+  ExternalContextSection,
+  type ExternalContextSummary,
+} from './_components/external-context-section';
 import { PatientSnapshotStrip } from '@/components/patients/snapshot-strip';
 import { VisitHistoryList } from '@/components/patients/visit-history-list';
 import { InlineDemographics } from '@/components/patients/inline-demographics';
@@ -41,7 +45,7 @@ export default async function PatientDetailPage({ params }: { params: Promise<{ 
 
   // Unit 12 — snapshot strip + visit history with snippets, server-fetched
   // so the first paint has real content.
-  const [snapshotStrip, recentVisits] = await Promise.all([
+  const [snapshotStrip, recentVisits, externalContexts] = await Promise.all([
     buildSnapshotStrip({ orgId: session.user.orgId, patientId: patient.id }),
     prisma.note.findMany({
       where: {
@@ -59,6 +63,26 @@ export default async function PatientDetailPage({ params }: { params: Promise<{ 
         template: { select: { name: true } },
       },
     }),
+    prisma.externalContext.findMany({
+      where: { patientId: patient.id, orgId: session.user.orgId },
+      orderBy: { dateOfRecord: 'desc' },
+      select: {
+        id: true,
+        dateOfRecord: true,
+        source: true,
+        sourceLabel: true,
+        status: true,
+        addedAt: true,
+        audioFileKey: true,
+        episodeOfCareId: true,
+        addedBy: {
+          select: {
+            id: true,
+            user: { select: { email: true, name: true } },
+          },
+        },
+      },
+    }),
   ]);
 
   const visits = recentVisits.map((n) => ({
@@ -70,6 +94,29 @@ export default async function PatientDetailPage({ params }: { params: Promise<{ 
       (n.finalJson as unknown as FinalJsonShape) ?? null,
     ),
   }));
+
+  const externalContextItems: ExternalContextSummary[] = externalContexts.map((r) => ({
+    id: r.id,
+    dateOfRecord: r.dateOfRecord.toISOString(),
+    source: r.source,
+    sourceLabel: r.sourceLabel,
+    status: r.status,
+    addedAt: r.addedAt.toISOString(),
+    hasAudio: !!r.audioFileKey,
+    episodeOfCareId: r.episodeOfCareId,
+    addedBy: {
+      orgUserId: r.addedBy.id,
+      email: r.addedBy.user.email,
+      name: r.addedBy.user.name,
+    },
+  }));
+
+  const episodeChoicesForAdd = patient.episodes
+    .filter((ep) => ep.status === 'ACTIVE' || ep.status === 'RECERT_DUE')
+    .map((ep) => ({
+      id: ep.id,
+      label: ep.bodyPart ? `${ep.diagnosis} (${ep.bodyPart})` : ep.diagnosis,
+    }));
 
   const episodesForPanel = patient.episodes.map((ep) => ({
     id: ep.id,
@@ -114,6 +161,12 @@ export default async function PatientDetailPage({ params }: { params: Promise<{ 
             patientId={patient.id}
             patientDivision={patient.division}
             episodes={episodesForPanel}
+          />
+
+          <ExternalContextSection
+            patientId={patient.id}
+            episodeChoices={episodeChoicesForAdd}
+            initialItems={externalContextItems}
           />
 
           <VisitHistoryList visits={visits} />

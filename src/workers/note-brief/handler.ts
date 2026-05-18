@@ -13,9 +13,11 @@ import {
   projectEpisodeForBrief,
   projectGoalForBrief,
   projectSignedNoteForBrief,
+  type BriefExternalContextProjection,
 } from '@/lib/notes/build-brief-prompt';
 import { loadExternalEhrContext } from '@/lib/fhir/project-ehr-context';
 import { hydrateEhrEnrichment } from '@/lib/notes/hydrate-ehr-enrichment';
+import { loadExternalContextsForBrief } from '@/lib/brief/load-external-contexts';
 import type {
   PriorContextBriefContent,
   FollowUpPreview,
@@ -132,6 +134,23 @@ export async function handle(job: Job<NoteBriefJob>) {
     console.warn('[note-brief] loadExternalEhrContext failed; continuing without enrichment:', err);
   }
 
+  // External context (prior-visit reference material added via the patient
+  // chart). Same defensive try/catch posture as EHR enrichment — the brief
+  // must still generate if this projection fails for any reason.
+  let externalContexts: BriefExternalContextProjection[] = [];
+  try {
+    externalContexts = await loadExternalContextsForBrief({
+      patientId: note.patientId,
+      orgId,
+      currentVisitStart: note.signedAt ?? new Date(todayIso),
+    });
+  } catch (err) {
+    console.warn(
+      '[note-brief] loadExternalContextsForBrief failed; continuing without external context:',
+      err,
+    );
+  }
+
   const briefInput = {
     division: note.division,
     todayIso,
@@ -142,6 +161,7 @@ export async function handle(job: Job<NoteBriefJob>) {
     priorNotes: briefPriorNotes,
     topActiveGoals: topGoals.map(projectGoalForBrief),
     externalEhrContext,
+    externalContexts,
   };
 
   let briefResult;
@@ -292,6 +312,9 @@ export async function handle(job: Job<NoteBriefJob>) {
           externalEhrContext.recentProcedures.length +
           externalEhrContext.recentDiagnosticReports.length
         : 0,
+      // External-context — auditor lens: did prior-visit reference material
+      // contribute to this brief?
+      externalContextCount: externalContexts.length,
     },
   });
 
