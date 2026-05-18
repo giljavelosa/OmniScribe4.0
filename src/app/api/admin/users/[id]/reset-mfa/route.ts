@@ -52,7 +52,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       data: {
         mfaSecret: null,
         mfaEnabled: false,
-        mfaRecoveryCodes: undefined,
+        // Wipe recovery codes. `undefined` in a Prisma update is a no-op
+        // (Prisma's "don't touch this field" sentinel), which silently
+        // preserved the old bcrypt-hashed codes. Use `{ set: [] }` to
+        // explicitly clear the array.
+        mfaRecoveryCodes: { set: [] },
       },
     }),
     prisma.userSession.deleteMany({ where: { userId: targetUserId } }),

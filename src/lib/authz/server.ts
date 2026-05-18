@@ -56,6 +56,16 @@ export async function requireFeatureAccess(featureKey: FeatureKey): Promise<Requ
     return err('mfa_required', 403);
   }
 
+  // Block API access for users who have MFA enabled but haven't completed the
+  // challenge in this session. The UI layout enforces the MFA redirect chain
+  // for HTML routes, but a session cookie minted before challenge completion
+  // could otherwise call any API route directly. Endpoints that legitimately
+  // run before MFA challenge (e.g., /api/auth/mfa/verify itself) use their
+  // own auth path and do not flow through requireFeatureAccess.
+  if (session.user.mfaEnabled && !session.user.mfaVerified) {
+    return err('mfa_not_verified', 403);
+  }
+
   const authorizationUser: AuthorizationUser = {
     userId: session.user.id,
     orgUserId: orgUser.id,
