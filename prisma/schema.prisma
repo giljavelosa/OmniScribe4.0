@@ -89,6 +89,8 @@ model Organization {
   invites             Invite[]
   featureFlags        FeatureFlag[]
   ipAllowlistEntries  IpAllowlistEntry[]
+  patients            Patient[]
+  departments         Department[]
 
   @@index([baaExecutedAt])
 }
@@ -106,6 +108,8 @@ model Site {
   createdAt       DateTime     @default(now())
 
   rooms           Room[]
+  patients        Patient[]
+  departments     Department[]
 
   @@index([orgId])
 }
@@ -317,4 +321,392 @@ model IpAllowlistEntry {
   createdAt    DateTime     @default(now())
 
   @@index([orgId])
+}
+
+// =============================================================================
+// Unit 02 — Patient & Schedule Core
+// Spec: context/specs/02-patient-and-schedule.md
+// =============================================================================
+
+enum PatientSex {
+  MALE
+  FEMALE
+  OTHER
+  UNKNOWN
+}
+
+enum PatientAddressKind {
+  HOME
+  WORK
+  OTHER
+}
+
+enum PatientCoverageStatus {
+  ACTIVE
+  TERMINATED
+  PENDING
+  UNKNOWN
+}
+
+enum PatientConsentStatus {
+  GIVEN
+  DECLINED
+  PENDING
+  REVOKED
+}
+
+enum PatientDepartmentEnrollmentStatus {
+  ACTIVE
+  INACTIVE
+  COMPLETED
+  WAITLIST
+}
+
+enum PatientDepartmentIntakeStatus {
+  DRAFT
+  SUBMITTED
+  REVIEWED
+  ARCHIVED
+}
+
+enum VisitType {
+  IN_PERSON
+  TELEHEALTH
+}
+
+enum ScheduleStatus {
+  SCHEDULED
+  CONFIRMED
+  CHECKED_IN
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum EncounterStatus {
+  PLANNED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum EpisodeStatus {
+  ACTIVE
+  RECERT_DUE
+  DISCHARGED
+  CANCELLED
+}
+
+enum GoalStatus {
+  ACTIVE
+  MET
+  NOT_MET
+  MODIFIED
+  DISCONTINUED
+  PARTIALLY_MET
+}
+
+enum GoalType {
+  STG
+  LTG
+}
+
+enum NoteSensitivityLevel {
+  STANDARD_CLINICAL
+  BEHAVIORAL_HEALTH
+  BILLING_ONLY
+  ADMINISTRATIVE
+}
+
+// NoteStatus — APPEND-ONLY per anti-regression rule 2.
+// Unit 02 ships PREPARING only (created when a Schedule transitions to
+// IN_PROGRESS). Unit 04/05 will append RECORDING / PAUSED / TRANSCRIBING /
+// DRAFTING / DRAFT / REVIEWING / SIGNED / TRANSFERRED / INTERRUPTED /
+// PENDING_REVIEW.
+enum NoteStatus {
+  PREPARING
+}
+
+model Patient {
+  id                String   @id @default(cuid())
+  orgId             String
+  organization      Organization @relation(fields: [orgId], references: [id])
+  siteId            String?
+  site              Site?    @relation(fields: [siteId], references: [id])
+  division          Division
+  firstName         String
+  lastName          String
+  mrn               String
+  dob               DateTime
+  sex               PatientSex
+  phone             String?
+  email             String?
+  preferredLanguage String?
+  isDeleted         Boolean  @default(false)
+  deletedAt         DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  addresses                PatientAddress[]
+  coverages                PatientCoverage[]
+  emergencyContacts        PatientEmergencyContact[]
+  guarantors               PatientGuarantor[]
+  consents                 PatientConsent[]
+  communicationPreferences PatientCommunicationPreference[]
+  enrollments              PatientDepartmentEnrollment[]
+  intakes                  PatientDepartmentIntake[]
+  encounters               Encounter[]
+  schedules                Schedule[]
+  episodes                 EpisodeOfCare[]
+  notes                    Note[]
+
+  @@unique([orgId, mrn])
+  @@index([orgId, lastName, firstName])
+  @@index([orgId, isDeleted])
+}
+
+model PatientAddress {
+  id         String  @id @default(cuid())
+  patientId  String
+  patient    Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  kind       PatientAddressKind
+  line1      String
+  line2      String?
+  city       String
+  state      String
+  postalCode String
+  country    String @default("US")
+
+  @@index([patientId])
+}
+
+model PatientCoverage {
+  id              String   @id @default(cuid())
+  patientId       String
+  patient         Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  carrier         String
+  planName        String?
+  memberId        String
+  groupId         String?
+  status          PatientCoverageStatus @default(ACTIVE)
+  effectiveDate   DateTime?
+  terminationDate DateTime?
+
+  @@index([patientId])
+}
+
+model PatientEmergencyContact {
+  id           String  @id @default(cuid())
+  patientId    String
+  patient      Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  name         String
+  relationship String?
+  phone        String?
+  email        String?
+
+  @@index([patientId])
+}
+
+model PatientGuarantor {
+  id           String  @id @default(cuid())
+  patientId    String
+  patient      Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  name         String
+  relationship String?
+  phone        String?
+  email        String?
+  address      String?
+
+  @@index([patientId])
+}
+
+model PatientConsent {
+  id          String   @id @default(cuid())
+  patientId   String
+  patient     Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  consentType String   // 'recording' | 'voice-id' | 'telehealth' | etc.
+  status      PatientConsentStatus
+  version     String
+  acceptedAt  DateTime?
+  declinedAt  DateTime?
+
+  @@index([patientId])
+}
+
+model PatientCommunicationPreference {
+  id        String  @id @default(cuid())
+  patientId String
+  patient   Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  channel   String  // 'email' | 'sms' | 'phone' | 'portal'
+  optedIn   Boolean
+
+  @@index([patientId])
+}
+
+model Department {
+  id               String       @id @default(cuid())
+  orgId            String
+  organization     Organization @relation(fields: [orgId], references: [id])
+  siteId           String?      // null = org-wide
+  site             Site?        @relation(fields: [siteId], references: [id])
+  name             String
+  division         Division
+  intakeFormSchema Json?        // JSON schema for intake form
+
+  enrollments PatientDepartmentEnrollment[]
+  intakes     PatientDepartmentIntake[]
+  encounters  Encounter[]
+  episodes    EpisodeOfCare[]
+
+  @@index([orgId])
+}
+
+model PatientDepartmentEnrollment {
+  id           String                            @id @default(cuid())
+  patientId    String
+  patient      Patient                           @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  orgId        String
+  departmentId String
+  department   Department                        @relation(fields: [departmentId], references: [id])
+  status       PatientDepartmentEnrollmentStatus
+  enrolledAt   DateTime                          @default(now())
+  endedAt      DateTime?
+
+  @@index([patientId])
+  @@index([departmentId, status])
+}
+
+model PatientDepartmentIntake {
+  id               String                        @id @default(cuid())
+  patientId        String
+  patient          Patient                       @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  departmentId     String
+  department       Department                    @relation(fields: [departmentId], references: [id])
+  status           PatientDepartmentIntakeStatus
+  sensitivityLevel NoteSensitivityLevel          @default(STANDARD_CLINICAL)
+  formData         Json
+  submittedAt      DateTime?
+  reviewedAt       DateTime?
+
+  @@index([patientId])
+  @@index([departmentId, status])
+}
+
+model Schedule {
+  id                 String         @id @default(cuid())
+  orgId              String
+  patientId          String
+  patient            Patient        @relation(fields: [patientId], references: [id])
+  clinicianOrgUserId String
+  siteId             String
+  roomId             String?
+  visitType          VisitType
+  scheduledStart     DateTime
+  scheduledEnd       DateTime
+  status             ScheduleStatus @default(SCHEDULED)
+  notes              String?        // admin note, not clinical
+  createdAt          DateTime       @default(now())
+
+  encounter Encounter?
+
+  @@index([clinicianOrgUserId, scheduledStart])
+  @@index([orgId, scheduledStart])
+}
+
+model Encounter {
+  id                 String          @id @default(cuid())
+  orgId              String
+  patientId          String
+  patient            Patient         @relation(fields: [patientId], references: [id])
+  scheduleId         String?         @unique
+  schedule           Schedule?       @relation(fields: [scheduleId], references: [id])
+  clinicianOrgUserId String
+  siteId             String
+  roomId             String?
+  departmentId       String?
+  department         Department?     @relation(fields: [departmentId], references: [id])
+  episodeOfCareId    String?
+  episode            EpisodeOfCare?  @relation(fields: [episodeOfCareId], references: [id])
+  status             EncounterStatus @default(PLANNED)
+  startedAt          DateTime?
+  endedAt            DateTime?
+
+  notes Note[]
+
+  @@index([patientId, startedAt])
+}
+
+model EpisodeOfCare {
+  id                 String   @id @default(cuid())
+  orgId              String
+  patientId          String
+  patient            Patient  @relation(fields: [patientId], references: [id])
+  clinicianOrgUserId String
+  departmentId       String
+  department         Department @relation(fields: [departmentId], references: [id])
+  division           Division
+  diagnosis          String
+  bodyPart           String?
+  status             EpisodeStatus @default(ACTIVE)
+  startedAt          DateTime @default(now())
+  endedAt            DateTime?
+  recertDueAt        DateTime?
+  visitsAuthorized  Int?
+  visitsCompleted    Int      @default(0)
+
+  goals      EpisodeGoal[]
+  encounters Encounter[]
+
+  @@index([patientId, status])
+}
+
+model EpisodeGoal {
+  id              String        @id @default(cuid())
+  episodeId       String
+  episode         EpisodeOfCare @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  goalType        GoalType
+  goalText        String
+  baselineMeasure String?
+  targetMeasure   String?
+  currentMeasure  String?
+  status          GoalStatus    @default(ACTIVE)
+  originNoteId    String?       // set when goal was created in a note (Unit 05)
+  resolvedNoteId  String?       // set when goal status changed (Unit 05)
+  createdAt       DateTime      @default(now())
+
+  progressEntries GoalProgressEntry[]
+}
+
+model GoalProgressEntry {
+  id           String      @id @default(cuid())
+  goalId       String
+  goal         EpisodeGoal @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  noteId       String      // set when progress recorded in a note (Unit 05)
+  measureValue String
+  recordedAt   DateTime    @default(now())
+}
+
+// =============================================================================
+// Note — MINIMAL SHELL added in Unit 02.
+// Unit 04/05 will append every other field (transcriptRaw, transcriptClean,
+// draftJson, finalJson, inferenceLog, audioFileKey, signedAt, …). This shell
+// exists so Schedule.start can mint a Note in PREPARING and downstream
+// /prepare/[noteId] routing has something to anchor on.
+// =============================================================================
+model Note {
+  id                 String     @id @default(cuid())
+  orgId              String
+  patientId          String
+  patient            Patient    @relation(fields: [patientId], references: [id])
+  encounterId        String?
+  encounter          Encounter? @relation(fields: [encounterId], references: [id])
+  clinicianOrgUserId String
+  division           Division
+  status             NoteStatus @default(PREPARING)
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+
+  @@index([orgId, status])
+  @@index([patientId, createdAt])
 }

@@ -9,9 +9,13 @@
  * client — leaking PHI into audit logs is the exact failure this guards.
  */
 
+import { Prisma, type PrismaClient } from '@prisma/client';
+
 import { prisma } from '@/lib/prisma';
 import type { AuditAction } from './actions';
 import { assertPhiFreeMetadata } from './phi-free-check';
+
+type AuditClient = Prisma.TransactionClient | PrismaClient;
 
 export type AuditEntry = {
   userId?: string;
@@ -22,12 +26,17 @@ export type AuditEntry = {
   resourceType?: string;
   resourceId?: string;
   metadata?: Record<string, unknown>;
+  /** Optional Prisma tx client — pass when calling from inside `$transaction`
+   * so the audit row commits/rolls back atomically with the caller's writes.
+   */
+  tx?: AuditClient;
 };
 
 export async function writeAuditLog(entry: AuditEntry): Promise<void> {
   assertPhiFreeMetadata(entry.metadata);
 
-  await prisma.auditLog.create({
+  const client = entry.tx ?? prisma;
+  await client.auditLog.create({
     data: {
       userId: entry.userId,
       orgId: entry.orgId,

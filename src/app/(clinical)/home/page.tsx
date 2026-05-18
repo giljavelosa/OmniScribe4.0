@@ -1,40 +1,97 @@
 import type { Metadata } from 'next';
-import { auth } from '@/lib/auth';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { StatusBadge } from '@/components/ui/status-badge';
 
-export const metadata: Metadata = { title: 'Home' };
+import { auth } from '@/lib/auth';
+import { prisma } from '@/lib/prisma';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { SchedulingCard } from '@/components/clinical/scheduling-card';
+import { HomeSearchForm } from './_components/home-search-form';
+
 export const dynamic = 'force-dynamic';
+export const metadata: Metadata = { title: 'Home' };
 
 export default async function HomePage() {
   const session = await auth();
-  // Layout guarantees session.user exists; this is for the type-checker.
-  if (!session?.user) return null;
+  if (!session?.user?.orgId || !session.user.orgUserId) return null;
+
+  const dayStart = new Date();
+  dayStart.setHours(0, 0, 0, 0);
+  const dayEnd = new Date(dayStart);
+  dayEnd.setDate(dayEnd.getDate() + 1);
+
+  const schedules = await prisma.schedule.findMany({
+    where: {
+      orgId: session.user.orgId,
+      clinicianOrgUserId: session.user.orgUserId,
+      scheduledStart: { gte: dayStart, lt: dayEnd },
+    },
+    orderBy: { scheduledStart: 'asc' },
+    include: {
+      patient: { select: { id: true, firstName: true, lastName: true, mrn: true } },
+      encounter: {
+        select: {
+          id: true,
+          notes: { orderBy: { createdAt: 'asc' }, take: 1, select: { id: true } },
+        },
+      },
+    },
+  });
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-8">
+    <div className="mx-auto max-w-5xl px-4 py-6 space-y-6">
+      <div className="flex flex-col gap-1">
+        <h1 className="text-2lg font-semibold">Today</h1>
+        <p className="text-sm text-muted-foreground">
+          {dayStart.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })} ·{' '}
+          {session.user.email}
+        </p>
+      </div>
+
       <Card>
         <CardHeader>
-          <CardTitle>You&apos;re signed in.</CardTitle>
+          <CardTitle className="text-md">Schedule</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-3 text-sm">
-          <p className="text-muted-foreground">
-            The real clinical home arrives in Unit 02 (Patient &amp; Schedule core).
-            For Unit 01, this is a confirmation surface.
+        <CardContent className="space-y-3">
+          {schedules.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No visits scheduled for today.</p>
+          ) : (
+            schedules.map((s) => (
+              <SchedulingCard
+                key={s.id}
+                visit={{
+                  scheduleId: s.id,
+                  patientId: s.patient.id,
+                  patientName: `${s.patient.lastName}, ${s.patient.firstName}`,
+                  mrn: s.patient.mrn,
+                  scheduledStart: s.scheduledStart.toISOString(),
+                  scheduledEnd: s.scheduledEnd.toISOString(),
+                  visitType: s.visitType,
+                  status: s.status,
+                  hasEncounter: !!s.encounter,
+                  encounterNoteId: s.encounter?.notes[0]?.id ?? null,
+                }}
+              />
+            ))
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-md">Find a patient</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <HomeSearchForm />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-md">Drafts</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground">
+            Drafts queue arrives in Unit 05 (Note Generation &amp; Sign).
           </p>
-          <div className="flex flex-wrap items-center gap-2">
-            <StatusBadge variant="info">{session.user.email}</StatusBadge>
-            {session.user.role && <StatusBadge variant="neutral">role: {session.user.role}</StatusBadge>}
-            {session.user.division && (
-              <StatusBadge variant="neutral">division: {session.user.division}</StatusBadge>
-            )}
-            {session.user.platformRole === 'PLATFORM_OWNER' && (
-              <StatusBadge variant="violet">PLATFORM_OWNER</StatusBadge>
-            )}
-            <StatusBadge variant={session.user.mfaEnabled ? 'success' : 'warning'}>
-              MFA {session.user.mfaEnabled ? 'enrolled' : 'not enrolled'}
-            </StatusBadge>
-          </div>
         </CardContent>
       </Card>
     </div>

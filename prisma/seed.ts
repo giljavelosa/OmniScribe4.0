@@ -9,7 +9,21 @@
  * Anti-regression rule 4: ALWAYS run `npx prisma db seed` after schema changes.
  */
 
-import { PrismaClient, Division, OrgRole, PlatformRole, SeatTier, NoteStyle, ComplianceProfile } from '@prisma/client';
+import {
+  PrismaClient,
+  Division,
+  OrgRole,
+  PlatformRole,
+  SeatTier,
+  NoteStyle,
+  ComplianceProfile,
+  PatientSex,
+  VisitType,
+  ScheduleStatus,
+  EpisodeStatus,
+  GoalType,
+  GoalStatus,
+} from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import { generate as generateTotp } from 'otplib';
 
@@ -209,6 +223,163 @@ async function main() {
     await prisma.organization.update({
       where: { id: org.id },
       data: { baaCountersignedBy: ownerUserId },
+    });
+  }
+
+  // ---------------- Unit 02: Departments + Patients + Schedules ----------------
+
+  // Three demo departments, one per division — wired to the demo site.
+  const deptMedical = await prisma.department.upsert({
+    where: { id: 'seed-dept-medical' },
+    update: {},
+    create: {
+      id: 'seed-dept-medical',
+      orgId: org.id,
+      siteId: site.id,
+      name: 'Family Medicine',
+      division: Division.MEDICAL,
+    },
+  });
+  const deptRehab = await prisma.department.upsert({
+    where: { id: 'seed-dept-rehab' },
+    update: {},
+    create: {
+      id: 'seed-dept-rehab',
+      orgId: org.id,
+      siteId: site.id,
+      name: 'Outpatient Physical Therapy',
+      division: Division.REHAB,
+    },
+  });
+  const deptBh = await prisma.department.upsert({
+    where: { id: 'seed-dept-bh' },
+    update: {},
+    create: {
+      id: 'seed-dept-bh',
+      orgId: org.id,
+      siteId: site.id,
+      name: 'Behavioral Health Clinic',
+      division: Division.BEHAVIORAL_HEALTH,
+    },
+  });
+
+  // Find the seeded clinician's OrgUser id (we'll use it for schedules + episodes).
+  const clinicianUser = await prisma.user.findUnique({
+    where: { email: 'clinician@demo.local' },
+    include: { orgUsers: { where: { orgId: org.id }, take: 1 } },
+  });
+  const clinicianOrgUserId = clinicianUser?.orgUsers[0]?.id;
+  if (!clinicianOrgUserId) throw new Error('Seed: missing clinician OrgUser');
+
+  // Three patients, one per division.
+  const patients = [
+    {
+      id: 'seed-patient-medical',
+      mrn: 'MED-1001',
+      firstName: 'James',
+      lastName: 'Park',
+      sex: PatientSex.MALE,
+      dob: new Date('1971-04-12'),
+      division: Division.MEDICAL,
+      department: deptMedical,
+      diagnosis: 'Essential hypertension',
+      goalText: 'Reduce average BP to <130/80 over 12 weeks.',
+    },
+    {
+      id: 'seed-patient-rehab',
+      mrn: 'REH-2001',
+      firstName: 'Maria',
+      lastName: 'Alvarez',
+      sex: PatientSex.FEMALE,
+      dob: new Date('1958-09-23'),
+      division: Division.REHAB,
+      department: deptRehab,
+      diagnosis: 'Right knee OA s/p arthroscopy',
+      goalText: 'Restore right-knee flexion to 120° within 8 weeks.',
+    },
+    {
+      id: 'seed-patient-bh',
+      mrn: 'BH-3001',
+      firstName: 'Devon',
+      lastName: 'Mitchell',
+      sex: PatientSex.OTHER,
+      dob: new Date('1995-11-02'),
+      division: Division.BEHAVIORAL_HEALTH,
+      department: deptBh,
+      diagnosis: 'Generalized anxiety disorder',
+      goalText: 'Reduce GAD-7 score from 14 to <8 within 12 weeks.',
+    },
+  ];
+
+  for (const p of patients) {
+    const patient = await prisma.patient.upsert({
+      where: { id: p.id },
+      update: {},
+      create: {
+        id: p.id,
+        orgId: org.id,
+        siteId: site.id,
+        division: p.division,
+        firstName: p.firstName,
+        lastName: p.lastName,
+        mrn: p.mrn,
+        dob: p.dob,
+        sex: p.sex,
+        preferredLanguage: 'en',
+      },
+    });
+
+    // One active episode per patient, anchored to the matching department.
+    const episode = await prisma.episodeOfCare.upsert({
+      where: { id: `seed-episode-${p.id}` },
+      update: {},
+      create: {
+        id: `seed-episode-${p.id}`,
+        orgId: org.id,
+        patientId: patient.id,
+        clinicianOrgUserId,
+        departmentId: p.department.id,
+        division: p.division,
+        diagnosis: p.diagnosis,
+        status: EpisodeStatus.ACTIVE,
+      },
+    });
+    await prisma.episodeGoal.upsert({
+      where: { id: `seed-goal-${p.id}` },
+      update: {},
+      create: {
+        id: `seed-goal-${p.id}`,
+        episodeId: episode.id,
+        goalType: GoalType.LTG,
+        goalText: p.goalText,
+        status: GoalStatus.ACTIVE,
+      },
+    });
+  }
+
+  // Three scheduled appointments for today (one per patient) — staggered.
+  const today = new Date();
+  today.setHours(9, 0, 0, 0);
+  const visitOffsets = [0, 60, 120]; // minutes
+  for (let i = 0; i < patients.length; i++) {
+    const p = patients[i]!;
+    const start = new Date(today.getTime() + (visitOffsets[i] ?? 0) * 60_000);
+    const end = new Date(start.getTime() + 30 * 60_000);
+    await prisma.schedule.upsert({
+      where: { id: `seed-schedule-${p.id}` },
+      update: {},
+      create: {
+        id: `seed-schedule-${p.id}`,
+        orgId: org.id,
+        patientId: p.id,
+        clinicianOrgUserId,
+        siteId: site.id,
+        roomId: i === 0 ? 'seed-demo-room-1' : 'seed-demo-room-2',
+        visitType: i === 2 ? VisitType.TELEHEALTH : VisitType.IN_PERSON,
+        scheduledStart: start,
+        scheduledEnd: end,
+        status: ScheduleStatus.SCHEDULED,
+      },
     });
   }
 

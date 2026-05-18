@@ -4,11 +4,11 @@
 
 ## Current Phase
 
-- **Wave 0 — Foundation.** Unit 01 shipped (PR #2). Local dev posture established (PR #1).
+- **Wave 0 — Foundation.** Unit 02 shipped (PR #3). Unit 01 shipped (PR #2). Scaffold (PR #1).
 
 ## Current Goal
 
-- Land Unit 02 — Patient & Schedule core, per `context/specs/02-patient-and-schedule.md`. Awaiting user confirmation per Prompt A's stop-between-units contract.
+- Land Unit 03 — Capture & Recording, per `context/specs/03-capture-recording.md`. Awaiting user confirmation per Prompt A's stop-between-units contract.
 
 ## Completed
 
@@ -36,6 +36,21 @@
   - `/admin/users` table with row dropdown (Reset MFA / Send password reset / Deactivate) — all destructive flows via `<AlertDialog>` (rule 22).
   - `/owner/orgs` cross-org list, `/owner/orgs/new` provisioning form with BAA required, `/owner/orgs/[id]` BAA editor with before/after snapshots in both `AuditLog` and `PlatformAuditLog`.
 
+- **2026-05-17 — Unit 02: Patient & Schedule core** (PR #3 — `feat(unit-02): patient & schedule core`).
+  - 13 new enums (PatientSex, PatientAddressKind, PatientCoverageStatus, PatientConsentStatus, PatientDepartmentEnrollmentStatus, PatientDepartmentIntakeStatus, VisitType, ScheduleStatus, EncounterStatus, EpisodeStatus, GoalStatus, GoalType, NoteSensitivityLevel) + NoteStatus enum seeded with PREPARING (append-only).
+  - 15 new Prisma models: Patient + 6 nested (addresses, coverages, emergency contacts, guarantors, consents, communication prefs); Department + PatientDepartmentEnrollment + PatientDepartmentIntake; Schedule + Encounter; EpisodeOfCare + EpisodeGoal + GoalProgressEntry; **minimal Note shell** (Unit 04/05 will append the rest).
+  - Seed adds 3 departments (one per division), 3 patients (James Park / Maria Alvarez / Devon Mitchell), 3 active episodes with goals, 3 schedules for "today" (9/10/11am with the BH visit as TELEHEALTH).
+  - `src/lib/divisions/resolve.ts` — pure division resolver (episode → org → patient). 4 unit tests.
+  - Patient CRUD API (GET list with pagination + filters, POST atomic create with optional first address/coverage, GET detail with episodes/goals/contacts/coverages, PATCH partial with changed-field audit, DELETE soft-delete) + nested POST /addresses /coverages.
+  - Department CRUD admin API + DELETE 409 in_use guard + patient enrollment POST/PATCH + intake POST + intake sensitivity PATCH (requires reason ≥10 chars).
+  - Schedule + Encounter API: GET day-bounded list, POST create with time-range validation + cross-org patient check, PATCH status/time edits, POST /start (idempotent, mints Encounter + Note with division locked), POST /cancel, POST /api/encounters for ad-hoc visits, GET /api/encounters/[id].
+  - `src/lib/encounters/start.ts` — single source of truth for "mint Encounter + Note." Reused by /schedules/[id]/start and /encounters. Locks Note.division at creation per spec §E.
+  - `/patients` list with paginated table + URL-driven search/filter + AddPatient sheet.
+  - `/patients/[id]` detail with PatientIdentityHeader + active-episodes card + recent-visits card + demographics card + ad-hoc StartVisit button.
+  - `/home` clinician dashboard: today's schedule with SchedulingCard per visit (Start/Resume button; idempotent), patient search field, drafts placeholder.
+  - `/prepare/[noteId]` minimal server-rendered placeholder (real prepare surface lands in Unit 03).
+  - 20 new AuditAction values appended (PATIENT_*, DEPARTMENT_*, SCHEDULE_*, ENCOUNTER_*, etc.).
+
 ## In Progress
 
 None.
@@ -44,8 +59,7 @@ None.
 
 In priority order:
 
-1. **Unit 02 — Patient & Schedule Core** ([`context/specs/02-patient-and-schedule.md`](specs/02-patient-and-schedule.md)) — Patient + Encounter + Schedule + Episode + Department + Division model.
-4. **Unit 03 — Capture & Recording** ([`context/specs/03-capture-recording.md`](specs/03-capture-recording.md)) — browser AudioWorklet + Soniox ephemeral key + capture page (built per design-critique findings from day one).
+1. **Unit 03 — Capture & Recording** ([`context/specs/03-capture-recording.md`](specs/03-capture-recording.md)) — browser AudioWorklet + Soniox ephemeral key + capture page (built per design-critique findings from day one).
 5. **Unit 04 — Transcription Pipeline** ([`context/specs/04-transcription-pipeline.md`](specs/04-transcription-pipeline.md)) — finalization + cleaning + voice-id fan-out + SSE status stream.
 6. **Unit 05 — Note Generation & Sign** ([`context/specs/05-note-generation-and-sign.md`](specs/05-note-generation-and-sign.md)) — LLM abstraction + division prompts + section progress + review + sign + immutability + post-sign artifacts.
 7. **Unit 06 — Prior-Context Brief** ([`context/specs/06-prior-context-brief.md`](specs/06-prior-context-brief.md)) — `NoteBrief` precompute + brief UI + `FollowUp` lifecycle.
@@ -94,6 +108,13 @@ These need user/PM decision before the depending unit can ship. Quote the source
 - **D12 — Prisma pinned to ^6.19.3** (stable 6.x) instead of the spec's "Prisma 7". Prisma 7 dropped `url = env(...)` in the datasource block and now requires connection details in a separate `prisma.config.ts` plus a driver-adapter pattern (`PrismaPg`) at client construction. `@auth/prisma-adapter` doesn't yet support the 7.x adapter pattern, so adopting 7.x today breaks NextAuth integration. Revisit when the auth ecosystem catches up.
 - **2026-05-17 — ESLint 9.x pin** instead of 10. eslint-config-next 16.2.6 bundles an `eslint-plugin-react` that calls the legacy `context.getFilename()` API removed in ESLint 10. ESLint 9 still has it; revisit when Next.js + plugins update.
 - **2026-05-17 — otplib v13 API** = named function exports taking `{ secret }` opts; `verify` returns `{ valid, delta, epoch, timeStep }` (read `.valid`). The old `authenticator` singleton from earlier major versions is gone.
+
+### Unit 02 (2026-05-17)
+
+- **2026-05-17 — Note shell ships in Unit 02, not Unit 05.** Schema spec §A originally put Note in Unit 05, but spec §C requires POST /api/schedules/[id]/start to "auto-create Encounter + Note (status PREPARING)" and return noteId. Resolution: minimal Note model added now (orgId, patientId, encounterId?, clinicianOrgUserId, division, status, timestamps) so Unit 02 verify-when-done passes. NoteStatus enum seeded with PREPARING only — Unit 04/05 will append the rest (rule 2: append-only).
+- **2026-05-17 — Department.delete is hard-delete with 409 in_use guard, not soft-archive.** Refuses 409 if any enrollment / encounter / episode / intake references it. Departments rarely deactivate in normal operation; if it becomes a pain point, Unit 11 (episode maturity) may add a soft-archive flag. Documented so a future agent doesn't add isArchived without considering the use-case.
+- **2026-05-17 — Patient cascade behavior.** Nested rows (addresses, coverages, emergency contacts, guarantors, consents, communication prefs) onDelete: Cascade from Patient. The Patient row itself is never hard-deleted (isDeleted soft-delete is the only retention-compliant path). Acceptable because Patient.isDeleted gates retrieval — Unit 11/12 may revisit if cascade behavior surprises anyone.
+- **2026-05-17 — Patient search uses Prisma contains+insensitive, not pg_trgm.** Spec said "trigram match." Postgres pg_trgm extension would require an extra migration step + a separate query path. Contains+insensitive satisfies the < 1 second on 3-patient demo set verify-when-done bar. Swap to pg_trgm is contract-preserving and can land when a real customer's MRN volume warrants it.
 
 ### Pre-existing (foundational, from spec)
 
