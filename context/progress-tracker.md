@@ -4,11 +4,11 @@
 
 ## Current Phase
 
-- **Wave 4 / F5 shipped — Unit 23.** PR #24 (branch `feat/unit-23-fhir-provenance-ui`, stacked on `feat/unit-22-fhir-brief-enrichment`). Surfaces Unit 22's ehrEnrichment in the BriefCard with per-field provenance pills (ehrSystem + relative-time + staleness chip), a drawer that exposes raw FHIR JSON for auditor inspection, and a FHIR_RESOURCE_VIEWED audit row per drawer open. Schema split: LLM emits fhirResourceId, the worker hydrates with fetchedAt from the cache before storing on NoteBrief.content so the pill's staleness chip renders zero-RPC. 5 of 6 F-phases complete (only F6 multi-EHR adapter remaining).
+- **Wave 4 COMPLETE — Unit 24 shipped.** PR #25 (branch `feat/unit-24-fhir-multi-ehr-adapter`, stacked on `feat/unit-23-fhir-provenance-ui`). Ships the multi-EHR adapter SEAM — vendor registry (NextGen Active, Epic + Cerner Planned), vendor-aware Patient adapter for MRN identifier extraction, additive OrgEhrConnection schema for future per-org credential management, and a Supported EHRs reference panel on the admin integrations surface. **No new active EHR wiring** — per the reference spec's deferral clause, Epic + Cerner credentials land per-customer. The 6 F-phases (Units 19–24) of read-only EHR integration are now feature-complete.
 
 ## Current Goal
 
-- Await user confirmation before starting Unit 24 — Wave 4 F6 (Multi-EHR adapter abstraction). Generalizes the NextGen adapter to support Epic + Cerner per-org via a vendor-config table; per-org EHR config; multi-EHR org support (deferred to later if low demand per `references/fhir-integration-spec.md` §13). Closes Wave 4. Per Prompt B's stop-between-units contract.
+- Wave 4 closed. Await user confirmation on what's next. The build plan's remaining anchors are Waves 5 (copilot maturity) and 6 (platform polish); Wave 3.5 polish (Daily SDK, TitaNet voice-ID, schedule-list telehealth CTA) and Wave 4.5 polish (background staleness sweeper, CarePlan + Goal adapters, per-org EHR onboarding) are non-blocking and can land in priority order.
 
 ## Completed
 
@@ -330,6 +330,15 @@
   - BriefCard wires EhrEnrichmentBlock between Watch and the Footer. Note-sourced SourcePills elsewhere in the brief are unchanged.
   - 205 tests pass (was 195); build/lint/typecheck clean. 10 new tests: 6 hydration + 4 staleness tier transitions.
 
+- **2026-05-17 — Unit 24: FHIR / Multi-EHR adapter abstraction (Wave 4 / F6)** (PR #25 — `feat(unit-24): fhir multi-ehr adapter seam`).
+  - Spec at `context/specs/24-fhir-multi-ehr-adapter.md`. Wave 4 closing unit. Ships the SEAM, not the second-vendor wiring — per the reference spec's deferral clause, Epic + Cerner credentials land per-customer.
+  - 2 reserved AuditAction values: `ORG_EHR_CONNECTION_CREATED`, `ORG_EHR_CONNECTION_REMOVED`. No emitters in F6; locked in the union so the future per-org config flow doesn't need its own schema change.
+  - `src/services/fhir/vendor-registry.ts` — `EHR_VENDORS` registry (NextGen 'active', Epic + Cerner 'planned'); `getVendor(id)` lookup; `extractMrn(identifiers, vendor?)` pure helper with three-tier strategy (vendor.mrnIdentifierSystem → 'MR' type code → first value).
+  - `src/services/fhir/adapters.ts` gains `adaptResourceWithVendor(resource, vendor?)` — vendor-aware dispatch. For Patient + a known vendor, uses extractMrn(); for everything else falls back to the vendor-blind adaptResource. Sync orchestrator now passes vendor through (resolved via `getVendor(ehrSystem)`); pure-FHIR callers keep using the vendor-blind path. **Critical: existing `adaptResource` unchanged — vendor-aware path is opt-in via the new dispatch.**
+  - Schema: `OrgEhrConnection` model — per (orgId, ehrSystem) tuple. Houses encrypted client credentials (AES-256-GCM via Unit 19's token-crypto envelope) + FHIR base URL + redirect URI + enabled flag. **ZERO callers in v1** — current NextGen flow stays env-driven per rule 14 (client secrets in env / Secrets Manager, not DB-resident plaintext).
+  - `/admin/integrations/fhir` gains the Supported EHRs reference panel — reads from EHR_VENDORS, shows status chip + enablementNote + mrnIdentifierSystem per vendor. Read-only; the "Add Epic connection" CTA lands when the per-org config flow does (future unit).
+  - 218 tests pass (was 205); build/lint/typecheck clean. 13 new tests for vendor registry + extractMrn three-tier strategy + adaptResourceWithVendor Patient + non-Patient pass-through.
+
 ## In Progress
 
 None.
@@ -338,7 +347,11 @@ None.
 
 In priority order:
 
-1. **Unit 24 — Wave 4 F6: Multi-EHR adapter abstraction** ([`references/fhir-integration-spec.md`](../references/fhir-integration-spec.md) F6). Generalizes the NextGen-specific paths into a vendor-config-driven adapter pattern: Epic + Cerner support, per-org EHR config table, multi-EHR org support (or explicit deferral if low demand). Closes Wave 4 — the read-only EHR integration is feature-complete at that point.
+1. **Wave 5 opener — Copilot maturity** ([`context/specs/00-build-plan.md`](specs/00-build-plan.md) Wave 5). The copilot's beacon + Watch v0 surfaces shipped in Unit 07; Wave 5 grows them into a stronger in-visit assistant (richer Watch cards leveraging the FHIR cache, proactive ambient prompts during capture, post-sign reflection). Spec-on-start; current build plan has Wave 5 unit definitions to land at start time.
+
+Deferred polish (non-blocking; land in priority order):
+- Wave 3.5 — Daily SDK swap for patient audio track; TitaNet voice-ID on post-call review; schedule-list "Start telehealth" CTA.
+- Wave 4.5 — Background BullMQ staleness sweeper for FhirCachedResource; CarePlan + Goal adapters; pagination beyond 50/type; per-org EHR onboarding UI (consumes Unit 24's OrgEhrConnection schema).
 
 Wave 4.5 (deferred polish, can land alongside Wave 5):
 - Background BullMQ staleness sweeper for FhirCachedResource (currently on-demand only).
@@ -531,6 +544,15 @@ These need user/PM decision before the depending unit can ship. Quote the source
 - **2026-05-17 — Copy-to-clipboard fires SECTION_COPIED_TO_CLIPBOARD via the copilot-event endpoint with itemCount = char count.** PHI-free at the audit layer (content never leaves the client beyond the clipboard write). The cap raise (1000 → 100_000) accommodates real section sizes; the prior cap was sized for "items in a list" not "characters in a section."
 - **2026-05-17 — Accordion animation polish ships data-state + transition-duration classes only — no CSS keyframes.** The simplest cross-browser solution that works inside Tailwind v4 without custom @keyframes. Future polish (CSS-only height animation for collapse/expand) can hook the data-state attribute when the design asks for it.
 - **2026-05-17 — Wave 2 COMPLETE.** Units 10–14 close the clinical-surface trust gaps. /review now has: SSE reconnect indicator (10), section regenerate with diff (10), failure-recovery banner (10), per-section observability (10), inline goal progression on the patient panel (11), snapshot strip + override-wins on /patients/[id] (12), templates authoring with version history (13), and AI compliance flags with severity-grouped review (14). The clinical surfaces are no longer "works" — they're "trusted daily."
+
+### Unit 24 (2026-05-17)
+
+- **2026-05-17 — Scope: SEAM only, not second-vendor wiring.** Per the reference spec F6's deferral clause ("multi-EHR org support; defer to later if low demand"). Ship the adapter pattern + vendor metadata + schema NOW so future Epic / Cerner work is a few hours instead of a few days; ship the credentials + UI flow LATER when there's a paying customer to validate against. Avoids the speculative-API trap.
+- **2026-05-17 — Static vendor registry as the single source of truth.** EHR_VENDORS lives in `src/services/fhir/vendor-registry.ts`; admin UI reads from it (so adding a vendor is a one-line edit + automatic surfacing) and the sync orchestrator passes `getVendor(ehrSystem)` to the adapter dispatch (so vendor-aware logic is at one seam, not scattered through every caller). DB-backed registry would over-engineer for v1 (the metadata is build-time, not runtime, configuration).
+- **2026-05-17 — extractMrn three-tier strategy (vendor system OID → 'MR' type-code → first value).** Captures the real-world mess: NextGen uses the FHIR R4 'MR' type-code well; Epic + Cerner mostly use system OIDs; some vendors do neither well. The fallback chain means we get *something* even for misconfigured EHRs while preferring the vendor-correct path when it's available.
+- **2026-05-17 — adaptResource stays vendor-blind; adaptResourceWithVendor is opt-in.** The pure adapter (vendor-blind) remains the testable, deterministic path used by test fixtures + non-sync callers. Sync orchestrator opts into the vendor-aware dispatch since it knows the ehrSystem. Keeps the API surface clean — no required-but-often-undefined parameter on adaptResource.
+- **2026-05-17 — OrgEhrConnection schema additive, zero callers in v1.** Per rule 14 — client secrets in env / Secrets Manager in v1, not DB-resident plaintext. The schema being in place now means the future per-org config unit is a UI + wiring change, not a migration. Encryption envelope reuses Unit 19's token-crypto so credential at-rest posture is uniform.
+- **2026-05-17 — Wave 4 COMPLETE.** Read-only EHR integration is feature-complete across the 6 F-phases: F1 SMART OAuth + token encryption (Unit 19), F2 patient identity matching (Unit 20), F3 resource sync + cache (Unit 21), F4 brief enrichment (Unit 22), F5 provenance UI (Unit 23), F6 multi-EHR adapter seam (Unit 24). 24 units shipped across Waves 0–4 — minimum credible v1 plus telehealth plus FHIR.
 
 ### Unit 23 (2026-05-17)
 
