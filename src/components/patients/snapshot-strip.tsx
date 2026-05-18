@@ -41,18 +41,37 @@ export function PatientSnapshotStrip({ patientId, strip }: Props) {
     );
   }
 
+  // For episode-scoped strips, every override must be tagged with the
+  // episodeId — otherwise it persists as patient-scoped and never matches the
+  // strip's filter (and silently disappears for REHAB patients with an active
+  // episode). Pull it once at the parent so each card sends the right body.
+  const episodeId = strip.scope.kind === 'episode' ? strip.scope.episodeId : null;
+
   return (
     <TooltipProvider>
       <div className="flex flex-wrap gap-2">
         {strip.measures.map((m) => (
-          <SnapshotCard key={m.measureKey} patientId={patientId} measure={m} />
+          <SnapshotCard
+            key={m.measureKey}
+            patientId={patientId}
+            measure={m}
+            episodeId={episodeId}
+          />
         ))}
       </div>
     </TooltipProvider>
   );
 }
 
-function SnapshotCard({ patientId, measure }: { patientId: string; measure: SnapshotMeasure }) {
+function SnapshotCard({
+  patientId,
+  measure,
+  episodeId,
+}: {
+  patientId: string;
+  measure: SnapshotMeasure;
+  episodeId: string | null;
+}) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(measure.value);
@@ -73,6 +92,9 @@ function SnapshotCard({ patientId, measure }: { patientId: string; measure: Snap
           measureKey: measure.measureKey,
           valueJson: value.trim(),
           unit: measure.unit ?? null,
+          // Episode-scoped strips require the override be tagged with episodeId
+          // — without it the saved override is patient-scoped and never matches.
+          episodeId: episodeId ?? undefined,
         }),
       });
       if (!res.ok) {
