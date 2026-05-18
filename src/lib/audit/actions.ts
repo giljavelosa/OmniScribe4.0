@@ -184,6 +184,7 @@ export type AuditAction =
   | 'SECTION_DIFF_VIEWED'
   | 'SECTION_REGEN_RETRY_BATCH'
   // ---- Unit 11: Episode-of-care maturity ----
+  | 'EPISODE_CREATED'
   | 'EPISODE_RECERT_TRIGGERED'
   | 'EPISODE_RECERTIFIED'
   | 'EPISODE_DISCHARGED'

@@ -13,6 +13,16 @@ const bodySchema = z.object({
   roomId: z.string().optional(),
   departmentId: z.string().optional(),
   episodeOfCareId: z.string().optional(),
+  /**
+   * Where the episode link decision came from. Recorded in the
+   * ENCOUNTER_CREATED audit metadata so the auditor lens can quantify how
+   * often the picker actually fired vs. auto-link vs. clinician-skip.
+   * Optional — omitted from legacy callers; defaults to 'unspecified' in
+   * audit metadata.
+   */
+  pickerSource: z
+    .enum(['picker', 'auto-single', 'auto-none', 'manual-skip', 'inherited-schedule'])
+    .optional(),
 });
 
 export async function POST(req: Request) {
@@ -51,6 +61,7 @@ export async function POST(req: Request) {
       departmentId: data.departmentId,
       episodeOfCareId: data.episodeOfCareId,
       actingUserId: user.id,
+      pickerSource: data.pickerSource,
     }),
   );
 

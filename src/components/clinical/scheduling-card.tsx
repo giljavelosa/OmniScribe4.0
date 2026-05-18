@@ -1,11 +1,17 @@
 'use client';
 
-import { useTransition } from 'react';
+import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { StatusBadge } from '@/components/ui/status-badge';
+import { StatusBanner } from '@/components/ui/status-banner';
+import {
+  StartVisitDialog,
+  type StartVisitDialogEpisode,
+  type StartVisitSubmitArgs,
+} from '@/app/(clinical)/patients/[id]/_components/start-visit-dialog';
 import type { ScheduleStatus, VisitType } from '@prisma/client';
 
 export type SchedulingCardData = {
@@ -19,6 +25,12 @@ export type SchedulingCardData = {
   status: ScheduleStatus;
   hasEncounter: boolean;
   encounterNoteId: string | null;
+  /** Pre-link set at scheduling time. When present, the schedule-start route
+   * inherits it and the picker never opens. */
+  scheduleEpisodeOfCareId?: string | null;
+  /** Active episodes (status ∈ {ACTIVE, RECERT_DUE}) for the patient. Used to
+   * decide whether the picker fires when scheduleEpisodeOfCareId is null. */
+  activeEpisodes?: StartVisitDialogEpisode[];
 };
 
 const STATUS_VARIANT = {
@@ -34,18 +46,74 @@ const STATUS_VARIANT = {
 export function SchedulingCard({ visit }: { visit: SchedulingCardData }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  function start() {
+  const activeEpisodes = visit.activeEpisodes ?? [];
+  // The picker only opens when (a) the schedule has no episode pre-link AND
+  // (b) the patient has 2+ active episodes AND (c) the encounter doesn't
+  // already exist (resume case skips the picker).
+  const needsPicker =
+    !visit.scheduleEpisodeOfCareId &&
+    !visit.hasEncounter &&
+    activeEpisodes.length >= 2;
+
+  function startDirect() {
+    setError(null);
     if (visit.encounterNoteId) {
       router.push(`/prepare/${visit.encounterNoteId}`);
       return;
     }
     startTransition(async () => {
-      const res = await fetch(`/api/schedules/${visit.scheduleId}/start`, { method: 'POST' });
-      if (!res.ok) return;
+      const res = await fetch(`/api/schedules/${visit.scheduleId}/start`, {
+        method: 'POST',
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        setError(body?.error?.message ?? `Could not start the visit (${res.status}).`);
+        return;
+      }
       const body = await res.json();
       if (body?.data?.noteId) router.push(`/prepare/${body.data.noteId}`);
     });
+  }
+
+  // Picker submitter — POST /api/schedules/[id]/start so the schedule flips to
+  // IN_PROGRESS atomically with the encounter+note creation.
+  async function scheduleStartSubmit(
+    args: StartVisitSubmitArgs,
+  ): Promise<{ encounterId: string; noteId: string }> {
+    const res = await fetch(`/api/schedules/${visit.scheduleId}/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        episodeOfCareId: args.episodeOfCareId,
+        pickerSource: args.source,
+      }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      throw new Error(
+        body?.error?.message ?? `Could not start the visit (${res.status}).`,
+      );
+    }
+    const body = await res.json();
+    if (!body?.data?.noteId || !body?.data?.encounterId) {
+      throw new Error('Server response missing encounter or note id.');
+    }
+    return { encounterId: body.data.encounterId, noteId: body.data.noteId };
+  }
+
+  function onPickerStarted({ noteId }: { encounterId: string; noteId: string }) {
+    router.push(`/prepare/${noteId}`);
+  }
+
+  function start() {
+    if (needsPicker) {
+      setPickerOpen(true);
+      return;
+    }
+    startDirect();
   }
 
   const start24 = new Date(visit.scheduledStart);
@@ -54,30 +122,46 @@ export function SchedulingCard({ visit }: { visit: SchedulingCardData }) {
 
   return (
     <Card>
-      <CardContent className="flex items-center justify-between gap-3">
-        <div className="space-y-1 min-w-0">
-          <p className="text-sm font-mono text-muted-foreground">
-            {fmt(start24)} – {fmt(end24)}
-          </p>
-          <p className="font-medium truncate">
-            <Link href={`/patients/${visit.patientId}`} className="hover:underline">
-              {visit.patientName}
-            </Link>
-            <span className="ml-2 text-xs text-muted-foreground font-mono">{visit.mrn}</span>
-          </p>
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <StatusBadge variant={visit.visitType === 'TELEHEALTH' ? 'violet' : 'neutral'} noIcon>
-              {visit.visitType}
-            </StatusBadge>
-            <StatusBadge variant={STATUS_VARIANT[visit.status]} noIcon>
-              {visit.status}
-            </StatusBadge>
+      <CardContent className="flex flex-col gap-3">
+        <div className="flex items-center justify-between gap-3">
+          <div className="space-y-1 min-w-0">
+            <p className="text-sm font-mono text-muted-foreground">
+              {fmt(start24)} – {fmt(end24)}
+            </p>
+            <p className="font-medium truncate">
+              <Link href={`/patients/${visit.patientId}`} className="hover:underline">
+                {visit.patientName}
+              </Link>
+              <span className="ml-2 text-xs text-muted-foreground font-mono">{visit.mrn}</span>
+            </p>
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <StatusBadge variant={visit.visitType === 'TELEHEALTH' ? 'violet' : 'neutral'} noIcon>
+                {visit.visitType}
+              </StatusBadge>
+              <StatusBadge variant={STATUS_VARIANT[visit.status]} noIcon>
+                {visit.status}
+              </StatusBadge>
+            </div>
           </div>
+          <Button
+            onClick={start}
+            disabled={pending || visit.status === 'CANCELLED' || visit.status === 'COMPLETED'}
+          >
+            {visit.hasEncounter ? 'Resume' : pending ? 'Starting…' : 'Start'}
+          </Button>
         </div>
-        <Button onClick={start} disabled={pending || visit.status === 'CANCELLED' || visit.status === 'COMPLETED'}>
-          {visit.hasEncounter ? 'Resume' : pending ? 'Starting…' : 'Start'}
-        </Button>
+
+        {error && <StatusBanner variant="danger">{error}</StatusBanner>}
       </CardContent>
+
+      <StartVisitDialog
+        patientId={visit.patientId}
+        activeEpisodes={activeEpisodes}
+        open={pickerOpen}
+        onOpenChange={setPickerOpen}
+        onStarted={onPickerStarted}
+        submit={scheduleStartSubmit}
+      />
     </Card>
   );
 }

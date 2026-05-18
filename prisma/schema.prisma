@@ -775,6 +775,14 @@ model Schedule {
   status             ScheduleStatus @default(SCHEDULED)
   notes              String? // admin note, not clinical
   createdAt          DateTime       @default(now())
+  /**
+   * Optional pre-link to a specific episode at scheduling time. When set, the
+   * start-visit pipeline inherits the episode without prompting the clinician
+   * at /home. Null = no pre-link; the picker may fire at start time if the
+   * patient has 2+ active episodes.
+   */
+  episodeOfCareId    String?
+  episode            EpisodeOfCare? @relation(fields: [episodeOfCareId], references: [id])
 
   encounter Encounter?
   /** Unit 15 — 1:1 telehealth session when visitType=TELEHEALTH. */
@@ -782,6 +790,7 @@ model Schedule {
 
   @@index([clinicianOrgUserId, scheduledStart])
   @@index([orgId, scheduledStart])
+  @@index([episodeOfCareId])
 }
 
 model Encounter {
@@ -837,6 +846,7 @@ model EpisodeOfCare {
   followUps         FollowUp[]
   snapshotOverrides SnapshotOverride[]
   externalContexts  ExternalContext[]
+  schedules         Schedule[]
 
   @@index([patientId, status])
   @@index([orgId, status, recertDueAt])
