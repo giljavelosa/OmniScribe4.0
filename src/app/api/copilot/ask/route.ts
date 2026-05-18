@@ -109,6 +109,24 @@ export async function POST(req: Request) {
     });
   }
 
+  // Unit 30 — per-draft PROPOSED audit row. Metadata is kind +
+  // contentLength + draftId; the draft text itself is NEVER logged
+  // (PHI-fenced — patient messages may carry health information).
+  for (const draft of result.drafts) {
+    await writeAuditLog({
+      userId: user.id,
+      orgId: authorizationUser.orgId,
+      action: 'COPILOT_DRAFT_PROPOSED',
+      resourceType: 'Note',
+      resourceId: noteId,
+      metadata: {
+        draftId: draft.draftId,
+        kind: draft.kind,
+        contentLength: draft.content.length,
+      },
+    });
+  }
+
   await writeAuditLog({
     userId: user.id,
     orgId: authorizationUser.orgId,
@@ -121,6 +139,7 @@ export async function POST(req: Request) {
       stub: result.stub,
       isClarification: result.answer.isClarification,
       toolCallCount: result.toolCalls.length,
+      draftCount: result.drafts.length,
     },
   });
 
@@ -132,6 +151,9 @@ export async function POST(req: Request) {
         rowCount: c.rowCount,
         resultOk: c.resultOk,
       })),
+      // Drafts ride alongside the assistant message — the chat surface
+      // renders each as a DraftCard with Accept / Edit / Discard.
+      drafts: result.drafts,
       iterations: result.iterations,
       stub: result.stub,
     },

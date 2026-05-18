@@ -1,7 +1,8 @@
 import type { LLMService } from '@/services/llm';
 import { getLLMService } from '@/services/llm';
-import { runTool, type AskSource } from './tools';
+import { runTool, type AskSource, type Draft } from './tools';
 import { RESEARCH_TOOL_NAMES, runResearchTool } from './research-tools';
+import { DRAFT_TOOL_NAMES } from './draft-tools';
 
 /**
  * Ask-mode agent runner — Unit 27.
@@ -70,6 +71,12 @@ export type AgentAnswer = {
 export type AgentOutput = {
   answer: AgentAnswer;
   toolCalls: AgentToolCall[];
+  /** Unit 30 — drafts produced by `draftPatientMessage`,
+   *  `proposeFollowUpCadence`, or `suggestReferralLetterContent` tool
+   *  calls during this run. Empty when no draft tools fired. The chat
+   *  surface renders each as a DraftCard with Accept / Edit / Discard
+   *  actions; the API route audits PROPOSED for each. */
+  drafts: Draft[];
   iterations: number;
   stub: boolean;
 };
@@ -80,12 +87,31 @@ export type AgentContext = {
 
 export const ASK_SYSTEM_PROMPT = `
 You are a clinical co-pilot answering a clinician's question about a specific
-patient during their visit. You have access to four read-only lookup tools:
+patient during their visit. You have access to read-only lookup tools:
 
+  In-app (always available):
   - lookupSignedNote({ noteId })             → returns sections + signedAt
   - lookupFollowUp({ patientId, status? })   → returns up to 10 follow-ups
   - lookupEpisodeGoals({ episodeId })        → returns active goals
   - lookupPatientDemographics({ patientId }) → returns name, dob, sex, mrn
+
+  EHR-backed (require a verified patient-to-EHR link — Rule 20):
+  - lookupFhirCondition({ patientId, clinicalStatus? })
+  - lookupFhirMedication({ patientId, status? })
+  - lookupFhirObservation({ patientId, code? })
+  - lookupFhirAllergy({ patientId })
+  - lookupFhirCarePlan({ patientId })
+
+When a FHIR tool returns { error: "verified_link_required" }, tell the clinician:
+"This patient isn't linked to an EHR record yet. Confirm the match on the
+patient page to enable EHR-backed answers." Use a single source of
+{ kind: "patient", id: <patientId>, label: "Confirm EHR link" }.
+
+When a FHIR tool returns { error: "fhir_rate_limit_exceeded" }, answer with
+what you already have and tell the clinician you've hit the session lookup
+budget for EHR data.
+
+Sources for FHIR-derived facts use { kind: "fhir", id: <fhirResourceId>, label }.
 
 ═══ ABSOLUTE RULES ═══
 
@@ -166,6 +192,10 @@ export async function runAgent(
   llm: LLMService = getLLMService(),
 ): Promise<AgentOutput> {
   const toolCalls: AgentToolCall[] = [];
+  // Unit 30 — drafts produced by action tools accumulate here. The
+  // route returns them in the response so the chat surface can render
+  // each as a DraftCard with Accept / Edit / Discard.
+  const drafts: Draft[] = [];
   // Build the conversation transcript the model sees on each turn.
   const turns: AgentTurn[] = [
     ...input.history,
@@ -204,6 +234,7 @@ export async function runAgent(
           isClarification: true,
         },
         toolCalls,
+        drafts,
         iterations,
         stub,
       };
@@ -211,9 +242,7 @@ export async function runAgent(
 
     const parsed = parseModelOutput(result.text);
     if (!parsed.ok) {
-      // Record the model's own (invalid) response in history so its retry
-      // can see what failed.
-      turns.push({ role: 'assistant', content: result.text });
+      // Retry once more with a parse-error hint, otherwise bail.
       turns.push({
         role: 'tool-result',
         content: `previous response failed validation: ${parsed.error}. Return strict JSON.`,
@@ -222,10 +251,6 @@ export async function runAgent(
     }
 
     if (parsed.value.action === 'tool') {
-      // Record the model's tool-call decision in history so subsequent
-      // iterations see the reasoning chain (without this, the model loses
-      // its own prior outputs and re-calls or contradicts itself).
-      turns.push({ role: 'assistant', content: result.text });
       const toolName = parsed.value.tool;
       const isResearchTool = RESEARCH_TOOL_NAMES.has(toolName);
       // Cross-mode gate — fail-closed against blended sources.
@@ -251,6 +276,14 @@ export async function runAgent(
         resultOk: toolResult.ok,
         rowCount: toolResult.ok ? toolResult.rowCount : 0,
       });
+      // Unit 30 — surface drafts as they're produced. The draft tool's
+      // data shape carries `{ draft, contextSummary, sourceNoteId }`;
+      // we pull the draft for the route to return + leave the model
+      // to reference it in its assistant text.
+      if (toolResult.ok && DRAFT_TOOL_NAMES.has(toolName)) {
+        const data = toolResult.data as { draft?: Draft } | null;
+        if (data?.draft) drafts.push(data.draft);
+      }
       turns.push({
         role: 'tool-result',
         content: JSON.stringify({
@@ -270,6 +303,7 @@ export async function runAgent(
         isClarification: sources.length === 0,
       },
       toolCalls,
+      drafts,
       iterations,
       stub,
     };
@@ -283,6 +317,7 @@ export async function runAgent(
       isClarification: true,
     },
     toolCalls,
+    drafts,
     iterations,
     stub,
   };
