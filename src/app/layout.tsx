@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next';
 import { Inter, Geist, Geist_Mono } from 'next/font/google';
 import { Providers } from '@/components/providers';
 import './globals.css';
+import { ImpersonationBanner } from '@/components/impersonation-banner';
 
 const inter = Inter({
   subsets: ['latin'],
@@ -46,7 +47,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       className={`${inter.variable} ${geistSans.variable} ${geistMono.variable}`}
     >
       <body className="min-h-screen flex flex-col bg-background text-foreground antialiased">
-        <Providers>{children}</Providers>
+        <Providers>
+          {/* Unit 32 — global impersonation banner. Self-renders nothing
+              when no impersonation is active, so safe to mount at root. */}
+          <ImpersonationBanner />
+          {children}
+        </Providers>
       </body>
     </html>
   );

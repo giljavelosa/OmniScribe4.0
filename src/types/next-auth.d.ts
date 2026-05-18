@@ -1,4 +1,5 @@
 import type { OrgRole, PlatformRole, Division } from '@prisma/client';
+import type { ImpersonationContext } from '@/lib/impersonation';
 import 'next-auth';
 import 'next-auth/jwt';
 
@@ -19,6 +20,10 @@ declare module 'next-auth' {
       mfaVerified: boolean;
       platformRole: PlatformRole;
     };
+    /** Unit 32 — present when the platform owner is actively
+     *  impersonating another user. Mutations are refused while this
+     *  field is set (see assertNotImpersonating + middleware.ts). */
+    impersonation?: ImpersonationContext | null;
   }
 
   interface User {
@@ -50,5 +55,9 @@ declare module 'next-auth/jwt' {
     mfaEnabled: boolean;
     mfaVerified: boolean;
     platformRole: PlatformRole;
+    /** Unit 32 — impersonation context lives on the JWT so middleware
+     *  (which can't reach the DB) can enforce the read-only mutation
+     *  gate at the edge. Cleared by the end-impersonation endpoint. */
+    impersonation?: ImpersonationContext | null;
   }
 }
