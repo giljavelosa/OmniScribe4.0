@@ -89,15 +89,16 @@ export async function buildSnapshotStrip(input: BuildInput): Promise<PatientSnap
 
   // Overrides: pull all non-superseded for the patient at once + index by
   // (measureKey, scopeKey) so the per-measure resolve is in-memory.
+  //
+  // `enteredByOrgUserId` is a scalar (not a relation) — see schema. The
+  // consumer below reads it as a raw id; if we later need the OrgUser
+  // row, batch-fetch by id rather than per-row include.
   const overrideRows = await prisma.snapshotOverride.findMany({
     where: {
       patientId: input.patientId,
       orgId: input.orgId,
       supersededAt: null,
     },
-    include: {
-      enteredBy: undefined, // intentionally skip; we don't have a relation, look up by id below if needed
-    } as never,
   });
   // Index overrides by (measureKey, scopeMatch).
   const overrideByKey = new Map<string, (typeof overrideRows)[number]>();
