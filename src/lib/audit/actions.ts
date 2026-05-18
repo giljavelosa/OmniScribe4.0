@@ -344,4 +344,17 @@ export type AuditAction =
   // so the per-org policy toggle (warn vs block) doesn't require a
   // second migration.
   | 'CLINICIAN_SITES_UPDATED'
-  | 'SCHEDULE_SITE_MISMATCH_WARNED';
+  | 'SCHEDULE_SITE_MISMATCH_WARNED'
+  // ---- Late-entry charting ----
+  // Spec: context/specs/late-entry-charting.md
+  //
+  // NOTE_LATE_ENTRY_CREATED fires once per note when POST /api/encounters
+  // marks the note as a late entry (dateOfService < today by ≥ 24 h).
+  // Metadata: { noteId, dateOfService (ISO date), lateEntryDaysGap (int) }.
+  // PHI-free — clinician judgment + timing only, no clinical content.
+  //
+  // The actual sign-event audit is the existing NOTE_SIGNED action; its
+  // metadata is extended (no new action) to carry { isLateEntry,
+  // lateEntryDaysGap, dateOfService } so a reviewer can prove the
+  // attestation copy switch fired without joining tables.
+  | 'NOTE_LATE_ENTRY_CREATED';

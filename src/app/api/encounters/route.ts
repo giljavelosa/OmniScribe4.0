@@ -5,6 +5,10 @@ import { prisma } from '@/lib/prisma';
 import { requireFeatureAccess } from '@/lib/authz/server';
 import { canActAtSite, getClinicianSiteIds } from '@/lib/authz/site-scope';
 import { startVisit } from '@/lib/encounters/start';
+import {
+  evaluateDateOfService,
+  LATE_ENTRY_MAX_DAYS,
+} from '@/lib/encounters/late-entry';
 
 export const runtime = 'nodejs';
 
@@ -24,6 +28,16 @@ const bodySchema = z.object({
   pickerSource: z
     .enum(['picker', 'auto-single', 'auto-none', 'manual-skip', 'inherited-schedule'])
     .optional(),
+  /**
+   * Late-entry charting (spec: context/specs/late-entry-charting.md).
+   *
+   * Optional ISO 8601 string. If unset OR same calendar day as today, the
+   * note is created as a normal same-day visit. If backdated 1..30 days,
+   * the new Note carries isLateEntry=true + lateEntryDaysGap. Anything
+   * else (future date, >30 days back, unparseable) is rejected here so
+   * downstream code can assume the value is already validated.
+   */
+  dateOfService: z.string().datetime().optional(),
 });
 
 export async function POST(req: Request) {
@@ -78,6 +92,50 @@ export async function POST(req: Request) {
     );
   }
 
+  // Late-entry validation. We pre-compute here so startVisit() doesn't have to
+  // re-derive (or re-validate) — it just persists the resolved values.
+  let lateEntry: {
+    dateOfService: Date | null;
+    isLateEntry: boolean;
+    lateEntryDaysGap: number | null;
+  } = { dateOfService: null, isLateEntry: false, lateEntryDaysGap: null };
+  if (data.dateOfService) {
+    const evalRes = evaluateDateOfService({ iso: data.dateOfService, now: new Date() });
+    if (!evalRes.ok) {
+      if (evalRes.reason === 'future_date') {
+        return NextResponse.json(
+          {
+            error: {
+              code: 'date_of_service_future',
+              message: 'Visit date cannot be in the future.',
+            },
+          },
+          { status: 400 },
+        );
+      }
+      if (evalRes.reason === 'too_far_back') {
+        return NextResponse.json(
+          {
+            error: {
+              code: 'date_of_service_too_old',
+              message: `Visit date cannot be more than ${LATE_ENTRY_MAX_DAYS} days ago.`,
+            },
+          },
+          { status: 400 },
+        );
+      }
+      return NextResponse.json(
+        { error: { code: 'date_of_service_invalid', message: 'Visit date is invalid.' } },
+        { status: 400 },
+      );
+    }
+    lateEntry = {
+      dateOfService: evalRes.dateOfService,
+      isLateEntry: evalRes.isLateEntry,
+      lateEntryDaysGap: evalRes.isLateEntry ? evalRes.lateEntryDaysGap : null,
+    };
+  }
+
   const { encounter, note } = await prisma.$transaction(async (tx) =>
     startVisit({
       tx,
@@ -90,6 +148,9 @@ export async function POST(req: Request) {
       episodeOfCareId: data.episodeOfCareId,
       actingUserId: user.id,
       pickerSource: data.pickerSource,
+      dateOfService: lateEntry.dateOfService,
+      isLateEntry: lateEntry.isLateEntry,
+      lateEntryDaysGap: lateEntry.lateEntryDaysGap,
     }),
   );
 

@@ -67,6 +67,9 @@ export default async function SignPage({ params }: { params: Promise<{ noteId: s
       mrn={note.patient.mrn}
       division={note.division}
       sections={previewSections}
+      isLateEntry={note.isLateEntry}
+      lateEntryDaysGap={note.lateEntryDaysGap}
+      dateOfService={note.dateOfService.toISOString()}
     />
   );
 }

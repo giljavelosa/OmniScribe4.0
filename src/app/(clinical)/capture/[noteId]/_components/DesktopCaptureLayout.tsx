@@ -23,6 +23,10 @@ type Props = {
   noteId: string;
   patientHeader: ReactNode;
   stubBanner: ReactNode;
+  /** Late-entry charting (spec: context/specs/late-entry-charting.md) —
+   *  rendered above the stub banner so the late-entry framing is the first
+   *  thing the clinician sees. Null/undefined for normal visits. */
+  lateEntryBanner?: ReactNode;
   brief: PriorContextBriefContent | null;
   initialOpenFollowUps: LiveFollowUp[];
   patientDisplayName: string;
@@ -45,6 +49,7 @@ export function DesktopCaptureLayout({
   noteId,
   patientHeader,
   stubBanner,
+  lateEntryBanner,
   brief,
   initialOpenFollowUps,
   patientDisplayName,
@@ -62,6 +67,7 @@ export function DesktopCaptureLayout({
         <RecordingStatus />
       </header>
 
+      {lateEntryBanner ? <div className="px-6 pt-3">{lateEntryBanner}</div> : null}
       {stubBanner}
 
       <div className="flex-1 flex min-h-0">

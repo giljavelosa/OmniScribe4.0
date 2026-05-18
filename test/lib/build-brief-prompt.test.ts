@@ -90,6 +90,12 @@ const buildPriorNote = (id: string, dateIso: string, content: string) =>
       signedByUserId: 'usr_test',
       backfilledAt: null,
       backfillReason: null,
+      // Late-entry charting fields (spec: late-entry-charting.md). Brief
+      // projection treats normal visits identically; tests stay on the
+      // default (not a late entry) path.
+      dateOfService: new Date(dateIso),
+      isLateEntry: false,
+      lateEntryDaysGap: null,
       createdAt: new Date(dateIso),
       updatedAt: new Date(dateIso),
       template: { name: 'PT Progress Note' },

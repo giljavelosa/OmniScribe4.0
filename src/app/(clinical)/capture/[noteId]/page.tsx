@@ -11,6 +11,7 @@ import { DesktopCaptureLayout } from './_components/DesktopCaptureLayout';
 import { MobileCaptureLayout } from './_components/MobileCaptureLayout';
 import { loadExternalEhrContext } from '@/lib/fhir/project-ehr-context';
 import { ClientStubBanner } from './_components/ClientStubBanner';
+import { LateEntryBanner } from '@/components/notes/late-entry-banner';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Capture' };
@@ -116,6 +117,12 @@ export default async function CapturePage({ params }: { params: Promise<{ noteId
   // viewport renders at a time so we get exactly one banner that lives inside
   // the viewport-height container (without it the controls get pushed off-screen).
   const stubBanner = <ClientStubBanner />;
+  const lateEntryBanner = note.isLateEntry ? (
+    <LateEntryBanner
+      dateOfService={note.dateOfService.toISOString()}
+      lateEntryDaysGap={note.lateEntryDaysGap ?? 0}
+    />
+  ) : null;
 
   return (
     <CaptureStateProvider noteId={note.id}>
@@ -123,6 +130,7 @@ export default async function CapturePage({ params }: { params: Promise<{ noteId
         noteId={note.id}
         patientHeader={patientHeader}
         stubBanner={stubBanner}
+        lateEntryBanner={lateEntryBanner}
         brief={briefContent}
         initialOpenFollowUps={initialOpenFollowUps}
         patientDisplayName={patientDisplayName}
@@ -135,6 +143,7 @@ export default async function CapturePage({ params }: { params: Promise<{ noteId
         noteId={note.id}
         patientHeader={patientHeader}
         stubBanner={stubBanner}
+        lateEntryBanner={lateEntryBanner}
         brief={briefContent}
         initialOpenFollowUps={initialOpenFollowUps}
         patientDisplayName={patientDisplayName}

@@ -1,11 +1,13 @@
 'use client';
 
-import { useEffect, useState, useTransition } from 'react';
+import { useEffect, useMemo, useState, useTransition } from 'react';
 import Link from 'next/link';
-import { PlusCircle } from 'lucide-react';
+import { CalendarDays, PlusCircle } from 'lucide-react';
 import type { Division } from '@prisma/client';
 
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
   Sheet,
   SheetContent,
@@ -16,6 +18,10 @@ import {
 } from '@/components/ui/sheet';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { StatusBanner } from '@/components/ui/status-banner';
+
+/** Hard-coded backdating window (spec § Goals — 30 days, org-configurable later). */
+const LATE_ENTRY_MAX_DAYS = 30;
+const MS_PER_DAY = 86_400_000;
 
 export type StartVisitDialogEpisode = {
   id: string;
@@ -30,13 +36,18 @@ export type StartVisitSubmitArgs = {
   patientId: string;
   episodeOfCareId: string | null;
   source: 'picker' | 'auto-single' | 'auto-none' | 'manual-skip';
+  /** ISO 8601 (full datetime, midnight local). Omit for normal same-day visits.
+   * The route still validates the 30-day floor + today ceiling. */
+  dateOfService?: string;
 };
 
 type Props = {
   patientId: string;
   activeEpisodes: StartVisitDialogEpisode[];
   /** Controls when dialog opens. If activeEpisodes.length < 2 the dialog
-   * auto-skips and immediately POSTs at open time. */
+   * auto-skips and immediately POSTs at open time — UNLESS
+   * `forceDatePicker` is true, which surfaces the picker for the late-entry
+   * dropdown entry-path. */
   open: boolean;
   onOpenChange: (next: boolean) => void;
   onStarted: (result: { encounterId: string; noteId: string }) => void;
@@ -45,6 +56,16 @@ type Props = {
    * schedule's status flips to IN_PROGRESS as a side effect. Must throw on
    * failure (the dialog catches + surfaces). */
   submit?: (args: StartVisitSubmitArgs) => Promise<{ encounterId: string; noteId: string }>;
+  /**
+   * Force the date-picker surface even when there are 0 or 1 active episodes
+   * (where the dialog would otherwise auto-post without UI). Used by the
+   * "Start late entry…" entry path on the patient chart so backdating works
+   * for single-episode and no-episode patients.
+   *
+   * When true, the picker UI renders unconditionally; the "Visit date" field
+   * defaults to today and the clinician picks the actual date-of-service.
+   */
+  forceDatePicker?: boolean;
 };
 
 /** Sentinel for the "skip — start without an episode link" choice. */
@@ -67,10 +88,14 @@ export function StartVisitDialog(props: Props) {
   // The 0/1 auto-post effect lives on the auto-poster shell. The picker UI is
   // a child keyed by `open` so reopening always starts with fresh state — no
   // setState-in-effect (React 19 strict).
-  if (props.activeEpisodes.length < 2) {
-    return <AutoPostShell {...props} />;
+  //
+  // Late-entry charting: when `forceDatePicker` is true (the "Start late
+  // entry…" entry path), even 0/1-episode patients render the picker shell —
+  // we need a visible date input regardless of episode count.
+  if (props.forceDatePicker || props.activeEpisodes.length >= 2) {
+    return <PickerShell key={String(props.open)} {...props} />;
   }
-  return <PickerShell key={String(props.open)} {...props} />;
+  return <AutoPostShell {...props} />;
 }
 
 function AutoPostShell({
@@ -118,14 +143,50 @@ function PickerShell({
   onOpenChange,
   onStarted,
   submit,
+  forceDatePicker,
 }: Props) {
-  const [choice, setChoice] = useState<string>('');
+  // Preselect the only episode (or the skip option) when forceDatePicker is on
+  // and the patient has 0 or 1 active episode — the clinician shouldn't have
+  // to re-pick an episode just to backdate the visit.
+  const initialChoice =
+    activeEpisodes.length === 1 && forceDatePicker
+      ? activeEpisodes[0]!.id
+      : activeEpisodes.length === 0 && forceDatePicker
+        ? NO_EPISODE
+        : '';
+  const [choice, setChoice] = useState<string>(initialChoice);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const submitter = submit ?? defaultEncountersSubmit;
 
+  const { todayIso, floorIso, todayLabel } = useMemo(() => {
+    const today = startOfLocalDay(new Date());
+    const floor = new Date(today.getTime() - LATE_ENTRY_MAX_DAYS * MS_PER_DAY);
+    return {
+      todayIso: toDateInputValue(today),
+      floorIso: toDateInputValue(floor),
+      todayLabel: today.toLocaleDateString(undefined, {
+        weekday: 'short',
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+      }),
+    };
+  }, []);
+
+  const [visitDate, setVisitDate] = useState<string>(todayIso);
+  const today = useMemo(() => startOfLocalDay(new Date()), []);
+  const picked = useMemo(() => parseDateInputValue(visitDate), [visitDate]);
+  const daysBack = picked ? Math.round((today.getTime() - picked.getTime()) / MS_PER_DAY) : 0;
+  const isFuture = daysBack < 0;
+  const isTooFarBack = daysBack > LATE_ENTRY_MAX_DAYS;
+  const isBackdated = !isFuture && !isTooFarBack && daysBack >= 1;
+  const dateInvalid = !picked || isFuture || isTooFarBack;
+  const dateOfServiceIso = picked && !dateInvalid && daysBack !== 0 ? picked.toISOString() : undefined;
+
   function submitChoice() {
     if (!choice) return;
+    if (dateInvalid) return;
     setError(null);
     startTransition(async () => {
       try {
@@ -133,6 +194,7 @@ function PickerShell({
           patientId,
           episodeOfCareId: choice === NO_EPISODE ? null : choice,
           source: choice === NO_EPISODE ? 'manual-skip' : 'picker',
+          dateOfService: dateOfServiceIso,
         });
         onOpenChange(false);
         onStarted(res);
@@ -142,46 +204,97 @@ function PickerShell({
     });
   }
 
+  const showEpisodePicker = activeEpisodes.length >= 2;
+  const title = showEpisodePicker
+    ? forceDatePicker
+      ? 'Start late entry'
+      : 'Which episode is this visit for?'
+    : forceDatePicker
+      ? 'Start late entry'
+      : 'Start visit';
+  const description = showEpisodePicker
+    ? 'Linking the visit to the right episode keeps division-specific behavior (REHAB CPT codes, BH and MEDICAL prompts) correct.'
+    : 'Set the date the visit actually happened. Today is fine for a normal visit — backdate to chart a past one.';
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="sm:max-w-md space-y-4">
         <SheetHeader>
-          <SheetTitle>Which episode is this visit for?</SheetTitle>
-          <SheetDescription>
-            Linking the visit to the right episode keeps division-specific behavior (REHAB
-            CPT codes, BH and MEDICAL prompts) correct.
-          </SheetDescription>
+          <SheetTitle>{title}</SheetTitle>
+          <SheetDescription>{description}</SheetDescription>
         </SheetHeader>
 
-        <div className="space-y-2 px-4">
-          <fieldset className="space-y-2">
-            <legend className="sr-only">Active episodes for this patient</legend>
-            {activeEpisodes.map((ep) => (
-              <EpisodeRadio
-                key={ep.id}
-                episode={ep}
-                selected={choice === ep.id}
-                onSelect={() => setChoice(ep.id)}
+        <div className="space-y-3 px-4">
+          {showEpisodePicker && (
+            <fieldset className="space-y-2">
+              <legend className="sr-only">Active episodes for this patient</legend>
+              {activeEpisodes.map((ep) => (
+                <EpisodeRadio
+                  key={ep.id}
+                  episode={ep}
+                  selected={choice === ep.id}
+                  onSelect={() => setChoice(ep.id)}
+                  disabled={pending}
+                />
+              ))}
+
+              <SkipRadio
+                selected={choice === NO_EPISODE}
+                onSelect={() => setChoice(NO_EPISODE)}
                 disabled={pending}
               />
-            ))}
+            </fieldset>
+          )}
 
-            <SkipRadio
-              selected={choice === NO_EPISODE}
-              onSelect={() => setChoice(NO_EPISODE)}
+          {showEpisodePicker && (
+            <div className="pt-1">
+              <Link
+                href={`/patients/${patientId}/episodes/new`}
+                className="inline-flex items-center gap-1 text-sm text-foreground hover:underline"
+                aria-label="Create a new episode"
+              >
+                <PlusCircle className="size-3.5" aria-hidden />
+                Create a new episode
+              </Link>
+            </div>
+          )}
+
+          {/* Visit date — same UI for all entry paths so clinicians don't see
+              a context-sensitive picker. Defaults to today (same effective
+              behavior as before for the normal-flow path). */}
+          <div className="space-y-2 pt-1">
+            <Label htmlFor="visit-date" className="flex items-center gap-1.5">
+              <CalendarDays className="size-3.5" aria-hidden />
+              Visit date
+            </Label>
+            <Input
+              id="visit-date"
+              type="date"
+              value={visitDate}
+              min={floorIso}
+              max={todayIso}
+              onChange={(e) => setVisitDate(e.target.value)}
               disabled={pending}
+              aria-describedby="visit-date-help"
             />
-          </fieldset>
-
-          <div className="pt-1">
-            <Link
-              href={`/patients/${patientId}/episodes/new`}
-              className="inline-flex items-center gap-1 text-sm text-foreground hover:underline"
-              aria-label="Create a new episode"
-            >
-              <PlusCircle className="size-3.5" aria-hidden />
-              Create a new episode
-            </Link>
+            <p id="visit-date-help" className="text-xs text-muted-foreground">
+              Today is {todayLabel}. Backdate up to {LATE_ENTRY_MAX_DAYS} days for a late entry.
+            </p>
+            {isBackdated && (
+              <StatusBanner variant="warning">
+                Late entry — sign attestation will reflect this date.
+              </StatusBanner>
+            )}
+            {isFuture && (
+              <StatusBanner variant="danger">
+                Visit date cannot be in the future.
+              </StatusBanner>
+            )}
+            {isTooFarBack && (
+              <StatusBanner variant="danger">
+                Visit date cannot be more than {LATE_ENTRY_MAX_DAYS} days ago.
+              </StatusBanner>
+            )}
           </div>
 
           {error && <StatusBanner variant="danger">{error}</StatusBanner>}
@@ -195,13 +308,37 @@ function PickerShell({
           >
             Cancel
           </Button>
-          <Button onClick={submitChoice} disabled={pending || !choice}>
-            {pending ? 'Starting…' : 'Start visit'}
+          <Button onClick={submitChoice} disabled={pending || !choice || dateInvalid}>
+            {pending ? 'Starting…' : isBackdated ? 'Start late entry' : 'Start visit'}
           </Button>
         </SheetFooter>
       </SheetContent>
     </Sheet>
   );
+}
+
+/** Snap a Date to the start of the local calendar day (00:00 in the runtime TZ). */
+function startOfLocalDay(d: Date): Date {
+  const out = new Date(d);
+  out.setHours(0, 0, 0, 0);
+  return out;
+}
+
+/** Date → `YYYY-MM-DD` (the format <input type="date"> accepts/emits). */
+function toDateInputValue(d: Date): string {
+  const y = d.getFullYear();
+  const m = `${d.getMonth() + 1}`.padStart(2, '0');
+  const day = `${d.getDate()}`.padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+/** Parse `YYYY-MM-DD` back to a Date at local-day-start (avoids UTC drift). */
+function parseDateInputValue(v: string): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
+  if (!m) return null;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 0, 0, 0, 0);
+  if (Number.isNaN(d.getTime())) return null;
+  return d;
 }
 
 function EpisodeRadio({
@@ -350,6 +487,7 @@ async function defaultEncountersSubmit(
     body: JSON.stringify({
       patientId: args.patientId,
       ...(args.episodeOfCareId ? { episodeOfCareId: args.episodeOfCareId } : {}),
+      ...(args.dateOfService ? { dateOfService: args.dateOfService } : {}),
       pickerSource: args.source,
     }),
   });

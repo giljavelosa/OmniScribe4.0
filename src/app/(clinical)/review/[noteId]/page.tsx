@@ -102,6 +102,10 @@ export default async function ReviewPage({ params }: { params: Promise<{ noteId:
           finalJson: note.finalJson as Record<string, { content: string; updatedAt: string }> | null,
           lastWorkerError: note.lastWorkerError,
           interruptedAt: note.interruptedAt?.toISOString() ?? null,
+          isLateEntry: note.isLateEntry,
+          lateEntryDaysGap: note.lateEntryDaysGap,
+          dateOfService: note.dateOfService.toISOString(),
+          signedAt: note.signedAt?.toISOString() ?? null,
         }}
         copilotFollowUps={copilotFollowUps}
       />

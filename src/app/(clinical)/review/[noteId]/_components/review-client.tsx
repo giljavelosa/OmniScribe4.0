@@ -12,6 +12,7 @@ import { SectionProgressStrip } from '@/components/notes/section-progress-strip'
 import { OpenFollowUpsCard, type CopilotFollowUp } from '@/components/copilot/cards/open-followups-card';
 import { SseStatusChip } from '@/components/ui/sse-status-chip';
 import { useSseStream } from '@/lib/sse/use-sse-stream';
+import { LateEntryBanner } from '@/components/notes/late-entry-banner';
 import { SectionAccordion } from './section-accordion';
 import { ReadinessPanel } from './readiness-panel';
 import { FailureRecoveryBanner } from './failure-recovery-banner';
@@ -51,6 +52,15 @@ type ReviewSnapshot = {
   finalJson: Record<string, { content: string; updatedAt: string }> | null;
   lastWorkerError: string | null;
   interruptedAt: string | null;
+  /** Late-entry charting (spec: context/specs/late-entry-charting.md). */
+  isLateEntry?: boolean;
+  lateEntryDaysGap?: number | null;
+  /** ISO datetime — day-of-service. Defaults to encounter.startedAt for
+   *  normal visits; backdated for late entries. */
+  dateOfService?: string | null;
+  /** Sign timestamp. Used in the late-entry banner so the "documented" date
+   *  matches what NOTE_SIGNED audit records (not just "right now"). */
+  signedAt?: string | null;
 };
 
 type Props = {
@@ -143,6 +153,14 @@ export function ReviewClient({ noteId, initial, copilotFollowUps }: Props) {
           isDeleted: snap.patient.isDeleted,
         }}
       />
+
+      {snap.isLateEntry && snap.dateOfService && (
+        <LateEntryBanner
+          dateOfService={snap.dateOfService}
+          lateEntryDaysGap={snap.lateEntryDaysGap ?? 0}
+          signedAt={snap.signedAt ?? null}
+        />
+      )}
 
       {snap.interruptedAt && (
         <StatusBanner variant="danger" title="Generation was interrupted">

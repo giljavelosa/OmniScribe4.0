@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { StatusBanner } from '@/components/ui/status-banner';
+import { LateEntryBanner } from '@/components/notes/late-entry-banner';
 import { SignFollowUpSweep, type SweepFollowUp } from './sign-followup-sweep';
 
 type Props = {
@@ -17,6 +18,11 @@ type Props = {
   mrn: string;
   division: string;
   sections: Array<{ id: string; label: string; content: string; required: boolean }>;
+  /** Late-entry charting (spec: context/specs/late-entry-charting.md). */
+  isLateEntry?: boolean;
+  lateEntryDaysGap?: number | null;
+  /** ISO date — the day care was delivered. */
+  dateOfService?: string | null;
 };
 
 type PinState = { hasPin: boolean; unlockedUntil: string | null } | null;
@@ -32,7 +38,16 @@ type PinState = { hasPin: boolean; unlockedUntil: string | null } | null;
  *                                                            "Set up signing PIN"
  *                                                            offer.
  */
-export function SignClient({ noteId, patientName, mrn, division, sections }: Props) {
+export function SignClient({
+  noteId,
+  patientName,
+  mrn,
+  division,
+  sections,
+  isLateEntry = false,
+  lateEntryDaysGap = null,
+  dateOfService = null,
+}: Props) {
   const router = useRouter();
   const [pinState, setPinState] = useState<PinState>(null);
   const [authValue, setAuthValue] = useState(''); // 6-digit TOTP or 4-digit PIN
@@ -153,6 +168,13 @@ export function SignClient({ noteId, patientName, mrn, division, sections }: Pro
         </p>
       </header>
 
+      {isLateEntry && dateOfService && (
+        <LateEntryBanner
+          dateOfService={dateOfService}
+          lateEntryDaysGap={lateEntryDaysGap ?? 0}
+        />
+      )}
+
       <Card>
         <CardHeader>
           <CardTitle className="text-md">Final preview</CardTitle>
@@ -198,8 +220,19 @@ export function SignClient({ noteId, patientName, mrn, division, sections }: Pro
             )}
           </CardTitle>
           <CardDescription>
-            By tapping Sign Note you attest that the content above accurately reflects today&apos;s visit
-            and that you take responsibility for the documented care.
+            {isLateEntry && dateOfService ? (
+              <>
+                This is a LATE ENTRY. By tapping Sign Note you attest that the content above
+                accurately reflects the care you delivered on {formatAttestationDate(dateOfService)}{' '}
+                (documented {formatAttestationDate(new Date().toISOString())}), and that you take
+                responsibility for that care. Late entries are subject to audit scrutiny.
+              </>
+            ) : (
+              <>
+                By tapping Sign Note you attest that the content above accurately reflects
+                today&apos;s visit and that you take responsibility for the documented care.
+              </>
+            )}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -373,6 +406,18 @@ function PinSetupInline({ onClose }: { onClose: (setNow: boolean) => void }) {
 function formatTime(iso: string): string {
   try {
     return new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  } catch {
+    return iso;
+  }
+}
+
+function formatAttestationDate(iso: string): string {
+  try {
+    return new Date(iso).toLocaleDateString(undefined, {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    });
   } catch {
     return iso;
   }

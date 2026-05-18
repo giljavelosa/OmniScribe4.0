@@ -235,4 +235,100 @@ describe('StartVisitDialog — branching logic', () => {
     const link = screen.getByRole('link', { name: /create a new episode/i });
     expect(link).toHaveAttribute('href', '/patients/pat_7/episodes/new');
   });
+
+  it('renders a Visit date input that defaults to today', () => {
+    render(
+      <StartVisitDialog
+        patientId="pat_d"
+        activeEpisodes={[ep1, ep2]}
+        open
+        onOpenChange={() => {}}
+        onStarted={() => {}}
+        submit={vi.fn()}
+      />,
+    );
+    const input = screen.getByLabelText(/visit date/i) as HTMLInputElement;
+    const today = new Date();
+    const y = today.getFullYear();
+    const m = `${today.getMonth() + 1}`.padStart(2, '0');
+    const d = `${today.getDate()}`.padStart(2, '0');
+    expect(input.value).toBe(`${y}-${m}-${d}`);
+  });
+
+  it('with forceDatePicker=true and 0 episodes, renders the picker shell + visit-date input', () => {
+    render(
+      <StartVisitDialog
+        patientId="pat_late_0"
+        activeEpisodes={[]}
+        open
+        onOpenChange={() => {}}
+        onStarted={() => {}}
+        submit={vi.fn()}
+        forceDatePicker
+      />,
+    );
+    expect(screen.getByText(/start late entry/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/visit date/i)).toBeInTheDocument();
+  });
+
+  it('with forceDatePicker=true and 1 episode, preselects that episode so clinician can backdate immediately', async () => {
+    const submit = vi.fn().mockResolvedValue({ encounterId: 'enc_le1', noteId: 'note_le1' });
+    const user = userEvent.setup();
+
+    render(
+      <StartVisitDialog
+        patientId="pat_late_1"
+        activeEpisodes={[ep1]}
+        open
+        onOpenChange={() => {}}
+        onStarted={() => {}}
+        submit={submit}
+        forceDatePicker
+      />,
+    );
+    // Auto-post must NOT have fired; the picker is on screen.
+    expect(submit).not.toHaveBeenCalled();
+    // Pick a date 5 days ago and submit.
+    const input = screen.getByLabelText(/visit date/i) as HTMLInputElement;
+    const back = new Date();
+    back.setDate(back.getDate() - 5);
+    const y = back.getFullYear();
+    const m = `${back.getMonth() + 1}`.padStart(2, '0');
+    const d = `${back.getDate()}`.padStart(2, '0');
+    await user.clear(input);
+    await user.type(input, `${y}-${m}-${d}`);
+    await user.click(screen.getByRole('button', { name: /start late entry/i }));
+    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+    const args = submit.mock.calls[0]![0] as {
+      episodeOfCareId: string | null;
+      dateOfService?: string;
+    };
+    expect(args.episodeOfCareId).toBe('ep_knee');
+    expect(args.dateOfService).toBeDefined();
+  });
+
+  it('shows the late-entry warning banner when a past date is picked', async () => {
+    const user = userEvent.setup();
+    render(
+      <StartVisitDialog
+        patientId="pat_warn"
+        activeEpisodes={[ep1, ep2]}
+        open
+        onOpenChange={() => {}}
+        onStarted={() => {}}
+        submit={vi.fn()}
+      />,
+    );
+    const input = screen.getByLabelText(/visit date/i) as HTMLInputElement;
+    const back = new Date();
+    back.setDate(back.getDate() - 7);
+    const y = back.getFullYear();
+    const m = `${back.getMonth() + 1}`.padStart(2, '0');
+    const d = `${back.getDate()}`.padStart(2, '0');
+    await user.clear(input);
+    await user.type(input, `${y}-${m}-${d}`);
+    expect(
+      await screen.findByText(/late entry — sign attestation will reflect this date/i),
+    ).toBeInTheDocument();
+  });
 });
