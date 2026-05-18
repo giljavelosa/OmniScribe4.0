@@ -46,7 +46,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: { code: 'not_found' } }, { status: 404 });
   }
 
-  await prisma.$transaction([
+  const targetBeforeMfaEnabled = (
+    await prisma.user.findUnique({
+      where: { id: targetUserId },
+      select: { mfaEnabled: true },
+    })
+  )?.mfaEnabled ?? false;
+
+  const [, sessionDelete] = await prisma.$transaction([
     prisma.user.update({
       where: { id: targetUserId },
       data: {
@@ -69,7 +76,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     action: 'MFA_RESET',
     resourceType: 'User',
     resourceId: targetUserId,
-    metadata: { reason },
+    metadata: {
+      reason,
+      before: { mfaEnabled: targetBeforeMfaEnabled },
+      after: { mfaEnabled: false },
+      sessionsInvalidated: sessionDelete.count,
+    },
   });
 
   // Best-effort notify (don't fail the request if email is down).

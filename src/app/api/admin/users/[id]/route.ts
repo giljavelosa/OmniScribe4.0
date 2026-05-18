@@ -1,9 +1,11 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
+import { OrgRole, Division } from '@prisma/client';
 
 import { prisma } from '@/lib/prisma';
 import { requireFeatureAccess } from '@/lib/authz/server';
 import { writeAuditLog } from '@/lib/audit/log';
+import { diffForAudit } from '@/lib/audit/diff';
 
 export const runtime = 'nodejs';
 
@@ -11,8 +13,12 @@ const patchSchema = z
   .object({
     isActive: z.boolean().optional(),
     canManagePatients: z.boolean().optional(),
+    role: z.enum(OrgRole).optional(),
+    division: z.enum(Division).optional(),
   })
   .refine((v) => Object.keys(v).length > 0, { message: 'no_fields' });
+
+const ORG_USER_FIELDS = ['isActive', 'canManagePatients', 'role', 'division'] as const;
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const guard = await requireFeatureAccess('TEAM_MEMBERS_MANAGE');
@@ -26,22 +32,30 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   const data = parsed.data;
 
   const { id: targetUserId } = await params;
-  const target = await prisma.orgUser.findFirst({
+  const before = await prisma.orgUser.findFirst({
     where: { userId: targetUserId, orgId: authorizationUser.orgId },
   });
-  if (!target) {
+  if (!before) {
     return NextResponse.json({ error: { code: 'not_found' } }, { status: 404 });
   }
 
-  const before = { isActive: target.isActive, canManagePatients: target.canManagePatients };
-
-  await prisma.orgUser.update({
-    where: { id: target.id },
+  const after = await prisma.orgUser.update({
+    where: { id: before.id },
     data: {
-      isActive: data.isActive ?? target.isActive,
-      canManagePatients: data.canManagePatients ?? target.canManagePatients,
+      ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),
+      ...(data.canManagePatients !== undefined
+        ? { canManagePatients: data.canManagePatients }
+        : {}),
+      ...(data.role !== undefined ? { role: data.role } : {}),
+      ...(data.division !== undefined ? { division: data.division } : {}),
     },
   });
+
+  const changes = diffForAudit(
+    before as Record<string, unknown>,
+    after as Record<string, unknown>,
+    ORG_USER_FIELDS,
+  );
 
   if (data.isActive === false) {
     // Wipe sessions on deactivation so the user is signed out immediately.
@@ -52,18 +66,32 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       actingUserId: user.id,
       action: 'USER_DEACTIVATED',
       resourceType: 'OrgUser',
-      resourceId: target.id,
-      metadata: { before, after: { ...before, isActive: false } },
+      resourceId: before.id,
+      metadata: { changes },
     });
-  } else {
+  } else if (Object.keys(changes).length > 0) {
+    // Role change is a higher-severity event than a generic update; emit a
+    // dedicated USER_ROLE_CHANGED row when role moved, in addition to the
+    // standard USER_UPDATED.
+    if (changes.role) {
+      await writeAuditLog({
+        userId: targetUserId,
+        orgId: orgUser.orgId,
+        actingUserId: user.id,
+        action: 'USER_ROLE_CHANGED',
+        resourceType: 'OrgUser',
+        resourceId: before.id,
+        metadata: { from: changes.role.before, to: changes.role.after },
+      });
+    }
     await writeAuditLog({
       userId: targetUserId,
       orgId: orgUser.orgId,
       actingUserId: user.id,
       action: 'USER_UPDATED',
       resourceType: 'OrgUser',
-      resourceId: target.id,
-      metadata: { before, after: { isActive: data.isActive ?? before.isActive, canManagePatients: data.canManagePatients ?? before.canManagePatients } },
+      resourceId: before.id,
+      metadata: { changes },
     });
   }
 
