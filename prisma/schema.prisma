@@ -420,12 +420,24 @@ enum NoteSensitivityLevel {
 }
 
 // NoteStatus — APPEND-ONLY per anti-regression rule 2.
-// Unit 02 ships PREPARING only (created when a Schedule transitions to
-// IN_PROGRESS). Unit 04/05 will append RECORDING / PAUSED / TRANSCRIBING /
-// DRAFTING / DRAFT / REVIEWING / SIGNED / TRANSFERRED / INTERRUPTED /
-// PENDING_REVIEW.
+// Unit 02 shipped PREPARING; Unit 03 appends RECORDING + PAUSED + TRANSCRIBING.
+// Unit 04/05 will append DRAFTING / DRAFT / REVIEWING / SIGNED / TRANSFERRED /
+// INTERRUPTED / PENDING_REVIEW.
 enum NoteStatus {
   PREPARING
+  RECORDING
+  PAUSED
+  TRANSCRIBING
+}
+
+// CaptureMode — how the audio/transcript got into the system.
+//   LIVE      → AudioWorklet + Soniox real-time WS (default for `/capture`)
+//   UPLOADED  → clinician picked an existing audio file → Soniox batch path
+//   PASTED    → clinician pasted a transcript directly (no audio; skips transcription)
+enum CaptureMode {
+  LIVE
+  UPLOADED
+  PASTED
 }
 
 model Patient {
@@ -688,11 +700,10 @@ model GoalProgressEntry {
 }
 
 // =============================================================================
-// Note — MINIMAL SHELL added in Unit 02.
-// Unit 04/05 will append every other field (transcriptRaw, transcriptClean,
-// draftJson, finalJson, inferenceLog, audioFileKey, signedAt, …). This shell
-// exists so Schedule.start can mint a Note in PREPARING and downstream
-// /prepare/[noteId] routing has something to anchor on.
+// Note — minimal shell from Unit 02 + Unit 03 capture fields.
+// Unit 04/05 will append every other field (draftJson, finalJson, inferenceLog,
+// signedAt, signedByUserId, templateId, templateVersion, noteStyle,
+// sensitivityLevel, …).
 // =============================================================================
 model Note {
   id                 String     @id @default(cuid())
@@ -704,9 +715,40 @@ model Note {
   clinicianOrgUserId String
   division           Division
   status             NoteStatus @default(PREPARING)
-  createdAt          DateTime   @default(now())
-  updatedAt          DateTime   @updatedAt
+
+  // Unit 03 — capture-mode metadata + transcript pre-AI-generation.
+  captureMode     CaptureMode @default(LIVE)
+  audioFileKey    String?     // S3 key for the consolidated audio blob (rule 7: never hard-deleted)
+  transcriptRaw   Json?       // raw Soniox payload (final transcript + speaker tags)
+  transcriptClean Json?       // post-processed transcript (Unit 04 cleans LIVE; Unit 03 writes PASTED directly)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  audioSegments AudioSegment[]
 
   @@index([orgId, status])
   @@index([patientId, createdAt])
+}
+
+// =============================================================================
+// AudioSegment — one per capture stream upload (Unit 03 ships exactly one per
+// Note for now; future units may split long sessions into multiple segments).
+// Rule 7: audio is NEVER hard-deleted from S3. Soft-delete only.
+// Rule 15: presigned URLs only — never make the bucket public.
+// =============================================================================
+model AudioSegment {
+  id           String    @id @default(cuid())
+  noteId       String
+  note         Note      @relation(fields: [noteId], references: [id])
+  segmentIndex Int       @default(0)
+  s3Key        String
+  durationMs   Int
+  sampleRate   Int
+  byteSize     Int
+  isDeleted    Boolean   @default(false)
+  deletedAt    DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@index([noteId, segmentIndex])
 }
