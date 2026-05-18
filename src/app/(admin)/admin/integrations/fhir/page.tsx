@@ -11,6 +11,7 @@ import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { smartConfig } from '@/services/fhir/smart-client';
 import { FhirIdentityRow } from './_components/fhir-identity-row';
+import { SupportedEhrsPanel } from './_components/supported-ehrs-panel';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'EHR integrations' };
@@ -140,6 +141,8 @@ export default async function AdminFhirIntegrationsPage({
           )}
         </CardContent>
       </Card>
+
+      <SupportedEhrsPanel />
     </div>
   );
 }
