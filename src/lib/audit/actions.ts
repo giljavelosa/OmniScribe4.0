@@ -211,4 +211,10 @@ export type AuditAction =
   // ---- Unit 23: FHIR / Provenance UI (Wave 4 / F5) ----
   // Fired once per drawer-open from the BriefCard's EhrSourcePill.
   // PHI-free — the resource id is an EHR-side identifier.
-  | 'FHIR_RESOURCE_VIEWED';
+  | 'FHIR_RESOURCE_VIEWED'
+  // ---- Unit 24: FHIR / Multi-EHR adapter (Wave 4 / F6) ----
+  // Reserved for the future per-org EHR connection management UI. F6
+  // ships the adapter seam + OrgEhrConnection schema; the emitters
+  // land when a customer demands a second EHR vendor.
+  | 'ORG_EHR_CONNECTION_CREATED'
+  | 'ORG_EHR_CONNECTION_REMOVED';
