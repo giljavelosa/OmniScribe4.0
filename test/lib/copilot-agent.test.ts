@@ -210,6 +210,119 @@ describe('runAgent', () => {
     expect(out.answer.sources[0]?.kind).toBe('literature');
   });
 
+  // ──────────────────────────────────────────────────────────────────
+  // Unit 31 — clinical reasoning chains
+  // ──────────────────────────────────────────────────────────────────
+
+  it('accumulates a think step then proceeds to tool + answer', async () => {
+    const llm = scriptedLlm([
+      JSON.stringify({
+        action: 'think',
+        summary: 'Last visit likely has the plan; lookup the signed note.',
+      }),
+      JSON.stringify({
+        action: 'tool',
+        tool: 'lookupSignedNote',
+        args: { noteId: 'note-prev' },
+      }),
+      JSON.stringify({
+        action: 'answer',
+        text: 'The plan was to continue HEP.',
+        sources: [{ kind: 'note', id: 'note-prev', label: 'Last visit' }],
+      }),
+    ]);
+    const out = await runAgent(baseInput, ctx, llm);
+    expect(out.reasoningSteps).toHaveLength(1);
+    expect(out.reasoningSteps[0]).toEqual({
+      index: 1,
+      summary: 'Last visit likely has the plan; lookup the signed note.',
+    });
+    // think is free — only the tool + answer turns consumed iterations.
+    expect(out.iterations).toBe(2);
+    expect(out.toolCalls).toHaveLength(1);
+  });
+
+  it('truncates think summary at MAX_THINK_SUMMARY (120 chars)', async () => {
+    const tooLong = 'x'.repeat(200);
+    const llm = scriptedLlm([
+      JSON.stringify({ action: 'think', summary: tooLong }),
+      JSON.stringify({
+        action: 'answer',
+        text: 'done',
+        sources: [{ kind: 'patient', id: 'pat-1', label: 'Patient' }],
+      }),
+    ]);
+    const out = await runAgent(baseInput, ctx, llm);
+    expect(out.reasoningSteps).toHaveLength(1);
+    expect(out.reasoningSteps[0]!.summary.length).toBe(120);
+    expect(out.reasoningSteps[0]!.summary).toBe('x'.repeat(120));
+  });
+
+  it('caps reasoning chain at MAX_THINK_STEPS (5); extras drop + nudge model', async () => {
+    // 6 think steps, then an answer. The chain should top out at 5;
+    // the 6th think becomes a no-op (consumes an iteration via the
+    // budget-exhausted nudge path) and the answer follows.
+    const think = (i: number) =>
+      JSON.stringify({ action: 'think', summary: `step ${i}` });
+    const llm = scriptedLlm([
+      think(1),
+      think(2),
+      think(3),
+      think(4),
+      think(5),
+      think(6), // 6th — silently dropped from chain, iteration NOT refunded
+      JSON.stringify({
+        action: 'answer',
+        text: 'done',
+        sources: [{ kind: 'patient', id: 'pat-1', label: 'Patient' }],
+      }),
+    ]);
+    const out = await runAgent(baseInput, ctx, llm);
+    expect(out.reasoningSteps).toHaveLength(5);
+    expect(out.reasoningSteps.map((s) => s.summary)).toEqual([
+      'step 1',
+      'step 2',
+      'step 3',
+      'step 4',
+      'step 5',
+    ]);
+  });
+
+  it('does not hang when the model only ever emits think actions', async () => {
+    // 20 think responses — far past MAX_THINK_STEPS. Once the chain
+    // tops out, the iteration counter is no longer refunded, so the
+    // loop terminates at MAX_ITERATIONS with a graceful fallback.
+    const think = JSON.stringify({ action: 'think', summary: 'thinking' });
+    const llm = scriptedLlm(Array.from({ length: 20 }, () => think));
+    const out = await runAgent(baseInput, ctx, llm);
+    expect(out.iterations).toBe(4);
+    expect(out.reasoningSteps).toHaveLength(5);
+    expect(out.answer.isClarification).toBe(true);
+    expect(out.answer.text).toMatch(/tool budget/);
+  });
+
+  it('rejects a think action missing summary as a parse error', async () => {
+    const llm = scriptedLlm([
+      JSON.stringify({ action: 'think' }),
+      JSON.stringify({
+        action: 'answer',
+        text: 'recovered',
+        sources: [{ kind: 'patient', id: 'pat-1', label: 'Patient' }],
+      }),
+    ]);
+    const out = await runAgent(baseInput, ctx, llm);
+    expect(out.iterations).toBe(2);
+    expect(out.reasoningSteps).toHaveLength(0);
+    expect(out.answer.text).toBe('recovered');
+  });
+
+  it('stub-mode returns empty reasoning chain (no think synthesis)', async () => {
+    const llm = scriptedLlm([{ stub: true, text: 'irrelevant' }]);
+    const out = await runAgent(baseInput, ctx, llm);
+    expect(out.reasoningSteps).toEqual([]);
+    expect(out.stub).toBe(true);
+  });
+
   it('drops invalid source entries (kind / id / label malformed)', async () => {
     const llm = scriptedLlm([
       JSON.stringify({
