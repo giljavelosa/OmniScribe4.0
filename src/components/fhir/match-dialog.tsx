@@ -123,26 +123,40 @@ function MatchDialog({
 
   useEffect(() => {
     if (!open) return;
-    // Fresh open — reset transient state then kick a search.
+    // Fresh open — reset transient state then kick a search. Depending on
+    // `open` only (not `search`) prevents a re-fire on every keystroke,
+    // which would also unset the user's confirmation tick.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setConfirmed(false);
     setSubmitError(null);
     search();
-  }, [open, search]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   function submit() {
     if (!selectedId || !confirmed) return;
     setSubmitError(null);
     startSubmit(async () => {
-      const res = await fetch(`/api/patients/${patientId}/fhir-identities`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ehrSystem: 'nextgen',
-          fhirPatientId: selectedId,
-          confirmed: true,
-        }),
-      });
+      // If the user selected the same candidate that's already linked
+      // (pending high/manual link), PATCH to promote it to verified rather
+      // than POST-ing a new row that would trip the unique constraint.
+      const isPromotion =
+        existingFhirPatientId !== null && selectedId === existingFhirPatientId;
+      const res = isPromotion
+        ? await fetch(`/api/patients/${patientId}/fhir-identities/${encodeURIComponent(selectedId)}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ehrSystem: 'nextgen', confirmed: true }),
+          })
+        : await fetch(`/api/patients/${patientId}/fhir-identities`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ehrSystem: 'nextgen',
+              fhirPatientId: selectedId,
+              confirmed: true,
+            }),
+          });
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as
           | { error?: { code?: string; message?: string } }
