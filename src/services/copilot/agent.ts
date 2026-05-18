@@ -23,6 +23,17 @@ import { DRAFT_TOOL_NAMES } from './draft-tools';
  */
 
 const MAX_ITERATIONS = 4;
+/** Unit 31 — think-step ceiling. Bounded independently of MAX_ITERATIONS
+ *  so a model that emits many think steps without making tool calls
+ *  can't drive audit volume or token cost up indefinitely. Once exceeded,
+ *  subsequent think actions are silently dropped (audit + chain ignore
+ *  them); the model still gets to call tools + answer. */
+const MAX_THINK_STEPS = 5;
+/** Per-step summary cap — matches the system prompt's "≤120 chars" rule;
+ *  enforced at the parser so a too-long summary is truncated rather than
+ *  rejected (model gets the benefit of the doubt — better truncated than
+ *  silent retry). */
+const MAX_THINK_SUMMARY = 120;
 
 export type AgentRole = 'user' | 'assistant' | 'tool-result';
 
@@ -68,6 +79,15 @@ export type AgentAnswer = {
   isClarification: boolean;
 };
 
+export type ReasoningStep = {
+  /** 1-based index in the chain. Useful for the UI render + the audit
+   *  metadata; also lets the model self-reference ("as I noted in step 2"
+   *  on a later iteration if it wants — not enforced). */
+  index: number;
+  /** Cap-enforced ≤ 120 chars by the parser. */
+  summary: string;
+};
+
 export type AgentOutput = {
   answer: AgentAnswer;
   toolCalls: AgentToolCall[];
@@ -77,6 +97,10 @@ export type AgentOutput = {
    *  surface renders each as a DraftCard with Accept / Edit / Discard
    *  actions; the API route audits PROPOSED for each. */
   drafts: Draft[];
+  /** Unit 31 — chain-of-thought steps the model emitted between tool
+   *  calls or before the final answer. Empty when the model went
+   *  straight to tools + answer. Bounded by MAX_THINK_STEPS. */
+  reasoningSteps: ReasoningStep[];
   iterations: number;
   stub: boolean;
 };
@@ -101,15 +125,6 @@ patient during their visit. You have access to read-only lookup tools:
   - lookupFhirObservation({ patientId, code? })
   - lookupFhirAllergy({ patientId })
   - lookupFhirCarePlan({ patientId })
-
-  Draft tools (PROPOSE only — never executes a side effect on its own; the
-  clinician must Accept the resulting DraftCard in the UI):
-  - draftPatientMessage({ patientId, topic, lengthHint? })
-      → drafts a short patient-facing message; surface as kind 'patient-message'
-  - proposeFollowUpCadence({ patientId, description, suggestedDueAt? })
-      → proposes a follow-up commitment; surface as kind 'followup-cadence'
-  - suggestReferralLetterContent({ patientId, specialty, reason })
-      → drafts referral letter body; surface as kind 'referral-letter'
 
 When a FHIR tool returns { error: "verified_link_required" }, tell the clinician:
 "This patient isn't linked to an EHR record yet. Confirm the match on the
@@ -230,6 +245,12 @@ export async function runAgent(
   // route returns them in the response so the chat surface can render
   // each as a DraftCard with Accept / Edit / Discard.
   const drafts: Draft[] = [];
+  // Unit 31 — chain-of-thought steps the model emits between tool
+  // calls or before the final answer. Bounded by MAX_THINK_STEPS; once
+  // exceeded, additional think actions are silently dropped from the
+  // chain (audit + chain ignore them, but the model can still call
+  // tools + answer).
+  const reasoningSteps: ReasoningStep[] = [];
   // Build the conversation transcript the model sees on each turn.
   const turns: AgentTurn[] = [
     ...input.history,
@@ -269,6 +290,7 @@ export async function runAgent(
         },
         toolCalls,
         drafts,
+        reasoningSteps,
         iterations,
         stub,
       };
@@ -281,6 +303,38 @@ export async function runAgent(
         role: 'tool-result',
         content: `previous response failed validation: ${parsed.error}. Return strict JSON.`,
       });
+      continue;
+    }
+
+    // Unit 31 — "think" is a free intra-step annotation while the
+    // chain has budget. We append it, echo it back into the prompt
+    // history, and refund the iteration so the model can still spend
+    // the full MAX_ITERATIONS on actual tools + answer.
+    //
+    // Once MAX_THINK_STEPS is hit, additional think actions are
+    // treated as iteration-consuming no-ops — the chain stops growing,
+    // we don't echo (the model already sees its prior think turns),
+    // and we DO let the iteration counter decrement so a misbehaving
+    // model that only emits think can't hang the loop.
+    if (parsed.value.action === 'think') {
+      if (reasoningSteps.length < MAX_THINK_STEPS) {
+        reasoningSteps.push({
+          index: reasoningSteps.length + 1,
+          summary: parsed.value.summary,
+        });
+        turns.push({
+          role: 'assistant',
+          content: JSON.stringify({ action: 'think', summary: parsed.value.summary }),
+        });
+        // Refund — think is free per spec decision 1.
+        iterations -= 1;
+      } else {
+        // Budget exhausted; nudge the model toward tools/answer.
+        turns.push({
+          role: 'tool-result',
+          content: 'reasoning chain full (max 5 think steps). Next response MUST be a tool call or final answer.',
+        });
+      }
       continue;
     }
 
@@ -338,6 +392,7 @@ export async function runAgent(
       },
       toolCalls,
       drafts,
+      reasoningSteps,
       iterations,
       stub,
     };
@@ -352,6 +407,7 @@ export async function runAgent(
     },
     toolCalls,
     drafts,
+    reasoningSteps,
     iterations,
     stub,
   };
@@ -401,7 +457,10 @@ type ParsedOutput =
 
 type ParsedAction =
   | { action: 'tool'; tool: string; args: unknown }
-  | { action: 'answer'; text: string; sources?: AskSource[] };
+  | { action: 'answer'; text: string; sources?: AskSource[] }
+  /** Unit 31 — free intra-step annotation. Does NOT consume an iteration
+   *  slot; the loop accumulates it into reasoningSteps and continues. */
+  | { action: 'think'; summary: string };
 
 function parseModelOutput(raw: string): ParsedOutput {
   const trimmed = raw.trim();
@@ -423,6 +482,18 @@ function parseModelOutput(raw: string): ParsedOutput {
     if (typeof obj.text !== 'string') return { ok: false, error: 'answer action missing text' };
     const sources = parseSources(obj.sources);
     return { ok: true, value: { action: 'answer', text: obj.text, sources } };
+  }
+  if (obj.action === 'think') {
+    if (typeof obj.summary !== 'string') {
+      return { ok: false, error: 'think action missing summary' };
+    }
+    // Truncate (don't reject) — better to keep the model moving forward.
+    // The system prompt instructs ≤120 chars; if the model overshoots
+    // we'll surface only the first 120.
+    const summary = obj.summary.length > MAX_THINK_SUMMARY
+      ? obj.summary.slice(0, MAX_THINK_SUMMARY)
+      : obj.summary;
+    return { ok: true, value: { action: 'think', summary } };
   }
   return { ok: false, error: `unknown action: ${String(obj.action)}` };
 }

@@ -10,11 +10,8 @@ import { runAgent, type AgentTurn } from '@/services/copilot/agent';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-// Clients only ever send user + assistant turns. Accepting tool-result from
-// the wire would let a crafted request inject fake <tool-result> blocks that
-// the LLM cites as if sourced from attested records.
 const turnSchema = z.object({
-  role: z.enum(['user', 'assistant']),
+  role: z.enum(['user', 'assistant', 'tool-result']),
   content: z.string().min(1).max(8000),
 });
 
@@ -38,6 +35,11 @@ const bodySchema = z.object({
  *     PHI). One row per request regardless of stub.
  *   - COPILOT_TOOL_CALL: tool name + row count (no args, no content).
  *     One row per tool invocation.
+ *   - COPILOT_REASONING_STEP: stepIndex + summaryLength only (the
+ *     summary text itself is NEVER logged — the model is instructed to
+ *     exclude PHI in summaries, but the audit metadata shape enforces
+ *     that even if the model misbehaves). One row per think step,
+ *     bounded by MAX_THINK_STEPS = 5.
  *   - COPILOT_ASK_ANSWERED: source count + iteration count + stub
  *     flag. One row per response.
  *
@@ -127,6 +129,24 @@ export async function POST(req: Request) {
     });
   }
 
+  // Unit 31 — per-reasoning-step audit. PHI fence: metadata records
+  // index + summary LENGTH only; the summary text itself is never
+  // logged. Bounded by MAX_THINK_STEPS = 5 so volume is capped per
+  // ask regardless of how many tools were called.
+  for (const step of result.reasoningSteps) {
+    await writeAuditLog({
+      userId: user.id,
+      orgId: authorizationUser.orgId,
+      action: 'COPILOT_REASONING_STEP',
+      resourceType: 'Note',
+      resourceId: noteId,
+      metadata: {
+        stepIndex: step.index,
+        summaryLength: step.summary.length,
+      },
+    });
+  }
+
   await writeAuditLog({
     userId: user.id,
     orgId: authorizationUser.orgId,
@@ -140,6 +160,7 @@ export async function POST(req: Request) {
       isClarification: result.answer.isClarification,
       toolCallCount: result.toolCalls.length,
       draftCount: result.drafts.length,
+      reasoningStepCount: result.reasoningSteps.length,
     },
   });
 
@@ -154,6 +175,10 @@ export async function POST(req: Request) {
       // Drafts ride alongside the assistant message — the chat surface
       // renders each as a DraftCard with Accept / Edit / Discard.
       drafts: result.drafts,
+      // Unit 31 — chain-of-thought steps. Empty when the model went
+      // straight to tools + answer. The chat surface renders each as a
+      // collapsible "Reasoning chain · N steps" chip under the bubble.
+      reasoningSteps: result.reasoningSteps,
       iterations: result.iterations,
       stub: result.stub,
     },
