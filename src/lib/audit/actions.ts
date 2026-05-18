@@ -128,6 +128,18 @@ export type AuditAction =
   // type. PHI-fenced: question LENGTH only (research questions can
   // still mention PHI if the clinician types it — better not logged).
   | 'COPILOT_RESEARCH_QUERY'
+  // ---- Unit 30: Action tools — drafts ----
+  // The agent SUGGESTS drafts; the clinician DECIDES. Both events are
+  // audited so the auditor sees the full agent-vs-clinician judgment
+  // chain. PHI-fenced throughout — metadata is draftKind + content
+  // LENGTH + sideEffect/actionTaken, NEVER the draft text itself.
+  //
+  // PROPOSED fires per-tool-call from the agent loop (one row per
+  // draft surfaced). CONFIRMED + DISCARDED fire on the clinician's
+  // explicit decision (one row each).
+  | 'COPILOT_DRAFT_PROPOSED'
+  | 'COPILOT_DRAFT_CONFIRMED'
+  | 'COPILOT_DRAFT_DISCARDED'
   // ---- Unit 08: Admin & Compliance Ready ----
   | 'SITE_CREATED'
   | 'SITE_UPDATED'

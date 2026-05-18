@@ -24,7 +24,19 @@ export type AskToolName =
   | 'lookupSignedNote'
   | 'lookupFollowUp'
   | 'lookupEpisodeGoals'
-  | 'lookupPatientDemographics';
+  | 'lookupPatientDemographics'
+  // Unit 28 — FHIR-backed lookups against verified PatientFhirIdentity
+  | 'lookupFhirCondition'
+  | 'lookupFhirMedication'
+  | 'lookupFhirObservation'
+  | 'lookupFhirAllergy'
+  | 'lookupFhirCarePlan'
+  // Unit 30 — Action tools (drafts). Chart-mode only; each runs a
+  // sub-LLM call to produce a draft the clinician reviews + accepts /
+  // edits / discards. NO autonomous effects.
+  | 'draftPatientMessage'
+  | 'proposeFollowUpCadence'
+  | 'suggestReferralLetterContent';
 
 export type AskSource = {
   /** 'fhir' added in Unit 28; 'literature' added in Unit 29 — kind
@@ -34,6 +46,28 @@ export type AskSource = {
   kind: 'note' | 'follow-up' | 'goal' | 'patient' | 'fhir' | 'literature';
   id: string;
   label: string;
+};
+
+/**
+ * Unit 30 — Draft type union. Produced by the 3 action tools; rides
+ * alongside the assistant message in the chat surface as a DraftCard
+ * with Accept / Edit / Discard. No autonomous side effects — confirm
+ * + discard are explicit clinician actions auditied separately from
+ * the agent's PROPOSED audit.
+ */
+export type DraftKind = 'patient-message' | 'followup-cadence' | 'referral-letter';
+
+export type Draft = {
+  /** Client-generated UUID-ish, stable across edits within a session. */
+  draftId: string;
+  kind: DraftKind;
+  /** Editable text — the clinician's final-version-after-edits is what
+   *  the confirm endpoint persists / copies. */
+  content: string;
+  /** Kind-specific structured fields the DraftCard renders alongside
+   *  the editable text. PHI-fenced at the audit layer (metadata never
+   *  includes meta contents). */
+  meta: Record<string, unknown>;
 };
 
 // =====================================================================
