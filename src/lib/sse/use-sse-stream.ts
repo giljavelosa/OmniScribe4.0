@@ -68,8 +68,15 @@ export function useSseStream(url: string, { handlers, enabled = true, maxRetries
         setStatus('live');
       };
 
-      for (const [name, handler] of Object.entries(handlersRef.current)) {
-        es.addEventListener(name, () => handler());
+      // Read handlers from the ref at INVOCATION time, not subscription time —
+      // otherwise the listener closes over the handler captured at connect()
+      // and the handlersRef sync effect is dead code. Iterate the snapshot of
+      // event names so we register exactly one listener per channel.
+      for (const name of Object.keys(handlersRef.current)) {
+        es.addEventListener(name, () => {
+          const current = handlersRef.current[name];
+          if (current) current();
+        });
       }
 
       es.onerror = () => {
