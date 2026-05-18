@@ -77,7 +77,11 @@ export type AudioWiring = {
 export type StartOptions = {
   noteId: string;
   clinicianTrack: MediaStreamTrack;
-  patientTrack: MediaStreamTrack;
+  /** Patient's inbound WebRTC audio track. Optional: v1 ships before the
+   *  Daily.co SDK is wired, so the room surface can pass null to run
+   *  clinician-only. When the real-mode SDK integration lands, pass the
+   *  Daily participant's persistentTrack — no other change required. */
+  patientTrack: MediaStreamTrack | null;
 };
 
 export type PipelineCallbacks = {
@@ -96,6 +100,11 @@ export type PipelineOptions = PipelineCallbacks & {
   audioWiring?: AudioWiring;
   /** ReconnectBuffer override (mostly for test seam). */
   reconnectBuffer?: ReconnectBuffer;
+  /** Retain a copy of every pumped chunk for end-of-call WAV upload (Unit 17).
+   *  Memory cap is ~115 MB for 30 min of two 16 kHz Int16 streams; acceptable
+   *  per single call. Off by default — the in-visit copilot use case never
+   *  needs to upload the bytes. */
+  retainSamples?: boolean;
 };
 
 type Source = { label: SourceLabel; disconnect: () => void };
@@ -114,6 +123,8 @@ export class TelehealthAudioPipeline {
   #reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   #reconnectAttempts = 0;
   #stopped = false;
+  readonly #retainSamples: boolean;
+  #retained: Int16Array[] | null = null;
 
   constructor(options: PipelineOptions = {}) {
     this.#wsCtor = options.wsConstructor ?? (globalThis.WebSocket as typeof WebSocket);
@@ -122,6 +133,8 @@ export class TelehealthAudioPipeline {
     this.#buffer =
       options.reconnectBuffer ?? new ReconnectBuffer({ sampleRate: TELEHEALTH_AUDIO_SAMPLE_RATE });
     this.#cb = options;
+    this.#retainSamples = options.retainSamples ?? false;
+    if (this.#retainSamples) this.#retained = [];
   }
 
   get state(): ConnectionState {
@@ -187,10 +200,11 @@ export class TelehealthAudioPipeline {
   }
 
   async #wireBothSources(opts: StartOptions): Promise<void> {
-    for (const { label, track } of [
-      { label: 'clinician' as const, track: opts.clinicianTrack },
-      { label: 'patient' as const, track: opts.patientTrack },
-    ]) {
+    const tracks: Array<{ label: SourceLabel; track: MediaStreamTrack }> = [
+      { label: 'clinician', track: opts.clinicianTrack },
+    ];
+    if (opts.patientTrack) tracks.push({ label: 'patient', track: opts.patientTrack });
+    for (const { label, track } of tracks) {
       const disconnect = await this.#audioWiring.wireSource({
         label,
         track,
@@ -203,9 +217,20 @@ export class TelehealthAudioPipeline {
   #pump(samples: Int16Array): void {
     // Always buffer — drains on reconnect; cap is bounded so memory is safe.
     this.#buffer.push(samples);
+    if (this.#retained) this.#retained.push(samples);
     if (this.#ws && this.#ws.readyState === WebSocket.OPEN) {
       this.#ws.send(samples.buffer);
     }
+  }
+
+  /** Pull every retained sample chunk and clear the internal store. Only
+   *  meaningful when the pipeline was constructed with `retainSamples: true`;
+   *  returns an empty array otherwise. */
+  drainRetainedSamples(): Int16Array[] {
+    if (!this.#retained) return [];
+    const out = this.#retained;
+    this.#retained = [];
+    return out;
   }
 
   async #openWebSocket(key: RealtimeKeyResponse): Promise<void> {
