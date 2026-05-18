@@ -135,32 +135,39 @@ export class TelehealthAudioPipeline {
     this.#stopped = false;
     this.#setState('connecting');
 
-    // 1. Mint ephemeral Soniox key via the existing endpoint.
-    const res = await this.#fetch(`/api/notes/${encodeURIComponent(opts.noteId)}/realtime-key`, {
-      method: 'POST',
-    });
-    if (!res.ok) {
-      const body = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
-      throw new Error(body?.error?.message ?? `realtime-key returned ${res.status}`);
-    }
-    const { data } = (await res.json()) as { data: RealtimeKeyResponse };
-    this.#lastKey = data;
+    try {
+      // 1. Mint ephemeral Soniox key via the existing endpoint.
+      const res = await this.#fetch(`/api/notes/${encodeURIComponent(opts.noteId)}/realtime-key`, {
+        method: 'POST',
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
+        throw new Error(body?.error?.message ?? `realtime-key returned ${res.status}`);
+      }
+      const { data } = (await res.json()) as { data: RealtimeKeyResponse };
+      this.#lastKey = data;
 
-    // Stub mode: the realtime-key endpoint hands back a fake URL that
-    // would 401. Initialize the audio wiring so the worklet still spins
-    // up for level-meter feedback, but skip the WS entirely. State stays
-    // 'stub' until stop() is called.
-    if (data.stub) {
+      // Stub mode: the realtime-key endpoint hands back a fake URL that
+      // would 401. Initialize the audio wiring so the worklet still spins
+      // up for level-meter feedback, but skip the WS entirely. State stays
+      // 'stub' until stop() is called.
+      if (data.stub) {
+        await this.#audioWiring.init({ sampleRate: TELEHEALTH_AUDIO_SAMPLE_RATE });
+        await this.#wireBothSources(opts);
+        this.#setState('stub');
+        return;
+      }
+
       await this.#audioWiring.init({ sampleRate: TELEHEALTH_AUDIO_SAMPLE_RATE });
+      await this.#openWebSocket(data);
       await this.#wireBothSources(opts);
-      this.#setState('stub');
-      return;
+      this.#setState('active');
+    } catch (err) {
+      // Reset to idle on failure so callers can retry without constructing a
+      // new pipeline; otherwise the 'connecting' guard makes recovery impossible.
+      this.#setState('idle');
+      throw err;
     }
-
-    await this.#audioWiring.init({ sampleRate: TELEHEALTH_AUDIO_SAMPLE_RATE });
-    await this.#openWebSocket(data);
-    await this.#wireBothSources(opts);
-    this.#setState('active');
   }
 
   async stop(): Promise<void> {
@@ -205,11 +212,13 @@ export class TelehealthAudioPipeline {
     const ws = new this.#wsCtor(key.websocketUrl);
     this.#ws = ws;
     const buffer = this.#buffer;
-    const pendingBuffered = buffer.drain();
     const cb = this.#cb;
     ws.onopen = () => {
       ws.send(JSON.stringify({ api_key: key.apiKey, ...key.config }));
-      // Replay any buffered samples that arrived while we were disconnected.
+      // Drain INSIDE onopen so any samples buffered between connect() and
+      // open (the handshake gap) are captured too. Eager-drain before open
+      // would strand mid-handshake worklet samples in the now-empty buffer.
+      const pendingBuffered = buffer.drain();
       if (pendingBuffered.length > 0) {
         for (const chunk of pendingBuffered) ws.send(chunk.buffer);
         cb.onReconnected?.();
