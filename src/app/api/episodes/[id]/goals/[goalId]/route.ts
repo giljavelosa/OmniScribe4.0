@@ -5,6 +5,7 @@ import { GoalStatus } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { requireFeatureAccess } from '@/lib/authz/server';
 import { writeAuditLog } from '@/lib/audit/log';
+import { singleFieldChange } from '@/lib/audit/diff';
 import { assertOrgScoped } from '@/lib/phi-access';
 
 export const runtime = 'nodejs';
@@ -112,6 +113,10 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   });
 
   if (statusChanged) {
+    // Unit 34 — uniform `changes` shape. Goal text + measure aren't
+    // included in `changes` because they may be PHI-adjacent (clinician-
+    // authored free text); status enum + presence-flag for deltaNote are
+    // the audit-safe transitions to surface.
     await writeAuditLog({
       userId: user.id,
       orgId: authorizationUser.orgId,
@@ -119,10 +124,11 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       resourceType: 'EpisodeGoal',
       resourceId: goalId,
       metadata: {
+        changes: {
+          ...singleFieldChange('status', before.status, parsed.data.status!),
+        },
         episodeId,
         patientId: episode.patientId,
-        from: before.status,
-        to: parsed.data.status!,
         hasDeltaNote: !!parsed.data.deltaNote,
       },
     });

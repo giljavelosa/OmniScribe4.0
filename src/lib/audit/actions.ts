@@ -276,14 +276,11 @@ export type AuditAction =
   | 'IMPERSONATION_BEGAN'
   | 'IMPERSONATION_ENDED'
   | 'IMPERSONATION_BLOCKED_MUTATION'
-  // ---- Unit 33: Ops console (Wave 6) ----
-  // Distinct OPS_* prefix (vs PLATFORM_* which is owner-only) so the
-  // auditor lens can split "what did ops do" vs "what did the owner
-  // do" trivially. All four fire from /ops/* surfaces via the new
-  // requirePlatformStaff gate. PHI-fenced — metadata captures filter
-  // SHAPE not values (so the meta-audit doesn't re-leak what the ops
-  // user was searching for).
+  // ---- Unit 33: Ops console ----
   | 'OPS_DASHBOARD_VIEWED'
   | 'OPS_QUEUE_DEPTH_CHECKED'
   | 'OPS_AUDIT_SEARCHED'
-  | 'OPS_AUDIT_EXPORTED';
+  | 'OPS_AUDIT_EXPORTED'
+  // ---- Unit 34: Audit log enrichment depth ----
+  | 'AUDIT_RETENTION_UPDATED'
+  | 'AUDIT_PURGE_RUN';

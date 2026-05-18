@@ -4,11 +4,11 @@
 
 ## Current Phase
 
-- **Wave 6 / Unit 33 Ops console shipped.** PR #34 (branch `feat/unit-33-ops-console`, stacked on `feat/unit-32-owner-console-maturity`). Adds a parallel `/ops/*` console for SRE / on-call / incident-response — distinct from `/owner/*` (sales + customer-success). New `PLATFORM_OPS` PlatformRole with read-only operational visibility: 9-tile platform dashboard (orgs, active users, notes signed 24h/7d/30d, interrupted notes, transcription/AI failures, error rate last hour), BullMQ queue depths (waiting/active/failed/completed/delayed per queue with fail-soft "unreachable" rendering), provider health (reuses existing checks via a migrated PLATFORM_STAFF gate), cross-org audit search (same UI shape as `/owner/audit` via parameterized PlatformAuditTable; CSV export hard-capped at 5,000 rows vs owner's 10,000). 4 new audit actions (OPS_DASHBOARD_VIEWED, OPS_QUEUE_DEPTH_CHECKED, OPS_AUDIT_SEARCHED, OPS_AUDIT_EXPORTED) — distinct from PLATFORM_* so the auditor lens splits "what did ops do" vs "what did the owner do" trivially.
+- **Wave 6 / Unit 34 Audit log enrichment depth shipped.** PR #35 (branch `feat/unit-34-audit-enrichment`, stacked on `feat/unit-33-ops-console`). Closes three gaps in the audit infrastructure: (1) per-org retention policy — new `Organization.auditRetentionDays Int?` (null = forever; 30 ≤ N ≤ 3650); new `purgeAuditForOrg` + `purgeAuditAllOrgs` module that deletes rows older than the cutoff in 5k batches; `AUDIT_PURGE_RUN` receipts themselves NEVER purged (preserves deletion history); CLI `scripts/audit-purge.mjs` for cron + per-org PATCH/POST endpoints for the owner UI. (2) Diff coverage sweep — new `singleFieldChange` helper alongside the existing `diffForAudit`; 4 episode routes (recertify/reopen/close/goal-status) migrated to emit the canonical `{ changes: { field: { before, after } } }` shape. (3) `AuditMetadataDiff` renderer mounted into both audit tables — `/admin/audit` (per-org) and `/owner/audit` + `/ops/audit` (cross-org) — produces field-by-field before/after tables instead of raw JSON. 2 new audit actions (`AUDIT_RETENTION_UPDATED`, `AUDIT_PURGE_RUN`).
 
 ## Current Goal
 
-- Await user confirmation before starting Unit 34 — Audit log enrichment depth (before/after state capture on all important mutations beyond Unit 08; per-org audit search + export; retention policies). Per Prompt B's stop-between-units contract.
+- Await user confirmation before starting Unit 35 — Per-org LLM cost rollup (track token usage per org per day, expose in owner console, alert thresholds, cost-per-note metric). Per Prompt B's stop-between-units contract.
 
 ## Completed
 
@@ -453,6 +453,20 @@
   - PlatformAuditTable parameterized via new searchPath/exportPath/title/description props with backward-compatible defaults — /owner/audit unchanged; /ops/audit overrides to point at /api/ops/audit-search.
   - 310 tests pass (was 297); build/lint/typecheck clean. 13 new tests: 9 platform-authz cases + 4 platform-metrics integration tests.
 
+- **2026-05-17 — Unit 34: Audit log enrichment depth (Wave 6 continuation)** (PR #35 — `feat(unit-34): audit log enrichment`).
+  - Spec at `context/specs/34-audit-log-enrichment.md`. Wave 6.
+  - Schema: `Organization.auditRetentionDays Int?` (null = forever for existing orgs; new orgs created via `/owner/orgs/new` default to 730 = 2 years). 30-day floor, 3650-day (10-year) ceiling enforced at the route.
+  - 2 new AuditAction values: `AUDIT_RETENTION_UPDATED` (org + platform pair, captures before/after) + `AUDIT_PURGE_RUN` (per purge execution, captures retentionDays + cutoffDate + rowsDeleted + durationMs). PURGE_RUN rows are themselves NEVER purged — the retention module explicitly excludes them from the delete predicate so the deletion history survives indefinitely.
+  - 10 locked decisions cover retention storage (null=forever; ≥30 floor); manual + CLI in v1 (BullMQ scheduler deferred); per-org scope (PlatformAuditLog governance trail retained forever); PURGE_RUN rows immune from purge; 4 specific routes for diff coverage sweep; PHI-exception documentation (denylist is shallow, intentional); diff-renderer wired into both audit tables; stub-mode-agnostic (works against any DB).
+  - `src/lib/audit/diff.ts` gains `singleFieldChange(field, before, after)` — returns `{ field: { before, after } }` envelope when values differ, empty when equal. Spread-composes cleanly under a `changes` parent key.
+  - `src/lib/audit/retention.ts` exports `purgeAuditForOrg(orgId, now)` (per-org delete with 5k batch size + receipt write) and `purgeAuditAllOrgs(now)` (iterates orgs with retention set; per-org errors caught so one failure doesn't bail the cron).
+  - `scripts/audit-purge.mjs` + `scripts/audit-purge.ts` — cron-friendly CLI emitting one JSON event per org for downstream log shipping.
+  - 4 episode routes migrated to emit canonical `metadata.changes` shape: EPISODE_RECERTIFIED (status + recertDueAt), EPISODE_REOPENED (status + recertDueAt), EPISODE_DISCHARGED (status), GOAL_STATUS_CHANGED (status). Goal-text + measure excluded from changes (PHI-adjacent free text); reason text excluded everywhere (length-only).
+  - 2 new endpoints: PATCH `/api/owner/orgs/[id]/audit-retention` (validates null OR 30-3650; two-row audit) + POST `/api/owner/orgs/[id]/audit-purge` (synchronous trigger; 409 `no_retention` when org hasn't configured retention).
+  - `src/components/audit/audit-metadata-diff.tsx` renders the canonical shape as a field-by-field diff table (mono font, "field → before → after"); other-keys footer for surviving metadata; legacy fallback to raw JSON when shape doesn't match. Mounted into both `audit-table.tsx` (per-org) + `platform-audit-table.tsx` (cross-org, also used by `/ops/audit`).
+  - New `AuditRetentionForm` card on `/owner/orgs/[id]` with Switch + Days input + Save + AlertDialog-confirmed "Run purge now" button. Purge button disabled until retention is configured.
+  - 325 tests pass (was 310); build/lint/typecheck clean. 16 new tests: 5 singleFieldChange cases + 5 retention integration tests against live Postgres (no-retention skip, old-row deletion + receipt, PURGE_RUN exemption preserves history, no-rows-to-delete skip with receipt, multi-org aggregation) + 5 AuditMetadataDiff component tests + 1 cleanup pass.
+
 ## In Progress
 
 None.
@@ -461,7 +475,7 @@ None.
 
 In priority order:
 
-1. **Unit 34 — Audit log enrichment depth.** Before/after state capture on all important mutations (beyond what Unit 08 covers); per-org audit search + export; retention policies. Depends on Unit 08.
+1. **Unit 35 — Per-org LLM cost rollup.** Track token usage per org per day; expose in owner console; alert thresholds; cost-per-note metric. Depends on Unit 32.
 3. **Unit 35 — Per-org LLM cost rollup.** Track token usage per org per day; expose in owner console; alert thresholds; cost-per-note metric. Depends on Unit 32.
 4. **Unit 36 — Mobile / PWA polish.** next-pwa offline UX; iPad-specific layout audit; touch-target audit; reduced-motion audit. Depends on Unit 03.
 5. **Unit 37 — Public signup + self-serve org creation.** Public landing → signup → org provisioning; account lockout fields on User; invite-token expiration enforcement; rate-limit; CAPTCHA. Depends on Unit 08.
@@ -666,6 +680,20 @@ These need user/PM decision before the depending unit can ship. Quote the source
 - **2026-05-17 — Copy-to-clipboard fires SECTION_COPIED_TO_CLIPBOARD via the copilot-event endpoint with itemCount = char count.** PHI-free at the audit layer (content never leaves the client beyond the clipboard write). The cap raise (1000 → 100_000) accommodates real section sizes; the prior cap was sized for "items in a list" not "characters in a section."
 - **2026-05-17 — Accordion animation polish ships data-state + transition-duration classes only — no CSS keyframes.** The simplest cross-browser solution that works inside Tailwind v4 without custom @keyframes. Future polish (CSS-only height animation for collapse/expand) can hook the data-state attribute when the design asks for it.
 - **2026-05-17 — Wave 2 COMPLETE.** Units 10–14 close the clinical-surface trust gaps. /review now has: SSE reconnect indicator (10), section regenerate with diff (10), failure-recovery banner (10), per-section observability (10), inline goal progression on the patient panel (11), snapshot strip + override-wins on /patients/[id] (12), templates authoring with version history (13), and AI compliance flags with severity-grouped review (14). The clinical surfaces are no longer "works" — they're "trusted daily."
+
+### Unit 34 (2026-05-17)
+
+- **2026-05-17 — Retention is per-org + nullable, NOT global default.** Different orgs have different compliance obligations (research org vs general medical vs behavioral health). null preserves "audit history forever" for existing orgs without retroactive deletion; new orgs default to 730 days at the route layer (configurable per customer). Global default would force every existing org into a deletion regime on deploy.
+- **2026-05-17 — 30-day floor on retention.** Too-aggressive purging is the bigger compliance risk than a too-large audit log. 30 days lets ops triage recent incidents without losing context; below 30 the audit becomes effectively un-investigable. Compliance teams can argue for higher (730 default, 3650 max) but not lower.
+- **2026-05-17 — Manual + CLI in v1, NOT BullMQ background scheduler.** A daily cron driving a CLI is operationally simple (existing cron infra; predictable timing; easy to disable). BullMQ adds worker monitoring + retry semantics + Redis dependency for a function that needs to run once a day. Promotes to BullMQ when we know prod patterns + need finer scheduling (e.g. "run between 03:00 and 03:30 UTC to avoid peak traffic").
+- **2026-05-17 — AUDIT_PURGE_RUN rows themselves NEVER purged.** Explicitly excluded from the delete predicate (`action: { not: 'AUDIT_PURGE_RUN' }`). Without this exemption, the deletion history would itself be deletable, creating "I have no idea what got deleted when" problems for compliance. The exemption is the test that proves retention is auditable: you can always reconstruct what was deleted, by whom (system actor), and on what schedule.
+- **2026-05-17 — PlatformAuditLog NOT subject to retention in v1.** Owner actions across orgs (impersonation begins, BAA changes, subscription edits) are governance trail. Retention adds the risk of "we don't know when X happened to org Y because the row got purged." Keep PlatformAuditLog forever; tune AuditLog (operational events) per org. If PlatformAuditLog becomes a cost problem in the future, retention there warrants its own design discussion (longer floor, multi-year minimum, etc.).
+- **2026-05-17 — Batched delete (5k rows/pass) instead of single DELETE.** Single deleteMany on a million-row table holds locks long enough to block concurrent writes. Batching keeps each statement's footprint small + lets the table absorb new writes between passes. The 5k constant is conservative (could be 50k); pessimistic for safety.
+- **2026-05-17 — singleFieldChange returns empty when before === after.** Spread-composability is the goal — caller writes `changes: { ...singleFieldChange('a', ...), ...singleFieldChange('b', ...) }` and the result automatically excludes unchanged fields. Forces the caller to think in terms of "what could change" not "what definitely did change."
+- **2026-05-17 — Canonical metadata shape: `{ changes, ...otherMeta }`.** Routes can mix "field changes" + "other context" without ambiguity. The renderer extracts changes first, then dumps remaining keys as a tiny meta-line. Avoids the alternative "flatten everything" which would conflict with field names (e.g. status as a top-level field vs a changed field).
+- **2026-05-17 — Goal text NOT included in `changes` for GOAL_STATUS_CHANGED.** goalText + currentMeasure + targetMeasure are clinician-authored free text — PHI-adjacent ("Patient walks 50ft with rolling walker"). Logging the before/after would put clinical narrative into the audit row. Status is enum-only + safe; the other fields stay in the underlying GoalProgressEntry table where they belong, not in the audit metadata.
+- **2026-05-17 — AuditMetadataDiff renderer is a shared component (not per-table).** One renderer at `src/components/audit/audit-metadata-diff.tsx`; both audit tables import it. When the shape evolves (e.g. nested diffs, color coding), both surfaces inherit. Avoids the per-table-fork drift that ate Unit 33's PlatformAuditTable before we parameterized it.
+- **2026-05-17 — Diff renderer falls back to raw JSON, not error.** Legacy audit rows (Unit 01-08) have opaque metadata shapes; new Unit 34+ rows use `{ changes }`. The renderer handles both gracefully — no migration step needed for the table to render correctly. Old rows look the same as they did before; new rows render as readable diffs.
 
 ### Unit 33 (2026-05-17)
 

@@ -10,6 +10,7 @@ import { SubscriptionForm } from './_components/subscription-form';
 import { UsageChart } from './_components/usage-chart';
 import { TransactionsTimeline } from './_components/transactions-timeline';
 import { ImpersonateControl } from './_components/impersonate-control';
+import { AuditRetentionForm } from './_components/audit-retention-form';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Organization' };
@@ -103,6 +104,16 @@ export default async function OwnerOrgPage({ params }: { params: Promise<{ id: s
               orgId={org.id}
               orgName={org.name}
               targets={targetOptions}
+            />
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader><CardTitle className="text-md">Audit retention</CardTitle></CardHeader>
+          <CardContent>
+            <AuditRetentionForm
+              orgId={org.id}
+              initial={{ auditRetentionDays: org.auditRetentionDays }}
             />
           </CardContent>
         </Card>
