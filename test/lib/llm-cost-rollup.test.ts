@@ -18,13 +18,17 @@ import {
  * breakdown, cache TTL behavior, and current-month spend.
  */
 
-const prisma = new PrismaClient();
+// Skipped in CI (no Postgres). Run locally via `npm test` with DATABASE_URL set.
+const hasDb = !!process.env.DATABASE_URL;
+const describeMaybe = hasDb ? describe : describe.skip;
+const prisma = hasDb ? new PrismaClient() : (null as unknown as PrismaClient);
 const ORG_ID = 'test-org-unit-35-rollup';
 
 const SONNET = 'us.anthropic.claude-sonnet-4-5-20250929-v1:0';
 const HAIKU = 'us.anthropic.claude-haiku-4-5-20251001-v1:0';
 
 beforeAll(async () => {
+  if (!hasDb) return;
   await prisma.organization.upsert({
     where: { id: ORG_ID },
     update: {},
@@ -108,13 +112,14 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
+  if (!hasDb) return;
   await prisma.llmCallLog.deleteMany({ where: { orgId: ORG_ID } });
   await prisma.orgLlmCostDaily.deleteMany({ where: { orgId: ORG_ID } });
   await prisma.organization.deleteMany({ where: { id: ORG_ID } });
   await prisma.$disconnect();
 });
 
-describe('computeOrgLlmCost', () => {
+describeMaybe('computeOrgLlmCost', () => {
   it('returns exactly windowDays entries, sorted oldest-first', async () => {
     const result = await computeOrgLlmCost(ORG_ID, 7);
     expect(result).toHaveLength(7);
@@ -190,7 +195,7 @@ describe('computeOrgLlmCost', () => {
   });
 });
 
-describe('getPerModelCost', () => {
+describeMaybe('getPerModelCost', () => {
   it('groups + sorts models by totalCostUsd DESC', async () => {
     const result = await getPerModelCost(ORG_ID, 30);
     expect(result.length).toBeGreaterThanOrEqual(2);
@@ -207,7 +212,7 @@ describe('getPerModelCost', () => {
   });
 });
 
-describe('getCurrentMonthSpend', () => {
+describeMaybe('getCurrentMonthSpend', () => {
   it('sums all rows in the current calendar month', async () => {
     const spend = await getCurrentMonthSpend(ORG_ID);
     // Depending on day-of-month, either today+yesterday land in the
