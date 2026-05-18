@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { PatientIdentityHeader } from '@/components/patients/patient-identity-header';
 import { StartVisitButton } from './_components/start-visit-button';
+import { EpisodesPanel } from './_components/episodes-panel';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Patient' };
@@ -21,14 +22,40 @@ export default async function PatientDetailPage({ params }: { params: Promise<{ 
     include: {
       addresses: true,
       coverages: true,
+      // Unit 11: include DISCHARGED so the panel can offer Reopen + show
+      // close history. CANCELLED still hidden.
       episodes: {
-        where: { status: { in: ['ACTIVE', 'RECERT_DUE'] } },
-        include: { department: true, goals: true },
+        where: { status: { in: ['ACTIVE', 'RECERT_DUE', 'DISCHARGED'] } },
+        include: { department: true, goals: { orderBy: { createdAt: 'asc' } } },
+        orderBy: [{ status: 'asc' }, { startedAt: 'desc' }],
       },
       encounters: { orderBy: { startedAt: 'desc' }, take: 5 },
     },
   });
   if (!patient) notFound();
+
+  const episodesForPanel = patient.episodes.map((ep) => ({
+    id: ep.id,
+    diagnosis: ep.diagnosis,
+    bodyPart: ep.bodyPart,
+    division: ep.division,
+    status: ep.status,
+    recertDueAt: ep.recertDueAt?.toISOString() ?? null,
+    recertIntervalDays: ep.recertIntervalDays,
+    visitsAuthorized: ep.visitsAuthorized,
+    visitsCompleted: ep.visitsCompleted,
+    closeReason: ep.closeReason,
+    reopenReason: ep.reopenReason,
+    department: { name: ep.department.name },
+    goals: ep.goals.map((g) => ({
+      id: g.id,
+      goalType: g.goalType,
+      goalText: g.goalText,
+      status: g.status,
+      currentMeasure: g.currentMeasure,
+      targetMeasure: g.targetMeasure,
+    })),
+  }));
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-6 space-y-6">
@@ -41,33 +68,13 @@ export default async function PatientDetailPage({ params }: { params: Promise<{ 
         <StartVisitButton patientId={patient.id} />
       </div>
 
-      <div className="grid md:grid-cols-2 gap-4">
-        <Card>
-          <CardHeader><CardTitle className="text-md">Active episodes</CardTitle></CardHeader>
-          <CardContent className="space-y-3">
-            {patient.episodes.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No active episodes.</p>
-            ) : (
-              patient.episodes.map((ep) => (
-                <div key={ep.id} className="rounded-md border border-border p-3 text-sm space-y-2">
-                  <div className="flex items-center justify-between">
-                    <p className="font-medium">{ep.department.name}</p>
-                    <StatusBadge variant={ep.status === 'ACTIVE' ? 'success' : 'warning'}>
-                      {ep.status}
-                    </StatusBadge>
-                  </div>
-                  <p className="text-muted-foreground">{ep.diagnosis}</p>
-                  {ep.goals.length > 0 && (
-                    <ul className="list-disc pl-5 text-muted-foreground space-y-1">
-                      {ep.goals.map((g) => <li key={g.id}>{g.goalText}</li>)}
-                    </ul>
-                  )}
-                </div>
-              ))
-            )}
-          </CardContent>
-        </Card>
+      <EpisodesPanel
+        patientId={patient.id}
+        patientDivision={patient.division}
+        episodes={episodesForPanel}
+      />
 
+      <div className="grid md:grid-cols-2 gap-4">
         <Card>
           <CardHeader><CardTitle className="text-md">Recent visits</CardTitle></CardHeader>
           <CardContent className="space-y-2">
