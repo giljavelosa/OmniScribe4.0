@@ -94,10 +94,21 @@ export function CopilotShell({
               <TabsTrigger value="chart">Chart</TabsTrigger>
               <TabsTrigger value="research">Research</TabsTrigger>
             </TabsList>
-            <TabsContent value="chart" className="flex-1 min-h-0 mt-3">
+            {/* forceMount keeps both surfaces mounted so each tab's
+                conversation state survives a tab switch. Manually hide the
+                inactive panel via data-state styling. */}
+            <TabsContent
+              value="chart"
+              forceMount
+              className="flex-1 min-h-0 mt-3 data-[state=inactive]:hidden"
+            >
               <AskSurface patientId={patientId} noteId={noteId} />
             </TabsContent>
-            <TabsContent value="research" className="flex-1 min-h-0 mt-3">
+            <TabsContent
+              value="research"
+              forceMount
+              className="flex-1 min-h-0 mt-3 data-[state=inactive]:hidden"
+            >
               <ResearchSurface />
             </TabsContent>
           </Tabs>
