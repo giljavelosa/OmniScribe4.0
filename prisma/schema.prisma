@@ -249,6 +249,16 @@ model User {
   // JSON array of bcrypt-hashed recovery codes; each element is consumed when used.
   mfaRecoveryCodes Json?
   platformRole     PlatformRole @default(NONE)
+  /// Unit 37 — Account lockout. Incremented on every wrong-password
+  /// attempt; cleared on successful auth (or when a fresh attempt
+  /// succeeds after lockedUntil has passed). Threshold = 5 →
+  /// 15-minute auto-lock.
+  failedLoginCount Int          @default(0)
+  /// When set, NextAuth authorize() returns null until this time
+  /// passes — regardless of password correctness — so an attacker
+  /// pinging a locked account doesn't get "lock cleared but wrong
+  /// password" timing artifacts.
+  lockedUntil      DateTime?
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
 
