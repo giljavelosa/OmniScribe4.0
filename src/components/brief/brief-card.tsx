@@ -9,6 +9,7 @@ import { FollowUpPreviewList } from './follow-up-preview-list';
 import { GoalsSnapshot } from './goals-snapshot';
 import { WatchList, isWatchEmpty } from './watch-list';
 import { BriefFooter, formatBriefAge } from './brief-footer';
+import { EhrEnrichmentBlock } from './ehr-enrichment-block';
 
 /**
  * BriefCard — top-level container for the prior-context brief. Renders on
@@ -157,6 +158,8 @@ export function BriefCard({
             <WatchList watch={content.watch} />
           </BriefSection>
         )}
+
+        <EhrEnrichmentBlock ehrEnrichment={content.ehrEnrichment} nowMs={nowMs} />
 
         <BriefFooter
           generatorVersion={content.generatorVersion}
