@@ -18,7 +18,8 @@ import { randomBytes } from 'node:crypto';
 export const runtime = 'nodejs';
 
 const bodySchema = z.object({
-  mfaToken: z.string().regex(/^\d{6}$/, 'Invalid MFA token'),
+  /** Legacy / fallback path. Omit if the signing PIN unlock window is active. */
+  mfaToken: z.string().regex(/^\d{6}$/, 'Invalid MFA token').optional(),
   /** Set true by the client after the sign-time follow-up sweep modal has
    *  been resolved (Unit 06). Default false → sign refuses with 409
    *  open_followups_present + the open list if any are still OPEN. */
@@ -137,34 +138,75 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
   }
 
-  // MFA re-verify
+  // Sign-time authorization. Prefer the signing-PIN unlock window if active
+  // (Pattern D — Epic-style), else fall back to per-sign TOTP reverify.
   const me = await prisma.user.findUnique({
     where: { id: user.id },
-    select: { mfaSecret: true, mfaEnabled: true },
+    select: {
+      mfaSecret: true,
+      mfaEnabled: true,
+      signingPinHash: true,
+      signUnlockedUntil: true,
+    },
   });
   if (!me?.mfaSecret || !me.mfaEnabled) {
     return NextResponse.json({ error: { code: 'mfa_required' } }, { status: 401 });
   }
-  const mfaOk = await verifyTotpToken({ secret: me.mfaSecret, token: parsed.data.mfaToken });
-  if (!mfaOk) {
+
+  const unlockedNow =
+    !!me.signingPinHash &&
+    !!me.signUnlockedUntil &&
+    me.signUnlockedUntil.getTime() > Date.now();
+
+  if (unlockedNow) {
     await writeAuditLog({
       userId: user.id,
       orgId: orgUser.orgId,
-      action: 'MFA_VERIFY_FAILED',
+      action: 'SIGNING_PIN_UNLOCK_HONORED',
+      resourceType: 'Note',
+      resourceId: noteId,
+      metadata: {
+        context: 'sign-note',
+        unlockedUntil: me.signUnlockedUntil!.toISOString(),
+      },
+    });
+  } else {
+    // Fall back to TOTP. Required when: no PIN set yet, OR unlock window expired.
+    if (!parsed.data.mfaToken) {
+      return NextResponse.json(
+        {
+          error: {
+            code: 'auth_required',
+            message: me.signingPinHash
+              ? 'Sign-unlock expired. Verify your signing PIN or provide a TOTP token.'
+              : 'Provide a TOTP token (or set up a signing PIN to avoid this prompt).',
+            pinAvailable: !!me.signingPinHash,
+          },
+        },
+        { status: 401 },
+      );
+    }
+    const mfaOk = await verifyTotpToken({ secret: me.mfaSecret, token: parsed.data.mfaToken });
+    if (!mfaOk) {
+      await writeAuditLog({
+        userId: user.id,
+        orgId: orgUser.orgId,
+        action: 'MFA_VERIFY_FAILED',
+        resourceType: 'Note',
+        resourceId: noteId,
+        metadata: { context: 'sign-note' },
+      });
+      return NextResponse.json({ error: { code: 'invalid_mfa' } }, { status: 401 });
+    }
+    await writeAuditLog({
+      userId: user.id,
+      orgId: orgUser.orgId,
+      action: 'MFA_VERIFIED',
       resourceType: 'Note',
       resourceId: noteId,
       metadata: { context: 'sign-note' },
     });
-    return NextResponse.json({ error: { code: 'invalid_mfa' } }, { status: 401 });
   }
-  await writeAuditLog({
-    userId: user.id,
-    orgId: orgUser.orgId,
-    action: 'MFA_VERIFIED',
-    resourceType: 'Note',
-    resourceId: noteId,
-    metadata: { context: 'sign-note' },
-  });
 
   // The transaction — THE ONLY place finalJson is written. Mint `now` first
   // and pass it into canonicalize so finalJson.signedAt == Note.signedAt
@@ -249,39 +291,30 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 
   // Post-sign enqueues — outside the transaction so a Redis hiccup doesn't
-  // roll back the signed note.
-  await enqueueNoteBriefJob({ noteId, orgId: orgUser.orgId });
-  await writeAuditLog({
-    userId: user.id,
-    orgId: orgUser.orgId,
-    action: 'NOTE_BRIEF_ENQUEUED',
-    resourceType: 'Note',
-    resourceId: noteId,
-  });
+  // roll back the signed note. Wrapped in try/catch so a BullMQ jobId
+  // validation error (or transient Redis outage) doesn't 500 the sign
+  // request; the note is already SIGNED at this point and the artifacts
+  // can be re-triggered later.
+  try {
+    await enqueueNoteBriefJob({ noteId, orgId: orgUser.orgId });
+    await writeAuditLog({
+      userId: user.id,
+      orgId: orgUser.orgId,
+      action: 'NOTE_BRIEF_ENQUEUED',
+      resourceType: 'Note',
+      resourceId: noteId,
+    });
+  } catch (e) {
+    console.warn('[sign] note-brief enqueue failed (note already signed):', e instanceof Error ? e.message : e);
+  }
 
-  const patientInstructionsReqId = randomBytes(8).toString('hex');
-  await enqueuePostSignArtifactJob({
-    noteId,
-    orgId: orgUser.orgId,
-    type: 'generate-patient-instructions',
-    requestId: patientInstructionsReqId,
-  });
-  await writeAuditLog({
-    userId: user.id,
-    orgId: orgUser.orgId,
-    action: 'POST_SIGN_ARTIFACT_ENQUEUED',
-    resourceType: 'Note',
-    resourceId: noteId,
-    metadata: { kind: 'PATIENT_INSTRUCTIONS', requestId: patientInstructionsReqId },
-  });
-
-  if (hasReferralHint(finalCanonical)) {
-    const referralReqId = randomBytes(8).toString('hex');
+  try {
+    const patientInstructionsReqId = randomBytes(8).toString('hex');
     await enqueuePostSignArtifactJob({
       noteId,
       orgId: orgUser.orgId,
-      type: 'generate-referral-letter',
-      requestId: referralReqId,
+      type: 'generate-patient-instructions',
+      requestId: patientInstructionsReqId,
     });
     await writeAuditLog({
       userId: user.id,
@@ -289,8 +322,32 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       action: 'POST_SIGN_ARTIFACT_ENQUEUED',
       resourceType: 'Note',
       resourceId: noteId,
-      metadata: { kind: 'REFERRAL_LETTER', requestId: referralReqId },
+      metadata: { kind: 'PATIENT_INSTRUCTIONS', requestId: patientInstructionsReqId },
     });
+  } catch (e) {
+    console.warn('[sign] patient-instructions enqueue failed (note already signed):', e instanceof Error ? e.message : e);
+  }
+
+  if (hasReferralHint(finalCanonical)) {
+    try {
+      const referralReqId = randomBytes(8).toString('hex');
+      await enqueuePostSignArtifactJob({
+        noteId,
+        orgId: orgUser.orgId,
+        type: 'generate-referral-letter',
+        requestId: referralReqId,
+      });
+      await writeAuditLog({
+        userId: user.id,
+        orgId: orgUser.orgId,
+        action: 'POST_SIGN_ARTIFACT_ENQUEUED',
+        resourceType: 'Note',
+        resourceId: noteId,
+        metadata: { kind: 'REFERRAL_LETTER', requestId: referralReqId },
+      });
+    } catch (e) {
+      console.warn('[sign] referral-letter enqueue failed (note already signed):', e instanceof Error ? e.message : e);
+    }
   }
 
   return NextResponse.json({ data: { ok: true, signedAt: now.toISOString() } });

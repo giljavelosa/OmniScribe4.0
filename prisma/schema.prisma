@@ -248,6 +248,11 @@ model User {
   mfaEnabled       Boolean      @default(false)
   // JSON array of bcrypt-hashed recovery codes; each element is consumed when used.
   mfaRecoveryCodes Json?
+  // Signing-PIN MVP — provider sets a 4-digit PIN once, used to unlock sign
+  // actions for a grace window (signUnlockedUntil) instead of re-prompting
+  // TOTP per signature. Bcrypt-hashed at rest.
+  signingPinHash    String?
+  signUnlockedUntil DateTime?
   platformRole     PlatformRole @default(NONE)
   /// Unit 37 — Account lockout. Incremented on every wrong-password
   /// attempt; cleared on successful auth (or when a fresh attempt
