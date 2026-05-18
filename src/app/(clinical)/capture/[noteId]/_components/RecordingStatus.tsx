@@ -67,14 +67,20 @@ function useElapsedMs(startedAt: number | null) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (startedAt == null) return;
+    // Reset now to current time on each startedAt change to avoid the
+    // initial-render lag producing a negative elapsed value before the first tick.
+    setNow(Date.now());
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, [startedAt]);
-  return startedAt == null ? 0 : now - startedAt;
+  if (startedAt == null) return 0;
+  // Clamp to zero — a future startedAt (clock skew / re-render race) must not
+  // produce negative output that formats as "-1:-30".
+  return Math.max(0, now - startedAt);
 }
 
 function formatElapsed(ms: number) {
-  const totalSec = Math.floor(ms / 1000);
+  const totalSec = Math.max(0, Math.floor(ms / 1000));
   const m = Math.floor(totalSec / 60);
   const s = totalSec % 60;
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;

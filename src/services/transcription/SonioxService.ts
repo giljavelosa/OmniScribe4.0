@@ -112,18 +112,13 @@ export async function mintEphemeralKey(args: MintEphemeralKeyArgs): Promise<Real
       }),
     });
     if (!res.ok) {
-      // Fallback: some Soniox tiers don't expose the temporary-keys endpoint.
-      // Log loudly but return the long-lived key as the request body still
-      // travels over TLS. This is a defense-in-depth fallback, not the
-      // preferred path.
-      console.warn(`Soniox temp-key mint returned ${res.status}; falling back to passthrough.`);
-      return {
-        apiKey: SONIOX_API_KEY,
-        websocketUrl: SONIOX_WS_URL,
-        config: FIXED_REALTIME_CONFIG,
-        expiresAt,
-        stub: false,
-      };
+      // Anti-regression rule 11: the long-lived SONIOX_API_KEY must never reach
+      // the browser. If the temporary-keys endpoint is unavailable, fail closed
+      // — the operator must enable the temp-keys tier or fix the credential.
+      const errBody = await res.text().catch(() => '');
+      throw new Error(
+        `Soniox temp-key mint failed (HTTP ${res.status}). Refusing to fall back to the long-lived key (rule 11). Body: ${errBody.slice(0, 200)}`,
+      );
     }
     const body = (await res.json()) as { api_key?: string };
     if (!body.api_key) {

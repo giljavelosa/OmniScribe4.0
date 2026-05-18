@@ -88,6 +88,11 @@ export function CaptureStateProvider({
   const audioBuffersRef = useRef<Int16Array[]>([]);
   const audioLevelRef = useRef(0);
   const audioLevelRafRef = useRef<number | null>(null);
+  // Track the original recording start + total paused duration so the elapsed
+  // timer reflects cumulative recording time across pause/resume cycles.
+  const recordingStartedAtRef = useRef<number | null>(null);
+  const pausedAtRef = useRef<number | null>(null);
+  const accumulatedPausedMsRef = useRef(0);
 
   // Smoothing animation loop — keep AudioLevelBars at 60fps without
   // re-rendering on every worklet message.
@@ -180,7 +185,10 @@ export function CaptureStateProvider({
       };
       source.connect(worklet);
 
-      setState({ kind: 'recording', startedAt: Date.now(), isStub: data.stub });
+      const startedAt = Date.now();
+      recordingStartedAtRef.current = startedAt;
+      accumulatedPausedMsRef.current = 0;
+      setState({ kind: 'recording', startedAt, isStub: data.stub });
     } catch (e) {
       teardown();
       setState({ kind: 'error', reason: e instanceof Error ? e.message : String(e) });
@@ -190,6 +198,7 @@ export function CaptureStateProvider({
   const pause = useCallback(() => {
     if (state.kind !== 'recording') return;
     isPausedRef.current = true;
+    pausedAtRef.current = Date.now();
     setState({ kind: 'paused', pausedAt: Date.now() });
     void fetch(`/api/notes/${noteId}/recording-state`, {
       method: 'POST',
@@ -201,7 +210,18 @@ export function CaptureStateProvider({
   const resume = useCallback(async () => {
     if (state.kind !== 'paused') return;
     isPausedRef.current = false;
-    setState({ kind: 'recording', startedAt: Date.now(), isStub });
+    if (pausedAtRef.current != null) {
+      accumulatedPausedMsRef.current += Date.now() - pausedAtRef.current;
+      pausedAtRef.current = null;
+    }
+    // startedAt is the effective start: original start + paused time, so
+    // (now - startedAt) yields elapsed recording duration only.
+    const original = recordingStartedAtRef.current ?? Date.now();
+    setState({
+      kind: 'recording',
+      startedAt: original + accumulatedPausedMsRef.current,
+      isStub,
+    });
     void fetch(`/api/notes/${noteId}/recording-state`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -240,6 +260,9 @@ export function CaptureStateProvider({
     teardown();
     audioBuffersRef.current = [];
     isPausedRef.current = false;
+    recordingStartedAtRef.current = null;
+    pausedAtRef.current = null;
+    accumulatedPausedMsRef.current = 0;
     setTranscript([]);
     setPartial('');
     setAudioLevel(0);

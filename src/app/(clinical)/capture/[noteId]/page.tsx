@@ -50,18 +50,22 @@ export default async function CapturePage({ params }: { params: Promise<{ noteId
     </div>
   );
 
+  // The same banner element renders in both layouts' dedicated slot; only one
+  // viewport renders at a time so we get exactly one banner that lives inside
+  // the viewport-height container (without it the controls get pushed off-screen).
+  const stubBanner = <ClientStubBanner />;
+
   return (
     <CaptureStateProvider noteId={note.id}>
-      <ClientStubBanner />
       <DesktopCaptureLayout
         noteId={note.id}
         patientHeader={patientHeader}
-        stubBanner={null}
+        stubBanner={stubBanner}
       />
       <MobileCaptureLayout
         noteId={note.id}
         patientHeader={patientHeader}
-        stubBanner={null}
+        stubBanner={stubBanner}
       />
     </CaptureStateProvider>
   );
