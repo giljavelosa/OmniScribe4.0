@@ -11,7 +11,7 @@ import { LiveNotePanel } from './LiveNotePanel';
 import { RecordingControls } from './RecordingControls';
 import { useTranscript } from '../_hooks/capture-state';
 import { PlanForTodayCard } from '@/components/copilot/cards/plan-for-today-card';
-import { FhirWatchCards } from '@/components/copilot/cards/fhir-watch-cards';
+import { FhirWatchCardsLive } from '@/components/copilot/cards/fhir-watch-cards-live';
 import type { PriorContextBriefContent } from '@/types/brief';
 import type { ExternalEhrContext } from '@/lib/fhir/project-ehr-context';
 
@@ -32,7 +32,7 @@ type Props = {
   patientId: string;
   nowMs: number;
   hasPriorSignedNote: boolean;
-  /** Unit 25 / Watch v1 — projected FHIR cache for the FhirWatchCards
+  /** Unit 25 / Watch v1 — projected FHIR cache for the FhirWatchCardsLive
    *  bundle. Null when patient has no verified PatientFhirIdentity or
    *  the cache is empty / fully stale; bundle renders nothing then. */
   fhirContext: ExternalEhrContext | null;
@@ -131,7 +131,7 @@ export function MobileCaptureLayout({
               noteId={noteId}
             />
           )}
-          <FhirWatchCards
+          <FhirWatchCardsLive
             context={fhirContext}
             surface="capture"
             noteId={noteId}
