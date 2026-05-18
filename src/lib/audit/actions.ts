@@ -120,6 +120,26 @@ export type AuditAction =
   | 'COPILOT_ASK_QUERY'
   | 'COPILOT_TOOL_CALL'
   | 'COPILOT_ASK_ANSWERED'
+  // ---- Unit 29: Research mode ----
+  // Server-side audit from /api/copilot/research. Tool calls still
+  // use COPILOT_TOOL_CALL (same shape); final answer reuses
+  // COPILOT_ASK_ANSWERED with metadata.mode === 'research' so the
+  // auditor lens can count chart-vs-research answers from one row
+  // type. PHI-fenced: question LENGTH only (research questions can
+  // still mention PHI if the clinician types it — better not logged).
+  | 'COPILOT_RESEARCH_QUERY'
+  // ---- Unit 30: Action tools — drafts ----
+  // The agent SUGGESTS drafts; the clinician DECIDES. Both events are
+  // audited so the auditor sees the full agent-vs-clinician judgment
+  // chain. PHI-fenced throughout — metadata is draftKind + content
+  // LENGTH + sideEffect/actionTaken, NEVER the draft text itself.
+  //
+  // PROPOSED fires per-tool-call from the agent loop (one row per
+  // draft surfaced). CONFIRMED + DISCARDED fire on the clinician's
+  // explicit decision (one row each).
+  | 'COPILOT_DRAFT_PROPOSED'
+  | 'COPILOT_DRAFT_CONFIRMED'
+  | 'COPILOT_DRAFT_DISCARDED'
   // ---- Unit 08: Admin & Compliance Ready ----
   | 'SITE_CREATED'
   | 'SITE_UPDATED'

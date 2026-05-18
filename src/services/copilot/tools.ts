@@ -41,9 +41,10 @@ export type AskToolName =
   | 'lookupFhirCarePlan';
 
 export type AskSource = {
-  /** 'fhir' added in Unit 28 — kind dispatches the chat surface's render
-   *  per pill (note → /review link; fhir → text chip; others → text chip). */
-  kind: 'note' | 'follow-up' | 'goal' | 'patient' | 'fhir';
+  /** 'fhir' added in Unit 28; 'literature' added in Unit 29 — kind
+   *  dispatches the chat surface's render per pill (note → /review link;
+   *  literature → external PMC link or text chip; fhir + others → text chip). */
+  kind: 'note' | 'follow-up' | 'goal' | 'patient' | 'fhir' | 'literature';
   id: string;
   label: string;
 };

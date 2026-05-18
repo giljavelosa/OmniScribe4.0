@@ -144,6 +144,72 @@ describe('runAgent', () => {
     expect(out.answer.isClarification).toBe(true);
   });
 
+  it('refuses to call a chart tool in research mode (wrong_mode_tool)', async () => {
+    const llm = scriptedLlm([
+      // Model picks a chart tool while we're in research mode.
+      JSON.stringify({
+        action: 'tool',
+        tool: 'lookupSignedNote',
+        args: { noteId: 'note-x' },
+      }),
+      // After the tool-result error, the model gives up and answers.
+      JSON.stringify({
+        action: 'answer',
+        text: 'I cannot answer in research mode — switch to Chart tab.',
+        sources: [{ kind: 'literature', id: 'PMC123', label: 'Smith 2024 (NEJM)' }],
+      }),
+    ]);
+    const out = await runAgent(
+      { ...baseInput, mode: 'research', question: 'evidence on X?' },
+      ctx,
+      llm,
+    );
+    expect(out.toolCalls).toHaveLength(1);
+    expect(out.toolCalls[0]!.resultOk).toBe(false);
+    expect(out.answer.sources[0]?.kind).toBe('literature');
+  });
+
+  it('refuses to call a research tool in chart mode (wrong_mode_tool)', async () => {
+    const llm = scriptedLlm([
+      JSON.stringify({
+        action: 'tool',
+        tool: 'searchPMC',
+        args: { query: 'irrelevant' },
+      }),
+      JSON.stringify({
+        action: 'answer',
+        text: 'recovered',
+        sources: [{ kind: 'patient', id: 'pat-1', label: 'patient' }],
+      }),
+    ]);
+    const out = await runAgent({ ...baseInput, mode: 'chart' }, ctx, llm);
+    expect(out.toolCalls[0]!.resultOk).toBe(false);
+  });
+
+  it('runs a research tool in research mode + returns a literature source', async () => {
+    const llm = scriptedLlm([
+      JSON.stringify({
+        action: 'tool',
+        tool: 'searchPMC',
+        args: { query: 'NSAIDs in CKD' },
+      }),
+      JSON.stringify({
+        action: 'answer',
+        text: 'Recent literature suggests caution.',
+        sources: [{ kind: 'literature', id: 'PMC8675309', label: 'Doe 2024 (JAMA)' }],
+      }),
+    ]);
+    const out = await runAgent(
+      { ...baseInput, mode: 'research', question: 'NSAIDs in CKD?' },
+      ctx,
+      llm,
+    );
+    expect(out.toolCalls).toHaveLength(1);
+    expect(out.toolCalls[0]!.resultOk).toBe(true);
+    expect(out.toolCalls[0]!.rowCount).toBeGreaterThan(0);
+    expect(out.answer.sources[0]?.kind).toBe('literature');
+  });
+
   it('drops invalid source entries (kind / id / label malformed)', async () => {
     const llm = scriptedLlm([
       JSON.stringify({
