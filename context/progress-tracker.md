@@ -4,11 +4,11 @@
 
 ## Current Phase
 
-- **Wave 4 opener — Unit 19 shipped.** PR #20 (branch `feat/unit-19-fhir-smart-auth`, stacked on `feat/unit-18-telehealth-polish`). SMART on FHIR auth foundations — the F1 gate per `references/fhir-integration-spec.md`. v1 is per-clinician, provider-launched, NextGen sandbox only. A clinician can launch from NextGen, complete OAuth2 with PKCE, and the resulting tokens are AES-256-GCM-encrypted in Postgres + refreshable. **Auth only — no resource fetching yet** (F3 / Unit 21 lands the sync worker).
+- **Wave 4 / F2 shipped — Unit 20.** PR #21 (branch `feat/unit-20-fhir-patient-identity`, stacked on `feat/unit-19-fhir-smart-auth`). Bridges OmniScribe Patient ↔ EHR Patient resource so F3 (Unit 21) knows which FHIR identity to fetch resources against. Clinician confirms every link via the new EhrLinkPanel on /patients/[id]; the match confidence semantics (`'verified'` unlocks F3 reads; `'high'` and `'manual'` block them pending confirmation) are now locked in code + audit metadata. 4 new APIs (search + create + verify + remove) + 3 new client components + 4 new audit actions ship; existing PatientFhirIdentity schema unchanged.
 
 ## Current Goal
 
-- Await user confirmation before starting Unit 20 — Wave 4 F2 (Patient identity matching: bidirectional Patient ↔ FHIR Patient links, identity confirmation UI, audit on every link/unlink). Per Prompt B's stop-between-units contract.
+- Await user confirmation before starting Unit 21 — Wave 4 F3 (Resource sync worker + cache). Builds the BullMQ `fhir-sync` queue that fetches Patient, Condition, Medication, Observation, AllergyIntolerance, Procedure, DiagnosticReport, CarePlan, Goal resources against a 'verified' PatientFhirIdentity and populates `FhirCachedResource` (the schema that's been sitting dormant since Unit 19). Per Prompt B's stop-between-units contract.
 
 ## Completed
 
@@ -272,6 +272,25 @@
   - `.env.example` documents Daily.co (was missing — Units 15–18 added the var without updating the example file) + FHIR client / secret / redirect URI + FHIR_TOKEN_ENCRYPTION_KEY with a LOCAL DEV ONLY placeholder (plaintext spells out the warning).
   - 160 tests pass (was 152); build/lint/typecheck clean. 5 new APIs + 1 new admin surface + 4 new schema tables ship.
 
+- **2026-05-17 — Unit 20: FHIR / Patient identity matching (Wave 4 / F2)** (PR #21 — `feat(unit-20): fhir patient identity matching`).
+  - Spec at `context/specs/20-fhir-patient-identity.md`. Wave 4 F2. CRUD for the PatientFhirIdentity table that shipped (schema-only) in Unit 19.
+  - 4 new AuditAction values: FHIR_PATIENT_SEARCH (metadata carries field NAMES, not values — PHI fence), FHIR_PATIENT_LINK_CREATED, FHIR_PATIENT_LINK_VERIFIED, FHIR_PATIENT_LINK_REMOVED. fhirPatientId is EHR-side identifier (not HIPAA Safe Harbor PHI).
+  - Match confidence semantics locked for F3 to read against:
+    - `'verified'` = clinician explicitly confirmed via UI; F3 may fetch
+    - `'high'` = auto-matched (launch hint OR strong field match); F3 refuses, panel surfaces "Confirm match" CTA
+    - `'manual'` = clinician selected but didn't tick confirmation; same block as 'high' for F3; distinction is provenance for the auditor
+  - `src/services/fhir/patient-client.ts` — `searchPatients` (GET /Patient?family=…&given=…&birthdate=…; up to 20 simplified candidates; rejects all-empty queries), `readPatient` (GET /Patient/{id}). Token handling: lazy refresh + persist if expiresAt < now + 5min; mutates the snapshot so parallel calls in the same request don't triple-refresh. Stub mode synthesizes 3 deterministic candidates per query (exact / typo'd given name / dob shifted 5 years). 6 vitest cases lock the stub shape.
+  - 4 new APIs:
+    - `GET /api/fhir/patients/search` — NOTE_REVIEW-gated; resolves clinician's FhirIdentity (412 ehr_not_connected if missing — UI routes to admin integrations); audits FHIR_PATIENT_SEARCH with field names + result count.
+    - `POST /api/patients/[id]/fhir-identities` — z.literal(true) on `confirmed` so the only path is explicit confirmation; persists at 'verified'. P2002 unique-violation → 409 already_linked.
+    - `PATCH /api/patients/[id]/fhir-identities/[fid]` — promote 'high'/'manual' → 'verified' (for future auto-match polish + F3 stale-link refresh).
+    - `DELETE /api/patients/[id]/fhir-identities/[fid]` — hard-delete; audit log is the history.
+  - 3 new client components in `src/components/fhir/`:
+    - `EhrLinkPanel` (server) — four render states (no EHR connection / no patient link / pending confirmation / verified), each with the right CTA. Slots into /patients/[id] between InlineDemographics and the right-rail cards.
+    - `MatchDialog` (client) — search-pick-confirm flow. Auto-selects exact match OR launch hint; confirmation checkbox is the ONLY enable for the save button (no "looks right, just send" shortcut).
+    - `UnlinkButton` (client) — AlertDialog (rule 22) → DELETE.
+  - 166 tests pass (was 160); build/lint/typecheck clean. 4 new APIs + 3 new client components ship. PatientFhirIdentity table now has full CRUD; FhirCachedResource still dormant (F3 / Unit 21).
+
 ## In Progress
 
 None.
@@ -280,7 +299,7 @@ None.
 
 In priority order:
 
-1. **Unit 20 — Wave 4 F2: Patient identity matching** ([`references/fhir-integration-spec.md`](../references/fhir-integration-spec.md) F2). Bidirectional Patient ↔ FHIR Patient links; identity confirmation UI (clinician confirms before linking); audit on every link/unlink. Builds directly on the FhirIdentity + PatientFhirIdentity schemas + the `launchPatientFhirId` hint Unit 19 persists. Foundation for F3 (resource sync) which can't fetch resources until the patient identity is known.
+1. **Unit 21 — Wave 4 F3: Resource sync worker + cache** ([`references/fhir-integration-spec.md`](../references/fhir-integration-spec.md) F3). `FhirCachedResource` activation (schema shipped Unit 19); BullMQ `fhir-sync` queue (rate-limited, dispatched via the existing ai-generation worker pattern per rule 18 — or its own fleet if scope justifies it); refresh policy (on-demand + 7d staleness); resource types: Patient, Condition, Medication, Observation, AllergyIntolerance, Procedure, DiagnosticReport, CarePlan, Goal. F3 only fetches against `matchConfidence === 'verified'` PatientFhirIdentity rows — Unit 20's gating contract.
 
 Wave 3.5 (deferred polish, can land alongside Wave 4):
 - Daily.co SDK swap for the patient audio track (one-line change in the room shell + token-mint endpoint).
@@ -467,6 +486,16 @@ These need user/PM decision before the depending unit can ship. Quote the source
 - **2026-05-17 — Copy-to-clipboard fires SECTION_COPIED_TO_CLIPBOARD via the copilot-event endpoint with itemCount = char count.** PHI-free at the audit layer (content never leaves the client beyond the clipboard write). The cap raise (1000 → 100_000) accommodates real section sizes; the prior cap was sized for "items in a list" not "characters in a section."
 - **2026-05-17 — Accordion animation polish ships data-state + transition-duration classes only — no CSS keyframes.** The simplest cross-browser solution that works inside Tailwind v4 without custom @keyframes. Future polish (CSS-only height animation for collapse/expand) can hook the data-state attribute when the design asks for it.
 - **2026-05-17 — Wave 2 COMPLETE.** Units 10–14 close the clinical-surface trust gaps. /review now has: SSE reconnect indicator (10), section regenerate with diff (10), failure-recovery banner (10), per-section observability (10), inline goal progression on the patient panel (11), snapshot strip + override-wins on /patients/[id] (12), templates authoring with version history (13), and AI compliance flags with severity-grouped review (14). The clinical surfaces are no longer "works" — they're "trusted daily."
+
+### Unit 20 (2026-05-17)
+
+- **2026-05-17 — Confirmation checkbox is the ONLY save-enable path; no "looks right, just send" shortcut.** The spec's promise is "clinician confirms every link" — auto-suggestion can help the clinician find the right candidate fast, but the explicit `confirmed: true` body field is enforced by `z.literal(true)` on the API side AND requires a UI checkbox tick. F3 builds on this contract: `matchConfidence === 'verified'` means a human verified, not just an algorithm.
+- **2026-05-17 — Match confidence semantics are F3's read gate.** `'verified'` unlocks F3 resource fetches; `'high'` and `'manual'` block them. The distinction between high/manual is provenance only (auto-match vs. clinician-selected-but-unconfirmed) and matters for the auditor; both block F3 from fetching against the link until the clinician promotes.
+- **2026-05-17 — Stub-mode synthesizer returns 3 candidates per search (exact / typo / false-positive).** Forces the clinician to do a careful read instead of clicking the first row. Real-mode behavior is whatever the EHR returns; stub mode designs the muscle memory.
+- **2026-05-17 — fhirPatientId in audit metadata is EHR-side identifier, not HIPAA Safe Harbor PHI.** PatientFhirIdentity carries the (orgUserId-resolvable) join from local patient to EHR id; the EHR's id alone is opaque without the linking row. The PHI denylist (Unit 12 audit/phi-free-check.ts) doesn't fire on `fhirPatientId` because it's not in the denylist; the search route is explicitly designed to write field NAMES not values to keep PHI fences holding.
+- **2026-05-17 — Hard-delete on unlink (audit row is the history).** Mirrors Unit 19's hard-delete-on-disconnect for FhirIdentity. Soft-delete on credentials/identity rows would create stale-data risk if a row was re-linked later — better to start clean and let the audit log carry the timeline.
+- **2026-05-17 — 412 Precondition Failed when clinician hasn't connected an EHR.** Search API returns `{ code: 'ehr_not_connected' }` with 412 so the UI can branch cleanly to "Connect to NextGen first." Could have been 404 ("no identity for this clinician") or 403 ("no permission") but 412 captures the actual semantic: the precondition (a connected EHR) isn't satisfied for the requested action (search EHR).
+- **2026-05-17 — Token refresh happens lazily in the patient-client, not pre-emptively.** Each call decrypts the snapshot's tokens + checks `expiresAt < now + 5min`. If yes, refresh + persist + mutate the snapshot before continuing. The buffer (5 min) covers the round-trip + ensures the access token will still be valid by the time the upstream call lands. F3's sync worker will reuse the same helper so refresh logic lives in one place.
 
 ### Unit 19 (2026-05-17)
 
