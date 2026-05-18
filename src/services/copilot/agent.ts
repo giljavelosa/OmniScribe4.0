@@ -135,6 +135,11 @@ export async function runAgent(
     ...input.history,
     { role: 'user', content: input.question },
   ];
+  // Unit 28 — per-session FHIR row budget. Mutated by reference inside
+  // each FHIR tool. Initialized here so the budget is per-runAgent-call
+  // (NOT global; a new ask starts fresh). Non-FHIR tools (Unit 27)
+  // ignore the field.
+  const toolCtx = { orgId: ctx.orgId, fhirRowsConsumed: { count: 0 } };
 
   let stub = false;
   let iterations = 0;
@@ -179,7 +184,7 @@ export async function runAgent(
       // iterations see the reasoning chain (without this, the model loses
       // its own prior outputs and re-calls or contradicts itself).
       turns.push({ role: 'assistant', content: result.text });
-      const toolResult = await runTool(parsed.value.tool, parsed.value.args, { orgId: ctx.orgId });
+      const toolResult = await runTool(parsed.value.tool, parsed.value.args, toolCtx);
       toolCalls.push({
         tool: parsed.value.tool,
         args: parsed.value.args,
