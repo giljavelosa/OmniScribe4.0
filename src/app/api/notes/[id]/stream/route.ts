@@ -41,7 +41,14 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   // returns synchronously instead of mid-SSE.
   const note = await prisma.note.findFirst({
     where: { id, orgId: authorizationUser.orgId },
-    select: { id: true, orgId: true, status: true, clinicianOrgUserId: true },
+    select: {
+      id: true,
+      orgId: true,
+      status: true,
+      clinicianOrgUserId: true,
+      interruptedAt: true,
+      lastWorkerError: true,
+    },
   });
   if (!note) return new Response('not found', { status: 404 });
   assertOrgScoped(note.orgId, authorizationUser.orgId);
@@ -75,6 +82,10 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
         }
       }
       function safeClose() {
+        // Always clear timers so a closed-controller doesn't leak the polling
+        // interval (which would otherwise run noop-prisma queries up to the cap).
+        clearInterval(intervalId);
+        clearInterval(heartbeatId);
         if (closed) return;
         closed = true;
         try {
@@ -82,7 +93,6 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
         } catch {
           // already closed
         }
-        clearInterval(intervalId);
       }
 
       // Heartbeat so proxies don't kill an idle connection.
@@ -155,8 +165,20 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       }, POLL_MS);
 
       // Emit initial STATUS so the client doesn't wait 2s for the first event.
+      // Include INTERRUPTED metadata up front so a client opening the stream on
+      // an already-INTERRUPTED note sees the error reason without waiting for
+      // a status change (which never comes — we close immediately after).
       safeEnqueue(
-        `event: STATUS\ndata: ${JSON.stringify({ status: note.status, initial: true })}\n\n`,
+        `event: STATUS\ndata: ${JSON.stringify({
+          status: note.status,
+          initial: true,
+          ...(note.status === 'INTERRUPTED'
+            ? {
+                interruptedAt: note.interruptedAt?.toISOString(),
+                lastWorkerError: note.lastWorkerError,
+              }
+            : {}),
+        })}\n\n`,
       );
       lastStatus = note.status;
 
