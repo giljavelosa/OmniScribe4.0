@@ -100,13 +100,9 @@ export async function getPlatformMetrics(now: Date = new Date()): Promise<Platfo
     prisma.note.count({ where: { status: 'INTERRUPTED' } }),
     prisma.auditLog.count({
       where: {
-        action: { in: ['TRANSCRIPTION_JOB_ENQUEUED'] },
-        // We don't have a FAILED-specific action for transcription
-        // worker; closest proxy is the worker's NOTE_INTERRUPTED row
-        // when retries exhausted. Filter to NOTE_INTERRUPTED with a
-        // metadata hint or fall back to count of interrupted notes
-        // signed in the window. Simpler v1: count NOTE_INTERRUPTED
-        // rows with createdAt in the window.
+        // We don't have a FAILED-specific action for transcription worker;
+        // closest proxy is NOTE_INTERRUPTED when retries exhausted.
+        action: 'NOTE_INTERRUPTED',
         createdAt: { gte: dayAgo },
       },
     }),
@@ -135,13 +131,6 @@ export async function getPlatformMetrics(now: Date = new Date()): Promise<Platfo
     }),
   ]);
 
-  // Re-aggregate transcription failures from a more reliable signal:
-  // NOTE_INTERRUPTED rows (worker exhausted retries). Replace the
-  // placeholder count above with the real one.
-  const transcriptionFailedRealLast24h = await prisma.auditLog.count({
-    where: { action: 'NOTE_INTERRUPTED', createdAt: { gte: dayAgo } },
-  });
-
   const value: PlatformMetrics = {
     computedAt: now.toISOString(),
     orgs: {
@@ -158,13 +147,14 @@ export async function getPlatformMetrics(now: Date = new Date()): Promise<Platfo
       interrupted,
     },
     workers: {
-      transcriptionFailedLast24h: transcriptionFailedRealLast24h,
+      // transcriptionFailedLast24h now comes directly from NOTE_INTERRUPTED
+      // (the parallel batch query was switched at line 99) — no follow-up
+      // sequential query, no void suppression.
+      transcriptionFailedLast24h,
       aiGenerationFailedLast24h,
     },
     errorRateLastHour,
   };
-  // Silence the unused-variable warning — we replaced it above.
-  void transcriptionFailedLast24h;
 
   cached = { value, expiresAt: nowMs + PLATFORM_METRICS_CACHE_TTL_MS };
   return value;
