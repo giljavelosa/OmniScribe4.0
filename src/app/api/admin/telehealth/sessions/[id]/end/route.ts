@@ -11,6 +11,19 @@ export const runtime = 'nodejs';
 
 const bodySchema = z.object({
   reason: z.string().max(280).optional(),
+  /** Unit 18 — PHI-free call quality metrics from the room shell. All
+   *  fields are integers; the route's z.number().int() check fences off
+   *  any accidental PHI smuggling (no strings, no objects). Persists on
+   *  TelehealthSession.qualityMetrics + included in the SESSION_ENDED
+   *  audit metadata for the auditor lens. */
+  qualityMetrics: z
+    .object({
+      sampleChunksProcessed: z.number().int().min(0),
+      reconnectCount: z.number().int().min(0),
+      callDurationMs: z.number().int().min(0),
+      transcriptSegmentCount: z.number().int().min(0),
+    })
+    .optional(),
 });
 
 /**
@@ -72,6 +85,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       status: 'COMPLETED',
       endedAt: new Date(),
       endedReason: parsed.data.reason ?? null,
+      qualityMetrics: parsed.data.qualityMetrics ?? undefined,
     },
   });
 
@@ -86,6 +100,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       patientId: session.patientId,
       hasReason: !!parsed.data.reason,
       previousStatus: session.status,
+      ...(parsed.data.qualityMetrics
+        ? { qualityMetrics: parsed.data.qualityMetrics }
+        : {}),
     },
   });
 

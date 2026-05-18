@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Loader2, Mic, MicOff, PhoneOff, Video } from 'lucide-react';
+import { Loader2, Mic, MicOff, PhoneOff, RotateCw, Video } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { StatusBadge } from '@/components/ui/status-badge';
@@ -34,17 +34,16 @@ type Props = {
 };
 
 /**
- * Clinician-side telehealth room. Owns:
- *   - Daily iframe (left pane)
- *   - TelehealthAudioPipeline lifecycle (Unit 16 lib) — clinician mic on,
- *     patient track null until Daily SDK is wired in a future commit
- *   - Live transcript pane + brief panel (right pane)
- *   - Mic mute + End-call controls (bottom bar)
+ * Clinician-side telehealth room.
  *
- * End-call wiring (Commit 5) replaces handleEndCall's TODO with the real
- * complete-stream → end-session → /processing handoff. This commit just
- * lights up the live experience so the surface is reviewable in isolation
- * before the post-call flow lands.
+ * Unit 18 polish on top of Unit 17 base:
+ *   - Inline reconnecting banner during transient WS drops.
+ *   - Failed banner + "Retry connection" button after auto-retries exhaust.
+ *   - Rejoin banner on page reload mid-call (sessionStorage flag) so the
+ *     clinician knows audio from the prior tab wasn't recovered.
+ *   - Call quality metrics packaged into the /end POST so the auditor
+ *     lens can see sample count, reconnect count, duration, transcript
+ *     length per session.
  */
 export function TelehealthRoomShell({ noteId, scheduleId, sessionId, roomUrl, patient, brief }: Props) {
   void scheduleId;
@@ -57,6 +56,7 @@ export function TelehealthRoomShell({ noteId, scheduleId, sessionId, roomUrl, pa
   const [partial, setPartial] = useState('');
   const [muted, setMuted] = useState(false);
   const [connState, setConnState] = useState<ConnectionState>('idle');
+  const [rejoining, setRejoining] = useState(false);
 
   const pipelineRef = useRef<TelehealthAudioPipeline | null>(null);
   const clinicianStreamRef = useRef<MediaStream | null>(null);
@@ -64,6 +64,18 @@ export function TelehealthRoomShell({ noteId, scheduleId, sessionId, roomUrl, pa
   // Cache the encoded WAV so an end-call retry replays it instead of
   // re-draining the (already-empty) pipeline buffer.
   const encodedWavRef = useRef<Blob | null>(null);
+  const startedAtMsRef = useRef<number | null>(null);
+  // Cancellation flag for the mount-time startPipeline so a fast unmount
+  // (e.g., user navigates away during the getUserMedia permission prompt)
+  // doesn't leak a mic + WebSocket when the promise eventually resolves.
+  const cancelledRef = useRef(false);
+  // Accumulate quality metrics across manual-retry pipelines so the
+  // pre-retry sample/reconnect counts don't get lost when a new pipeline
+  // instance replaces the old one with zeroed counters.
+  const accumulatedMetricsRef = useRef<{ sampleChunksProcessed: number; reconnectCount: number }>(
+    { sampleChunksProcessed: 0, reconnectCount: 0 },
+  );
+  const sessionStorageKey = `telehealth-room-${sessionId}`;
 
   const handleTranscript = useCallback((seg: { text: string; isFinal: boolean; speaker: number | null }) => {
     if (seg.isFinal) {
@@ -94,57 +106,92 @@ export function TelehealthRoomShell({ noteId, scheduleId, sessionId, roomUrl, pa
     }).catch(() => {});
   }, [noteId]);
 
-  // Boot the pipeline on mount. The clinical layout already gated auth,
-  // so this fires once per room visit.
-  useEffect(() => {
-    let cancelled = false;
-    async function init() {
-      setStage('requesting-mic');
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            sampleRate: TELEHEALTH_AUDIO_SAMPLE_RATE,
-            channelCount: 1,
-            echoCancellation: true,
-            noiseSuppression: true,
-          },
-        });
-        if (cancelled) {
-          stream.getTracks().forEach((t) => t.stop());
-          return;
-        }
-        clinicianStreamRef.current = stream;
-        const track = stream.getAudioTracks()[0];
-        if (!track) throw new Error('Mic returned no audio track');
-        clinicianTrackRef.current = track;
-
-        const pipeline = new TelehealthAudioPipeline({
-          retainSamples: true,
-          onTranscript: handleTranscript,
-          onConnectionChange: setConnState,
-          onReconnected: handleReconnected,
-          onError: (e) => setError(e.message),
-        });
-        pipelineRef.current = pipeline;
-        await pipeline.start({
-          noteId,
-          clinicianTrack: track,
-          // v1: synthetic null. Daily SDK integration will pass the real
-          // patient track when wired (one-line change at the call site;
-          // the pipeline accepts it without changes).
-          patientTrack: null,
-        });
-        if (!cancelled) setStage('live');
-      } catch (e) {
-        if (!cancelled) {
-          setError(e instanceof Error ? e.message : String(e));
-          setStage('error');
-        }
-      }
+  /** Tear down any existing pipeline + start a fresh one. Used by both
+   *  the initial mount effect and the manual "Retry connection" button
+   *  that appears after the pipeline's 3-attempt auto reconnect gives up. */
+  const startPipeline = useCallback(async (): Promise<void> => {
+    // Fold the soon-to-be-replaced pipeline's metrics into the accumulator
+    // so manual retries don't reset the cumulative quality numbers to zero.
+    const prev = pipelineRef.current;
+    if (prev) {
+      const m = prev.getQualityMetrics();
+      accumulatedMetricsRef.current.sampleChunksProcessed += m.sampleChunksProcessed;
+      accumulatedMetricsRef.current.reconnectCount += m.reconnectCount;
     }
-    void init();
+    // Stop + release whatever's lingering.
+    await prev?.stop();
+    pipelineRef.current = null;
+    clinicianStreamRef.current?.getTracks().forEach((t) => t.stop());
+    clinicianStreamRef.current = null;
+    clinicianTrackRef.current = null;
+
+    setStage('requesting-mic');
+    setError(null);
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        sampleRate: TELEHEALTH_AUDIO_SAMPLE_RATE,
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+      },
+    });
+    // If the component unmounted while getUserMedia was pending, release the
+    // stream immediately — the cleanup function already ran and would otherwise
+    // leak the mic + WebSocket forever.
+    if (cancelledRef.current) {
+      stream.getTracks().forEach((t) => t.stop());
+      return;
+    }
+    clinicianStreamRef.current = stream;
+    const track = stream.getAudioTracks()[0];
+    if (!track) throw new Error('Mic returned no audio track');
+    clinicianTrackRef.current = track;
+
+    const pipeline = new TelehealthAudioPipeline({
+      retainSamples: true,
+      onTranscript: handleTranscript,
+      onConnectionChange: setConnState,
+      onReconnected: handleReconnected,
+      onError: (e) => setError(e.message),
+    });
+    pipelineRef.current = pipeline;
+    await pipeline.start({
+      noteId,
+      clinicianTrack: track,
+      patientTrack: null,
+    });
+    if (cancelledRef.current) {
+      await pipeline.stop();
+      pipelineRef.current = null;
+      stream.getTracks().forEach((t) => t.stop());
+      clinicianStreamRef.current = null;
+      clinicianTrackRef.current = null;
+      return;
+    }
+    startedAtMsRef.current ??= Date.now();
+    setMuted(false);
+    setStage('live');
+  }, [handleTranscript, handleReconnected, noteId]);
+
+  // Initial mount: detect re-entry via sessionStorage + boot the pipeline.
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.sessionStorage.getItem(sessionStorageKey)) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setRejoining(true);
+    }
+    try {
+      window.sessionStorage.setItem(sessionStorageKey, Date.now().toString());
+    } catch {
+      // sessionStorage may be unavailable in restricted contexts; silently skip.
+    }
+    cancelledRef.current = false;
+    void startPipeline().catch((e: unknown) => {
+      if (cancelledRef.current) return;
+      setError(e instanceof Error ? e.message : String(e));
+      setStage('error');
+    });
     return () => {
-      cancelled = true;
+      cancelledRef.current = true;
       const pipeline = pipelineRef.current;
       const stream = clinicianStreamRef.current;
       pipelineRef.current = null;
@@ -153,12 +200,11 @@ export function TelehealthRoomShell({ noteId, scheduleId, sessionId, roomUrl, pa
       void pipeline?.stop();
       stream?.getTracks().forEach((t) => t.stop());
     };
-  }, [noteId, handleTranscript, handleReconnected]);
+  }, [sessionStorageKey, startPipeline]);
 
   function toggleMute() {
     const track = clinicianTrackRef.current;
     if (!track) return;
-    // track.enabled === true means audio flows; we flip it.
     track.enabled = !track.enabled;
     setMuted(!track.enabled);
   }
@@ -171,17 +217,24 @@ export function TelehealthRoomShell({ noteId, scheduleId, sessionId, roomUrl, pa
     try {
       if (!pipeline) throw new Error('audio pipeline missing');
 
-      // 1. Stop pipeline first — closes WS, tears down audio, prevents
-      //    new samples from being retained while we're encoding.
-      // stop() is idempotent so a retry after a complete-stream failure
-      // is safe.
+      const currentMetrics = pipeline.getQualityMetrics();
+      const qualityMetrics = {
+        ...currentMetrics,
+        sampleChunksProcessed:
+          accumulatedMetricsRef.current.sampleChunksProcessed + currentMetrics.sampleChunksProcessed,
+        reconnectCount:
+          accumulatedMetricsRef.current.reconnectCount + currentMetrics.reconnectCount,
+      };
+      const callDurationMs =
+        startedAtMsRef.current != null ? Date.now() - startedAtMsRef.current : 0;
+
+      // stop() is idempotent so a retry after a complete-stream failure is safe.
       await pipeline.stop();
 
-      // 2. Encode retained samples to a WAV. drainRetainedSamples destroys
-      //    the internal buffer on first call, so cache the encoded blob on
-      //    the ref and replay it on retry — otherwise a complete-stream
-      //    failure followed by a retry would submit a 44-byte header-only
-      //    WAV, silently losing the entire visit's recording.
+      // drainRetainedSamples destroys the internal buffer on first call, so
+      // cache the encoded blob on the ref and replay it on retry — otherwise
+      // a complete-stream failure followed by a retry would submit a 44-byte
+      // header-only WAV, silently losing the entire visit's recording.
       let wav = encodedWavRef.current;
       if (!wav) {
         const chunks = pipeline.drainRetainedSamples();
@@ -189,10 +242,6 @@ export function TelehealthRoomShell({ noteId, scheduleId, sessionId, roomUrl, pa
         encodedWavRef.current = wav;
       }
 
-      // 3. Hand the audio + transcript to the existing post-recording
-      //    pipeline (same endpoint the in-person flow uses). Flips Note
-      //    RECORDING → TRANSCRIBING and enqueues the transcription
-      //    worker; the rest of the note-generation flow takes over.
       const form = new FormData();
       form.append('audio', wav, 'telehealth.wav');
       form.append('finalTranscript', JSON.stringify({ segments: transcript, partial }));
@@ -201,25 +250,34 @@ export function TelehealthRoomShell({ noteId, scheduleId, sessionId, roomUrl, pa
         body: form,
       });
       if (!completeRes.ok) {
-        throw new Error(`Saving the visit audio failed (${completeRes.status}). Please try ending the call again.`);
+        throw new Error(
+          `Saving the visit audio failed (${completeRes.status}). Please try ending the call again.`,
+        );
       }
 
-      // 4. Flip the session to COMPLETED + destroy the Daily room. If
-      //    this fails after a successful complete-stream, the audio is
-      //    already durable — we navigate to /processing and surface a
-      //    background banner instead of blocking the clinician on the
-      //    end-call modal.
       const endRes = await fetch(`/api/admin/telehealth/sessions/${sessionId}/end`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason: 'clinician_ended' }),
+        body: JSON.stringify({
+          reason: 'clinician_ended',
+          qualityMetrics: {
+            ...qualityMetrics,
+            callDurationMs,
+            transcriptSegmentCount: transcript.length,
+          },
+        }),
       });
       if (!endRes.ok) {
-        // Best-effort log; don't fail the user-facing flow.
         console.warn(`telehealth: end-session returned ${endRes.status}`);
       }
 
-      // 5. Hand off to the standard post-call screen.
+      // Clear the rejoin flag — the session ended cleanly.
+      try {
+        window.sessionStorage.removeItem(sessionStorageKey);
+      } catch {
+        /* ignore */
+      }
+
       setStage('ended');
       router.push(`/processing/${noteId}`);
       router.refresh();
@@ -227,6 +285,14 @@ export function TelehealthRoomShell({ noteId, scheduleId, sessionId, roomUrl, pa
       setError(e instanceof Error ? e.message : String(e));
       setStage('error');
     }
+  }
+
+  function retryConnection() {
+    setConnState('idle');
+    void startPipeline().catch((e: unknown) => {
+      setError(e instanceof Error ? e.message : String(e));
+      setStage('error');
+    });
   }
 
   return (
@@ -247,6 +313,15 @@ export function TelehealthRoomShell({ noteId, scheduleId, sessionId, roomUrl, pa
         </div>
       </header>
 
+      {rejoining && stage !== 'ended' && (
+        <div className="px-6 pt-3">
+          <StatusBanner variant="warning" title="Resuming session">
+            We couldn&apos;t recover audio from the previous tab. The transcript will continue from
+            now.
+          </StatusBanner>
+        </div>
+      )}
+
       <div className="flex-1 grid lg:grid-cols-2 min-h-0">
         <section className="bg-black/90 flex flex-col p-2 gap-2">
           <iframe
@@ -262,6 +337,24 @@ export function TelehealthRoomShell({ noteId, scheduleId, sessionId, roomUrl, pa
               Live transcript
             </p>
           </div>
+          {connState === 'reconnecting' && (
+            <div className="border-b border-border px-4 py-2 flex items-center gap-2 text-xs text-[var(--status-warning-fg)]">
+              <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+              Connection lost — reconnecting…
+            </div>
+          )}
+          {connState === 'failed' && (
+            <div className="border-b border-border p-3 space-y-2">
+              <StatusBanner variant="danger" title="Audio disconnected">
+                We couldn&apos;t reconnect after several attempts. The video call is still running;
+                tap below to retry the audio link.
+              </StatusBanner>
+              <Button variant="outline" size="sm" onClick={retryConnection} className="gap-1">
+                <RotateCw className="h-3 w-3" aria-hidden />
+                Retry connection
+              </Button>
+            </div>
+          )}
           <div className="flex-1 overflow-y-auto p-4 space-y-2 font-mono text-sm">
             {transcript.length === 0 && partial === '' && stage !== 'error' && (
               <p className="text-muted-foreground italic">
@@ -278,9 +371,7 @@ export function TelehealthRoomShell({ noteId, scheduleId, sessionId, roomUrl, pa
                 {seg.text}
               </p>
             ))}
-            {partial && (
-              <p className="text-muted-foreground italic">{partial}</p>
-            )}
+            {partial && <p className="text-muted-foreground italic">{partial}</p>}
           </div>
           {error && (
             <div className="border-t border-border p-3">

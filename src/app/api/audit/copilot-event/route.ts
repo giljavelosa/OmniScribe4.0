@@ -30,6 +30,12 @@ const ALLOWED_ACTIONS: ReadonlyArray<AuditAction> = [
   // onReconnected callback. itemCount carries the count of buffered
   // chunks replayed.
   'TELEHEALTH_AUDIO_RECONNECTED',
+  // Unit 18 — clinician's pre-call diagnostic failed one of the three
+  // checks (mic / network / browser_compat). The noteId field carries
+  // the scheduleId here since the preflight runs before a Note exists;
+  // resourceType still resolves as Note in the audit row (acceptable
+  // join compromise — the scheduleId is the natural anchor anyway).
+  'TELEHEALTH_PRECALL_CHECK_FAILED',
 ];
 
 const bodySchema = z.object({
@@ -38,6 +44,11 @@ const bodySchema = z.object({
   noteId: z.string().min(1).max(64),
   cardType: z.enum(['open-followups', 'plan-for-today']).optional(),
   itemCount: z.number().int().min(0).max(100_000).optional(),
+  // Unit 18: which preflight check failed + a shape-locked reason. Required
+  // for ops triage — without these every TELEHEALTH_PRECALL_CHECK_FAILED row
+  // looks identical. Reason is bounded to short tokens, no free PHI.
+  check: z.enum(['mic', 'network', 'browser_compat']).optional(),
+  reason: z.string().min(1).max(120).optional(),
 });
 
 /**
@@ -75,6 +86,8 @@ export async function POST(req: Request) {
       surface: parsed.data.surface,
       ...(parsed.data.cardType ? { cardType: parsed.data.cardType } : {}),
       ...(parsed.data.itemCount !== undefined ? { itemCount: parsed.data.itemCount } : {}),
+      ...(parsed.data.check ? { check: parsed.data.check } : {}),
+      ...(parsed.data.reason ? { reason: parsed.data.reason } : {}),
     },
   });
 

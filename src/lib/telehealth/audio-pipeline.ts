@@ -125,6 +125,12 @@ export class TelehealthAudioPipeline {
   #stopped = false;
   readonly #retainSamples: boolean;
   #retained: Int16Array[] | null = null;
+  /** Unit 18 — total sample-chunks pushed through the WS or buffer since
+   *  start(). Surfaced via getQualityMetrics() for the /end audit row. */
+  #sampleChunksProcessed = 0;
+  /** Unit 18 — total reconnect attempts that actually fired (not counting
+   *  the initial connect). Surfaced via getQualityMetrics(). */
+  #reconnectCount = 0;
 
   constructor(options: PipelineOptions = {}) {
     this.#wsCtor = options.wsConstructor ?? (globalThis.WebSocket as typeof WebSocket);
@@ -218,9 +224,20 @@ export class TelehealthAudioPipeline {
     // Always buffer — drains on reconnect; cap is bounded so memory is safe.
     this.#buffer.push(samples);
     if (this.#retained) this.#retained.push(samples);
+    this.#sampleChunksProcessed += 1;
     if (this.#ws && this.#ws.readyState === WebSocket.OPEN) {
       this.#ws.send(samples.buffer);
     }
+  }
+
+  /** Unit 18 — PHI-free counters for the call quality metrics block. The
+   *  room shell reads these on end-call and packages with callDurationMs +
+   *  transcriptSegmentCount before POSTing to /sessions/[id]/end. */
+  getQualityMetrics(): { sampleChunksProcessed: number; reconnectCount: number } {
+    return {
+      sampleChunksProcessed: this.#sampleChunksProcessed,
+      reconnectCount: this.#reconnectCount,
+    };
   }
 
   /** Pull every retained sample chunk and clear the internal store. Only
@@ -266,6 +283,7 @@ export class TelehealthAudioPipeline {
     }
     this.#setState('reconnecting');
     this.#reconnectAttempts += 1;
+    this.#reconnectCount += 1;
     const lastKey = this.#lastKey;
     if (!lastKey) {
       this.#setState('failed');

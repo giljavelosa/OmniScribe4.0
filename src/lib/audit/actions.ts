@@ -174,4 +174,10 @@ export type AuditAction =
   // 30 s reconnect buffer after a WebSocket reopen. The pipeline library
   // itself has no DB writer; the surface emits on its behalf so the
   // auditor lens can see connectivity blips per session.
-  | 'TELEHEALTH_AUDIO_RECONNECTED';
+  | 'TELEHEALTH_AUDIO_RECONNECTED'
+  // ---- Unit 18: Telehealth polish ----
+  // Logged by the preflight surface when a clinician's pre-call diagnostic
+  // fails one of (mic / network / browser_compat). Metadata captures the
+  // check name + a short PHI-free reason; gives ops visibility into the
+  // common setup failures so the support playbook can address them.
+  | 'TELEHEALTH_PRECALL_CHECK_FAILED';
