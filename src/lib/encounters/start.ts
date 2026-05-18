@@ -48,6 +48,17 @@ export type StartVisitArgs = {
   episodeOfCareId?: string | null;
   actingUserId: string;
   pickerSource?: PickerSource;
+  /**
+   * Late-entry charting (spec: context/specs/late-entry-charting.md).
+   * Caller-supplied values; the route already validated dateOfService against
+   * the 30-day floor + today ceiling, computed isLateEntry, and computed
+   * lateEntryDaysGap. We just persist them onto the new Note. Omit all three
+   * for normal visits — Note.dateOfService defaults to encounter.startedAt
+   * in that case.
+   */
+  dateOfService?: Date | null;
+  isLateEntry?: boolean;
+  lateEntryDaysGap?: number | null;
 };
 
 export async function startVisit(args: StartVisitArgs) {
@@ -117,6 +128,16 @@ export async function startVisit(args: StartVisitArgs) {
     },
   });
 
+  // Late-entry charting. When NOT a late entry, dateOfService anchors to the
+  // encounter's startedAt so the column always has a meaningful "when did
+  // care happen" value (matches the schema-default semantics). Encounter
+  // startedAt is nullable in the schema; we always pass `new Date()` above,
+  // but the fallback chain still belt-and-suspenders to `new Date()` so we
+  // never persist a null dateOfService (column is NOT NULL).
+  const isLateEntry = !!args.isLateEntry;
+  const dateOfService: Date = args.dateOfService ?? encounter.startedAt ?? new Date();
+  const lateEntryDaysGap = isLateEntry ? args.lateEntryDaysGap ?? null : null;
+
   const note = await args.tx.note.create({
     data: {
       orgId: args.orgId,
@@ -125,6 +146,9 @@ export async function startVisit(args: StartVisitArgs) {
       clinicianOrgUserId: args.clinicianOrgUserId,
       division,
       status: NoteStatus.PREPARING,
+      dateOfService,
+      isLateEntry,
+      lateEntryDaysGap,
     },
   });
 
@@ -154,9 +178,27 @@ export async function startVisit(args: StartVisitArgs) {
         resolvedSource === 'unspecified' && args.episodeOfCareId
           ? 'picker'
           : resolvedSource,
+      isLateEntry,
     },
     tx: args.tx,
   });
+
+  // Per-note late-entry audit row (spec § Audit additions). PHI-free —
+  // dateOfService + day-gap only; no clinical content.
+  if (isLateEntry) {
+    await writeAuditLog({
+      userId: args.actingUserId,
+      orgId: args.orgId,
+      action: 'NOTE_LATE_ENTRY_CREATED',
+      resourceType: 'Note',
+      resourceId: note.id,
+      metadata: {
+        dateOfService: dateOfService.toISOString(),
+        lateEntryDaysGap,
+      },
+      tx: args.tx,
+    });
+  }
 
   return { encounter, note };
 }

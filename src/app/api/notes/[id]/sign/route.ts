@@ -239,6 +239,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       sectionCount: sections.length,
       signedAt: now.toISOString(),
       sweepAcknowledged: !!parsed.data.sweepAcknowledged,
+      // Late-entry charting (spec: context/specs/late-entry-charting.md).
+      // Extending existing metadata — no new audit action. A reviewer can
+      // prove the late-entry attestation copy switch fired without joining
+      // tables.
+      isLateEntry: note.isLateEntry,
+      lateEntryDaysGap: note.lateEntryDaysGap,
+      dateOfService: note.dateOfService.toISOString(),
     },
   });
 

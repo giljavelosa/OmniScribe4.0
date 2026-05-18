@@ -26,6 +26,8 @@ type Props = {
   noteId: string;
   patientHeader: ReactNode;
   stubBanner: ReactNode;
+  /** Late-entry charting (spec: context/specs/late-entry-charting.md). */
+  lateEntryBanner?: ReactNode;
   brief: PriorContextBriefContent | null;
   initialOpenFollowUps: LiveFollowUp[];
   patientDisplayName: string;
@@ -47,6 +49,7 @@ export function MobileCaptureLayout({
   noteId,
   patientHeader,
   stubBanner,
+  lateEntryBanner,
   brief,
   initialOpenFollowUps,
   patientDisplayName,
@@ -86,6 +89,7 @@ export function MobileCaptureLayout({
         </div>
       </header>
 
+      {lateEntryBanner ? <div className="px-4 pt-2">{lateEntryBanner}</div> : null}
       {stubBanner}
 
       <Tabs value={active} onValueChange={onTabChange} className="flex-1 flex flex-col min-h-0">

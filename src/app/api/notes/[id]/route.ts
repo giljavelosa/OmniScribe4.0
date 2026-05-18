@@ -105,6 +105,14 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       updatedAt: note.updatedAt,
       signedAt: note.signedAt,
       signedByUserId: note.signedByUserId,
+      // Late-entry charting (spec: context/specs/late-entry-charting.md).
+      // dateOfService is the day care was delivered; isLateEntry flips when
+      // it's at least one full day before encounter.startedAt; days gap is
+      // stamped at note creation so /review and /sign can render the badge
+      // without re-deriving on every request.
+      dateOfService: note.dateOfService,
+      isLateEntry: note.isLateEntry,
+      lateEntryDaysGap: note.lateEntryDaysGap,
       template: note.template,
       patient: note.patient,
       encounter: note.encounter,

@@ -947,6 +947,17 @@ model Note {
   backfilledAt   DateTime?
   backfillReason String?
 
+  /// Late-entry charting (spec: context/specs/late-entry-charting.md).
+  /// dateOfService = the day the underlying care happened (== encounter.startedAt
+  /// for a normal same-day visit, backdated for a late entry). signedAt remains
+  /// the ACTUAL sign date and is never backdated. isLateEntry is set true when
+  /// the clinician documents a past event (>=1 day gap); lateEntryDaysGap is
+  /// stamped at note-creation time so the "LATE ENTRY · Nd" badge doesn't
+  /// re-derive on every render.
+  dateOfService    DateTime @default(now())
+  isLateEntry      Boolean  @default(false)
+  lateEntryDaysGap Int?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

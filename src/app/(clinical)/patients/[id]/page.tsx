@@ -70,6 +70,12 @@ export default async function PatientDetailPage({
         division: true,
         finalJson: true,
         template: { select: { name: true } },
+        // Late-entry charting (spec: context/specs/late-entry-charting.md).
+        // Powers the "LATE ENTRY · Nd" chip on the visit-history list — the
+        // gap is stamped at note creation so we don't recompute on render.
+        isLateEntry: true,
+        lateEntryDaysGap: true,
+        dateOfService: true,
       },
     }),
     prisma.externalContext.findMany({
@@ -102,6 +108,9 @@ export default async function PatientDetailPage({
     assessmentSnippet: deriveAssessmentSnippet(
       (n.finalJson as unknown as FinalJsonShape) ?? null,
     ),
+    isLateEntry: n.isLateEntry,
+    lateEntryDaysGap: n.lateEntryDaysGap,
+    dateOfService: n.dateOfService.toISOString(),
   }));
 
   const externalContextItems: ExternalContextSummary[] = externalContexts.map((r) => ({
