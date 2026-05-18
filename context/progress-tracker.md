@@ -4,11 +4,11 @@
 
 ## Current Phase
 
-- **Wave 4 COMPLETE — Unit 24 shipped.** PR #25 (branch `feat/unit-24-fhir-multi-ehr-adapter`, stacked on `feat/unit-23-fhir-provenance-ui`). Ships the multi-EHR adapter SEAM — vendor registry (NextGen Active, Epic + Cerner Planned), vendor-aware Patient adapter for MRN identifier extraction, additive OrgEhrConnection schema for future per-org credential management, and a Supported EHRs reference panel on the admin integrations surface. **No new active EHR wiring** — per the reference spec's deferral clause, Epic + Cerner credentials land per-customer. The 6 F-phases (Units 19–24) of read-only EHR integration are now feature-complete.
+- **Wave 5 opener — Unit 25 shipped.** PR #26 (branch `feat/unit-25-watch-fhir-cards`, stacked on `feat/unit-24-fhir-multi-ehr-adapter`). Watch v1 lights up 4 FHIR-backed cards (active conditions, current medications, recent observations, allergies) on /prepare + /capture's PriorContextPanel. Each row carries Unit 23's EhrSourcePill so the clinician can verify provenance with one tap. Renders nothing for patients without a verified PatientFhirIdentity (Rule 20). Read-only — Watch v2 (live-transcript triggers) is Unit 26.
 
 ## Current Goal
 
-- Wave 4 closed. Await user confirmation on what's next. The build plan's remaining anchors are Waves 5 (copilot maturity) and 6 (platform polish); Wave 3.5 polish (Daily SDK, TitaNet voice-ID, schedule-list telehealth CTA) and Wave 4.5 polish (background staleness sweeper, CarePlan + Goal adapters, per-org EHR onboarding) are non-blocking and can land in priority order.
+- Await user confirmation before starting Unit 26 — Wave 5 Watch v2 (live-transcript triggers). Copilot listens to live transcript via subscription; surfaces relevant prior-context card when topic matches; card raised, not pre-rendered. Builds on Unit 25's card set. Per Prompt B's stop-between-units contract.
 
 ## Completed
 
@@ -339,6 +339,19 @@
   - `/admin/integrations/fhir` gains the Supported EHRs reference panel — reads from EHR_VENDORS, shows status chip + enablementNote + mrnIdentifierSystem per vendor. Read-only; the "Add Epic connection" CTA lands when the per-org config flow does (future unit).
   - 218 tests pass (was 205); build/lint/typecheck clean. 13 new tests for vendor registry + extractMrn three-tier strategy + adaptResourceWithVendor Patient + non-Patient pass-through.
 
+- **2026-05-17 — Unit 25: Watch v1 — FHIR-backed cards (Wave 5 opener)** (PR #26 — `feat(unit-25): watch v1 fhir cards`).
+  - Spec at `context/specs/25-watch-fhir-cards.md`. First unit of Wave 5 (copilot maturity).
+  - 4 new card components in `src/components/copilot/cards/`: `ActiveConditionsCard` (cap 8 to match brief), `CurrentMedicationsCard` (pools MedicationStatement + MedicationRequest with 'reported' vs 'prescribed' badge), `RecentObservationsCard` (10 most recent), `AllergiesCard` (high-criticality rows surfaced with red ShieldAlert).
+  - `FhirCardShell` — shared 'use client' envelope (Card + CardHeader + audit-fire useEffect with auditedRef guard). Keeps the 4 cards from duplicating boilerplate.
+  - `FhirWatchCards` bundle — wraps the 4 cards in a 2-column grid; renders nothing on null context (Rule 20). Single import for surface mounting.
+  - Audit: `/api/audit/copilot-event` cardType enum extended with `'active-conditions' | 'current-medications' | 'recent-observations' | 'allergies'`. Same `COPILOT_CARD_RENDERED` action; one fire per card per page load.
+  - Wired into surfaces:
+    - `/prepare/[noteId]/page.tsx` — `loadExternalEhrContext` call + bundle below the Watch v0 grid.
+    - `/capture/[noteId]/page.tsx` + DesktopCaptureLayout + MobileCaptureLayout — same load + bundle threads through props (added `fhirContext: ExternalEhrContext | null` to both layouts). Desktop: right aside above LiveNotePanel. Mobile: 'history' tab below the existing PlanForTodayCard.
+  - Reuses Unit 23's `EhrSourcePill` per row — clicking opens `ProvenanceDrawer` (already audits FHIR_RESOURCE_VIEWED). No new provenance UI.
+  - Reuses Unit 22's `loadExternalEhrContext` projection (no new helper, no new tests for the projection itself).
+  - 218 tests pass; build/lint/typecheck clean. No new tests — projection + adapter coverage from Units 21–24 cascade through; the card components are render-only over the projected shape.
+
 ## In Progress
 
 None.
@@ -347,7 +360,7 @@ None.
 
 In priority order:
 
-1. **Wave 5 opener — Copilot maturity** ([`context/specs/00-build-plan.md`](specs/00-build-plan.md) Wave 5). The copilot's beacon + Watch v0 surfaces shipped in Unit 07; Wave 5 grows them into a stronger in-visit assistant (richer Watch cards leveraging the FHIR cache, proactive ambient prompts during capture, post-sign reflection). Spec-on-start; current build plan has Wave 5 unit definitions to land at start time.
+1. **Unit 26 — Wave 5 Watch v2: live-transcript triggers** ([`context/specs/00-build-plan.md`](specs/00-build-plan.md) Wave 5). Copilot subscribes to live transcript during /capture; when topic match detected (medication mention, condition reference, lab value cited) surface the relevant Unit 25 card as a transient "now relevant" pulse. Cards stay pre-rendered (Unit 25 work); the trigger raises visibility, not data.
 
 Deferred polish (non-blocking; land in priority order):
 - Wave 3.5 — Daily SDK swap for patient audio track; TitaNet voice-ID on post-call review; schedule-list "Start telehealth" CTA.
@@ -544,6 +557,16 @@ These need user/PM decision before the depending unit can ship. Quote the source
 - **2026-05-17 — Copy-to-clipboard fires SECTION_COPIED_TO_CLIPBOARD via the copilot-event endpoint with itemCount = char count.** PHI-free at the audit layer (content never leaves the client beyond the clipboard write). The cap raise (1000 → 100_000) accommodates real section sizes; the prior cap was sized for "items in a list" not "characters in a section."
 - **2026-05-17 — Accordion animation polish ships data-state + transition-duration classes only — no CSS keyframes.** The simplest cross-browser solution that works inside Tailwind v4 without custom @keyframes. Future polish (CSS-only height animation for collapse/expand) can hook the data-state attribute when the design asks for it.
 - **2026-05-17 — Wave 2 COMPLETE.** Units 10–14 close the clinical-surface trust gaps. /review now has: SSE reconnect indicator (10), section regenerate with diff (10), failure-recovery banner (10), per-section observability (10), inline goal progression on the patient panel (11), snapshot strip + override-wins on /patients/[id] (12), templates authoring with version history (13), and AI compliance flags with severity-grouped review (14). The clinical surfaces are no longer "works" — they're "trusted daily."
+
+### Unit 25 (2026-05-17)
+
+- **2026-05-17 — Cards consume the existing `loadExternalEhrContext` projection (Unit 22); no new Watch-specific helper.** The projection's shape (active conditions / current meds / allergies / recent observations + procedures + reports) already covers the card set. Forking a Watch-specific helper would duplicate the staleness + status-filter rules; instead the cards consume what the brief generator consumes — same source of truth, same Rule 20 enforcement.
+- **2026-05-17 — Each card is `'use client'` for the audit hook, but parent fetches data server-side.** Mirrors Unit 07's OpenFollowUpsCard / PlanForTodayCard pattern. The audit fires once per mount via `auditedRef` (no infinite loops); data fetching stays in the server component so SSR is fast + the cards never make redundant API calls.
+- **2026-05-17 — `FhirCardShell` shared envelope, not 4 forked card files.** Audit hook + Card / CardHeader / CardContent are identical across the 4 cards. Extracting the envelope cuts ~30 LOC per card + makes adding a 5th (vitals split, CarePlan card) a single render-function change.
+- **2026-05-17 — Single Observations card instead of separate labs + vitals cards (build plan called for both).** Splitting requires LOINC classification which varies by vendor (NextGen's vitals codes ≠ Epic's). Better to ship one card v1 + add the split when there's a real cross-vendor dataset to validate against. The build plan's "labs card + vitals card" is now Wave 5.5 polish.
+- **2026-05-17 — `FhirWatchCards` bundle renders nothing on null context.** Cleaner than per-card "empty state" surfacing 4 "no EHR connection" messages stacked on every page. The EhrLinkPanel on /patients/[id] already owns the "connect to EHR" messaging; Watch cards stay silent when not applicable.
+- **2026-05-17 — High-criticality allergies render with `ShieldAlert` icon + red badge.** Most clinically-load-bearing distinction in the card set. A clinician scanning the allergies card in 1-2 seconds should catch "Penicillin: high" without reading the criticality text. Routine allergies render with the plain `AlertTriangle` icon so the visual hierarchy works at a glance.
+- **2026-05-17 — `MedicationStatement` vs `MedicationRequest` distinguished by a "reported / prescribed" badge.** Clinicians care about the distinction (a MedicationStatement is what the patient reports taking; a MedicationRequest is what the clinic prescribed). Combining them into one list is the right UX (it's "the active med list") but losing the source classification would obscure the data quality difference. The badge keeps the merge clean while preserving the provenance.
 
 ### Unit 24 (2026-05-17)
 
