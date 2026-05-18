@@ -250,9 +250,13 @@ function EpisodeRadio({
           <StatusBadge variant="neutral" noIcon>
             {visitCountLabel(episode.visitCount)}
           </StatusBadge>
-          <span className="text-muted-foreground">
-            {lastVisitLabel(episode.lastVisitAt)}
-          </span>
+          {/* Skip the redundant "no prior visits" span when the badge already
+              says it (visitCount === 0 + no lastVisitAt). */}
+          {episode.lastVisitAt && (
+            <span className="text-muted-foreground">
+              {lastVisitLabel(episode.lastVisitAt)}
+            </span>
+          )}
         </div>
       </div>
     </label>
