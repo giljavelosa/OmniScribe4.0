@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  ci:
+    name: lint + typecheck + test + build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect Node project
+        id: pkg
+        run: |
+          if [ -f package.json ] && [ -f package-lock.json ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No package.json or package-lock.json on this ref — CI pipeline is a no-op (the planning-kit baseline has no Node code yet)."
+          fi
+
+      - name: Setup Node
+        if: steps.pkg.outputs.exists == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        if: steps.pkg.outputs.exists == 'true'
+        run: npm ci
+
+      - name: Generate Prisma client
+        if: steps.pkg.outputs.exists == 'true'
+        run: |
+          if [ -f prisma/schema.prisma ]; then
+            npx prisma generate --no-hints
+          else
+            echo "::notice::No prisma/schema.prisma yet — skipping prisma generate."
+          fi
+
+      - name: Lint
+        if: steps.pkg.outputs.exists == 'true'
+        run: npm run lint
+
+      - name: Typecheck
+        if: steps.pkg.outputs.exists == 'true'
+        run: npm run typecheck
+
+      - name: Test
+        if: steps.pkg.outputs.exists == 'true'
+        run: npm run test
+
+      - name: Build
+        if: steps.pkg.outputs.exists == 'true'
+        env:
+          DATABASE_URL: "postgresql://placeholder:placeholder@localhost:5432/placeholder?schema=public"
+          REDIS_URL: "redis://localhost:6379"
+          NEXTAUTH_SECRET: "ci-placeholder-secret-not-used-at-runtime-32chars"
+          NEXTAUTH_URL: "http://localhost:3000"
+          RESEND_API_KEY: ""
+          RESEND_FROM: "OmniScribe <ci@example.com>"
+        run: npm run build
