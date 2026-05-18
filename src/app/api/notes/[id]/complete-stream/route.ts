@@ -4,7 +4,9 @@ import { prisma } from '@/lib/prisma';
 import { requireFeatureAccess } from '@/lib/authz/server';
 import { writeAuditLog } from '@/lib/audit/log';
 import { audioKeyFor, putAudio } from '@/lib/s3/client';
+import { enqueueTranscriptionJob } from '@/lib/queue';
 import { NoteStatus } from '@prisma/client';
+import { randomBytes } from 'node:crypto';
 
 export const runtime = 'nodejs';
 
@@ -121,6 +123,24 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       byteSize: bytes.byteLength,
       captureMode: note.captureMode,
     },
+  });
+
+  // Unit 04 hand-off: the transcription worker picks up TRANSCRIBING notes
+  // and cleans transcriptRaw → transcriptClean, then enqueues ai-generation.
+  const requestId = randomBytes(8).toString('hex');
+  await enqueueTranscriptionJob({
+    noteId,
+    orgId: orgUser.orgId,
+    type: 'finalize-realtime-transcript',
+    requestId,
+  });
+  await writeAuditLog({
+    userId: user.id,
+    orgId: orgUser.orgId,
+    action: 'TRANSCRIPTION_JOB_ENQUEUED',
+    resourceType: 'Note',
+    resourceId: noteId,
+    metadata: { type: 'finalize-realtime-transcript', requestId },
   });
 
   return NextResponse.json({ data: { ok: true, segmentId, durationMs } });

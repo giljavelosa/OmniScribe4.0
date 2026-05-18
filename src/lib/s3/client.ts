@@ -13,7 +13,7 @@
 
 import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 
@@ -71,6 +71,30 @@ export async function getPresignedAudioUrl(key: string, ttlSeconds = 300) {
     new GetObjectCommand({ Bucket: BUCKET, Key: key }),
     { expiresIn: ttlSeconds },
   );
+}
+
+/**
+ * Fetch audio bytes by S3 key. Used by the transcription worker for UPLOADED
+ * captures (the audio sits in S3; we pull it down to feed Soniox batch).
+ *
+ * For LIVE captures the worker doesn't need to re-download — the realtime
+ * path already has Note.transcriptRaw populated; the audio in S3 is for
+ * long-term storage + voice-id windowing.
+ */
+export async function getAudioBytes(key: string): Promise<Buffer> {
+  const client = getClient();
+  if (!client) {
+    const full = path.join(LOCAL_STUB_ROOT, key);
+    return readFile(full);
+  }
+  const res = await client.send(new GetObjectCommand({ Bucket: BUCKET, Key: key }));
+  const body = res.Body;
+  if (!body) throw new Error(`S3 GetObject returned no body for key ${key}`);
+  // AWS SDK v3 Body is a stream — readable stream or web stream depending on runtime.
+  const reader = (body as unknown as { transformToByteArray: () => Promise<Uint8Array> }).transformToByteArray;
+  if (typeof reader !== 'function') throw new Error('S3 Body missing transformToByteArray');
+  const bytes = await (body as unknown as { transformToByteArray: () => Promise<Uint8Array> }).transformToByteArray();
+  return Buffer.from(bytes);
 }
 
 export function audioKeyFor(noteId: string, segmentId: string) {

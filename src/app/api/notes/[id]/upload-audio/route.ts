@@ -4,7 +4,9 @@ import { prisma } from '@/lib/prisma';
 import { requireFeatureAccess } from '@/lib/authz/server';
 import { writeAuditLog } from '@/lib/audit/log';
 import { audioKeyFor, putAudio } from '@/lib/s3/client';
+import { enqueueTranscriptionJob } from '@/lib/queue';
 import { NoteStatus, CaptureMode } from '@prisma/client';
+import { randomBytes } from 'node:crypto';
 
 export const runtime = 'nodejs';
 
@@ -82,6 +84,24 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     resourceType: 'Note',
     resourceId: noteId,
     metadata: { byteSize: bytes.byteLength, mime },
+  });
+
+  // Unit 04 hand-off: the transcription worker pulls audio from S3 and
+  // calls Soniox batch.
+  const requestId = randomBytes(8).toString('hex');
+  await enqueueTranscriptionJob({
+    noteId,
+    orgId: orgUser.orgId,
+    type: 'transcribe-uploaded-audio',
+    requestId,
+  });
+  await writeAuditLog({
+    userId: user.id,
+    orgId: orgUser.orgId,
+    action: 'TRANSCRIPTION_JOB_ENQUEUED',
+    resourceType: 'Note',
+    resourceId: noteId,
+    metadata: { type: 'transcribe-uploaded-audio', requestId },
   });
 
   return NextResponse.json({ data: { ok: true, segmentId } });

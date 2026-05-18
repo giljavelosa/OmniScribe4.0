@@ -420,14 +420,22 @@ enum NoteSensitivityLevel {
 }
 
 // NoteStatus — APPEND-ONLY per anti-regression rule 2.
-// Unit 02 shipped PREPARING; Unit 03 appends RECORDING + PAUSED + TRANSCRIBING.
-// Unit 04/05 will append DRAFTING / DRAFT / REVIEWING / SIGNED / TRANSFERRED /
-// INTERRUPTED / PENDING_REVIEW.
+// Unit 02 shipped PREPARING; Unit 03 appended RECORDING/PAUSED/TRANSCRIBING.
+// Unit 04 appends DRAFTING + INTERRUPTED (worker-failure terminal state with
+// retry-restore semantics). Unit 05 will append DRAFT / REVIEWING / SIGNED /
+// TRANSFERRED / PENDING_REVIEW.
+//
+// Canonical transition graph (spec §G):
+//   PREPARING → RECORDING → (PAUSED ↔ RECORDING) → TRANSCRIBING → DRAFTING
+//                                                       ↓
+//                                                   INTERRUPTED (recoverable; retry restores)
 enum NoteStatus {
   PREPARING
   RECORDING
   PAUSED
   TRANSCRIBING
+  DRAFTING
+  INTERRUPTED
 }
 
 // CaptureMode — how the audio/transcript got into the system.
@@ -719,8 +727,16 @@ model Note {
   // Unit 03 — capture-mode metadata + transcript pre-AI-generation.
   captureMode     CaptureMode @default(LIVE)
   audioFileKey    String?     // S3 key for the consolidated audio blob (rule 7: never hard-deleted)
-  transcriptRaw   Json?       // raw Soniox payload (final transcript + speaker tags)
-  transcriptClean Json?       // post-processed transcript (Unit 04 cleans LIVE; Unit 03 writes PASTED directly)
+  transcriptRaw   Json?       // raw Soniox payload (final transcript + speaker tags) — Unit 04 cleans this into transcriptClean
+  transcriptClean Json?       // post-processed transcript (Unit 04 cleans LIVE/UPLOADED; Unit 03 writes PASTED directly)
+
+  // Unit 04 — worker pipeline metadata.
+  // inferenceLog tracks per-section AI generation state (Unit 05 writes
+  // _sectionStatus), worker retry counts, and recent transitions. PHI-free
+  // shape; never embed transcript content or patient identifiers in here.
+  inferenceLog    Json?
+  interruptedAt   DateTime?   // set when a worker hits its retry limit
+  lastWorkerError String?     // class + message of the last fatal failure (PHI-free)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
