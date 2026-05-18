@@ -24,7 +24,9 @@ export function UploadAudioForm({ noteId, disabled }: { noteId: string; disabled
         setError(body?.error?.message ?? `Upload failed (${res.status}).`);
         return;
       }
-      router.refresh();
+      // Route to /processing — the transcription worker (Unit 04) picks up
+      // the upload + Soniox batch transcribes + ai-generation drafts.
+      router.push(`/processing/${noteId}`);
     });
   }
 

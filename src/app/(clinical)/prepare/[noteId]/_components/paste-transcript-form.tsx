@@ -26,7 +26,9 @@ export function PasteTranscriptForm({ noteId, disabled }: { noteId: string; disa
         setError(body?.error?.message ?? `Paste failed (${res.status}).`);
         return;
       }
-      router.refresh();
+      // Route to /processing — the transcription worker (Unit 04) + ai-
+      // generation worker (Unit 05) take over from here.
+      router.push(`/processing/${noteId}`);
     });
   }
 
