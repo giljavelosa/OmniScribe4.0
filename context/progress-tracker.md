@@ -4,11 +4,11 @@
 
 ## Current Phase
 
-- **Wave 5 opener — Unit 25 shipped.** PR #26 (branch `feat/unit-25-watch-fhir-cards`, stacked on `feat/unit-24-fhir-multi-ehr-adapter`). Watch v1 lights up 4 FHIR-backed cards (active conditions, current medications, recent observations, allergies) on /prepare + /capture's PriorContextPanel. Each row carries Unit 23's EhrSourcePill so the clinician can verify provenance with one tap. Renders nothing for patients without a verified PatientFhirIdentity (Rule 20). Read-only — Watch v2 (live-transcript triggers) is Unit 26.
+- **Wave 5 Watch v2 shipped — Unit 26.** PR #27 (branch `feat/unit-26-watch-live-triggers`, stacked on `feat/unit-25-watch-fhir-cards`). The Unit 25 FHIR Watch cards now REACT to live transcript on /capture — when a clinician says "metformin" or "diabetes", the matching card raises (left-border accent + "Mentioned just now" subhead). Pure substring/token matcher, no LLM. Sticky-per-session raise state; one COPILOT_CARD_RAISED audit per cardType per session. /prepare stays on the static bundle (no streaming transcript there).
 
 ## Current Goal
 
-- Await user confirmation before starting Unit 26 — Wave 5 Watch v2 (live-transcript triggers). Copilot listens to live transcript via subscription; surfaces relevant prior-context card when topic matches; card raised, not pre-rendered. Builds on Unit 25's card set. Per Prompt B's stop-between-units contract.
+- Await user confirmation before starting Unit 27 — Wave 5 Ask mode v1. CopilotShell's placeholder Sheet graduates to a multi-turn agent loop with tool calls; tools = `lookupSignedNote`, `lookupFollowUp`, `lookupEpisodeGoals`, `lookupPatientDemographics`; mandatory source pills; chat history per-session. Per Prompt B's stop-between-units contract.
 
 ## Completed
 
@@ -352,6 +352,17 @@
   - Reuses Unit 22's `loadExternalEhrContext` projection (no new helper, no new tests for the projection itself).
   - 218 tests pass; build/lint/typecheck clean. No new tests — projection + adapter coverage from Units 21–24 cascade through; the card components are render-only over the projected shape.
 
+- **2026-05-17 — Unit 26: Watch v2 — live-transcript triggers** (PR #27 — `feat(unit-26): watch v2 live triggers`).
+  - Spec at `context/specs/26-watch-live-triggers.md`. Wave 5 Watch v2.
+  - 1 new audit action: `COPILOT_CARD_RAISED` (in the AuditAction union + the /api/audit/copilot-event allowlist). Fires ONCE per cardType per capture session.
+  - `src/lib/copilot/topic-match.ts` — pure matcher with `tokenize` + `buildIndex` + `matchTranscript`. Stopword set + digit-token carve-out (a1c, b12, sa02 accepted at len ≥ 3; pure-alpha tokens require len ≥ 4). Word-boundary regex prevents 'art' matching inside 'heart' while still catching simple suffix expansion. 16 vitest cases.
+  - `FhirCardShell` extended with optional `raisedCount` + a "Mentioned just now" subhead + left-border accent + `data-raised="true"` attribute. Default `raisedCount=0` keeps the Unit 25 static visual.
+  - Each of the 4 cards accepts `raisedFhirIds?: Set<string>` + uses shared `countRaisedRows` + `RAISED_ROW_CLASSES` helpers to flag rows.
+  - `FhirWatchCards` bundle extended with `raised?: RaisedFhirIdMap` — passes through to cards; layout unchanged.
+  - `FhirWatchCardsLive` — NEW client wrapper. Subscribes to `useTranscript()` from CaptureStateProvider; runs `matchTranscript` against an index built once per context; merges newly-matched IDs into accumulated raised state (sticky per session). Identity-preserving merge so React's shallow compare doesn't force pointless re-renders. Audit fires per category via `auditedRef` guard.
+  - Capture layouts (Desktop + Mobile) swap `FhirWatchCards` → `FhirWatchCardsLive`. /prepare stays on the static bundle (no streaming transcript; CaptureStateProvider isn't above it).
+  - 234 tests pass (was 218); build/lint/typecheck clean.
+
 ## In Progress
 
 None.
@@ -360,7 +371,7 @@ None.
 
 In priority order:
 
-1. **Unit 26 — Wave 5 Watch v2: live-transcript triggers** ([`context/specs/00-build-plan.md`](specs/00-build-plan.md) Wave 5). Copilot subscribes to live transcript during /capture; when topic match detected (medication mention, condition reference, lab value cited) surface the relevant Unit 25 card as a transient "now relevant" pulse. Cards stay pre-rendered (Unit 25 work); the trigger raises visibility, not data.
+1. **Unit 27 — Wave 5 Ask mode v1: agent loop** ([`context/specs/00-build-plan.md`](specs/00-build-plan.md) Wave 5). CopilotShell's placeholder Sheet graduates to a multi-turn agent loop with tool calls. Tools = `lookupSignedNote`, `lookupFollowUp`, `lookupEpisodeGoals`, `lookupPatientDemographics`. Mandatory source pills on every answer. Chat history per-session.
 
 Deferred polish (non-blocking; land in priority order):
 - Wave 3.5 — Daily SDK swap for patient audio track; TitaNet voice-ID on post-call review; schedule-list "Start telehealth" CTA.
@@ -557,6 +568,15 @@ These need user/PM decision before the depending unit can ship. Quote the source
 - **2026-05-17 — Copy-to-clipboard fires SECTION_COPIED_TO_CLIPBOARD via the copilot-event endpoint with itemCount = char count.** PHI-free at the audit layer (content never leaves the client beyond the clipboard write). The cap raise (1000 → 100_000) accommodates real section sizes; the prior cap was sized for "items in a list" not "characters in a section."
 - **2026-05-17 — Accordion animation polish ships data-state + transition-duration classes only — no CSS keyframes.** The simplest cross-browser solution that works inside Tailwind v4 without custom @keyframes. Future polish (CSS-only height animation for collapse/expand) can hook the data-state attribute when the design asks for it.
 - **2026-05-17 — Wave 2 COMPLETE.** Units 10–14 close the clinical-surface trust gaps. /review now has: SSE reconnect indicator (10), section regenerate with diff (10), failure-recovery banner (10), per-section observability (10), inline goal progression on the patient panel (11), snapshot strip + override-wins on /patients/[id] (12), templates authoring with version history (13), and AI compliance flags with severity-grouped review (14). The clinical surfaces are no longer "works" — they're "trusted daily."
+
+### Unit 26 (2026-05-17)
+
+- **2026-05-17 — Pure substring matcher, no LLM.** False-positive rate acceptable because the raise is non-destructive (highlight only; never dismisses or inserts content). LLM-based topic inference deferred to Ask-mode work (Wave 5+); pulling Bedrock into a per-transcript-chunk hot path would burn tokens for a low-stakes UX cue.
+- **2026-05-17 — Digit-token carve-out at length ≥ 3.** Medical abbreviations like 'a1c', 'b12', 'sa02', 'tsh' are short but highly specific; relaxing the alpha-only length filter only for digit-containing tokens lets them match without flooding short-alpha noise ('the', 'and') into the index.
+- **2026-05-17 — Sticky raise per session — no "un-raise" timer.** Toggling raised off after N seconds is jittery and the clinician may glance back to a card they noticed earlier. Spec locked the sticky semantics; the visual remains subtle (no animation, no auto-scroll) so the un-stickiness wouldn't read as bad behavior anyway.
+- **2026-05-17 — Per-cardType audit, NOT per-row.** A 30-min visit with active transcript could trigger dozens of row-level raises; per-row audit would flood the log. Per-cardType answers the auditor's actual question ("did the copilot raise the medications card during this visit?") with bounded volume (4 max per session).
+- **2026-05-17 — Identity-preserving merge in setRaised.** When `matchTranscript` returns an empty set for a category OR all matched IDs are already in the prev set, we return the prev Set reference unchanged. Without this, every transcript chunk would allocate new Set instances, defeating React's shallow compare on the cards' `raisedFhirIds` prop. The matcher runs on every Soniox chunk; this matters.
+- **2026-05-17 — /prepare stays on the static FhirWatchCards bundle.** /prepare has no streaming transcript + no CaptureStateProvider above it. Mounting FhirWatchCardsLive there would crash on `useTranscript()`. Cleaner to fork the import on capture-only than to make useTranscript optionally-no-op (which would hide the contract).
 
 ### Unit 25 (2026-05-17)
 

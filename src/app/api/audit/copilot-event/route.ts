@@ -36,6 +36,10 @@ const ALLOWED_ACTIONS: ReadonlyArray<AuditAction> = [
   // resourceType still resolves as Note in the audit row (acceptable
   // join compromise — the scheduleId is the natural anchor anyway).
   'TELEHEALTH_PRECALL_CHECK_FAILED',
+  // Unit 26 — Watch v2 live trigger. Fired once per cardType per capture
+  // session when a transcript mention raises rows in the card. itemCount
+  // carries the count of rows raised in that card at first-fire moment.
+  'COPILOT_CARD_RAISED',
 ];
 
 const bodySchema = z.object({
