@@ -94,6 +94,7 @@ model Organization {
   noteTemplates      NoteTemplate[]
   noteBriefs         NoteBrief[]
   followUps          FollowUp[]
+  telehealthSessions TelehealthSession[]
 
   @@index([baaExecutedAt])
 }
@@ -501,6 +502,7 @@ model Patient {
   briefs                   NoteBrief[]
   followUps                FollowUp[]
   snapshotOverrides        SnapshotOverride[]
+  telehealthSessions       TelehealthSession[]
 
   @@unique([orgId, mrn])
   @@index([orgId, lastName, firstName])
@@ -650,6 +652,8 @@ model Schedule {
   createdAt          DateTime       @default(now())
 
   encounter Encounter?
+  /** Unit 15 — 1:1 telehealth session when visitType=TELEHEALTH. */
+  telehealthSession TelehealthSession?
 
   @@index([clinicianOrgUserId, scheduledStart])
   @@index([orgId, scheduledStart])
@@ -1083,4 +1087,68 @@ model ReviewFlag {
   @@index([noteId, status])
   @@index([noteId, sectionId])
   @@index([orgId, createdAt])
+}
+
+// =============================================================================
+// Unit 15 — Telehealth session lifecycle.
+//
+// 1:1 with a Schedule when visitType=TELEHEALTH. Tracks the magic-link
+// auth state, patient consent capture, Daily.co room metadata, and the
+// session's overall state machine (SCHEDULED → VERIFIED → CONSENT_CAPTURED
+// → ACTIVE → COMPLETED). EXPIRED + CANCELLED are off-happy-path terminal
+// states.
+//
+// Magic-link semantics (spec §A):
+//   - 22-char base64url token (~131 bits of entropy)
+//   - Expires at min(issuedAt + 24h, scheduledEnd + 2h)
+//   - Single-use: verifiedAt set on first successful DOB match; subsequent
+//     verifies return generic "invalid link" (anti-enumeration)
+//
+// Video is NOT an artifact of record. roomUrl + roomName are operational
+// metadata for the Daily.co room — they don't reference any recorded asset.
+// =============================================================================
+
+enum TelehealthSessionStatus {
+  SCHEDULED
+  VERIFIED
+  CONSENT_CAPTURED
+  ACTIVE
+  COMPLETED
+  CANCELLED
+  EXPIRED
+}
+
+model TelehealthSession {
+  id             String                  @id @default(cuid())
+  orgId          String
+  organization   Organization            @relation(fields: [orgId], references: [id])
+  scheduleId     String                  @unique
+  schedule       Schedule                @relation(fields: [scheduleId], references: [id])
+  patientId      String
+  patient        Patient                 @relation(fields: [patientId], references: [id])
+  /** Magic-link token, 22-char URL-safe base64. */
+  magicToken     String                  @unique
+  /** Token expires at min(issuedAt + 24h, scheduledEnd + 2h). */
+  magicExpiresAt DateTime
+  /** Set on first successful DOB verify. Single-use. */
+  verifiedAt     DateTime?
+  /** Set when the patient submits consent. consentVersion captures which
+   *  version of the consent text was accepted (Wave 3 polish: the text
+   *  lives in a future ConsentTemplate; for v1 it's a free-form string). */
+  consentAt      DateTime?
+  consentVersion String?
+  /** Daily.co room metadata (or stub equivalents when DAILY_API_KEY unset). */
+  roomUrl        String?
+  roomName       String?
+  roomExpiresAt  DateTime?
+  status         TelehealthSessionStatus @default(SCHEDULED)
+  startedAt      DateTime?
+  endedAt        DateTime?
+  endedReason    String?
+  createdByOrgUserId String?
+  createdAt      DateTime                @default(now())
+  updatedAt      DateTime                @updatedAt
+
+  @@index([orgId, status])
+  @@index([magicExpiresAt])
 }

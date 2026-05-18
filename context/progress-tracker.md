@@ -4,11 +4,11 @@
 
 ## Current Phase
 
-- **Wave 2 — COMPLETE.** Unit 14 shipped (PR #15 — branch `feat/unit-14-review-polish`). Unit 13 shipped (PR #14). Unit 12 shipped (PR #13). Unit 11 shipped (PR #12). Unit 10 shipped (PR #11). Wave 1 complete (PRs #6–#10). Wave 0 complete (PRs #1–#5). Wave 2 (Units 10–14) brings the clinical surfaces from "works" to "trusted daily": regenerate-flow trust gaps closed; Episode-of-Care lifecycle in; /patients/[id] redesigned with snapshot strip; templates authoring with version history; /review compliance-flag system (RED/BLUE/YELLOW/GREEN taxonomy) + per-section copy-to-clipboard for EHR-paste workflows.
+- **Wave 3 opener — Unit 15 shipped.** PR #16 (branch `feat/unit-15-telehealth-infra`). Wave 2 closed at PR #15. Unit 15 lands the telehealth session lifecycle (TelehealthSession model + magic-link auth + Daily.co stub-mode + admin create/start/end APIs + patient verify/consent/status APIs + patient UI surfaces /v/[token] and /telehealth/waiting/[scheduleId]) — the foundation Units 16+17 build on. Video is NOT an artifact of record; the note is. The session row tracks lifecycle + audit, not the call recording.
 
 ## Current Goal
 
-- Await user confirmation before starting Unit 15 — Encounter copilot Watch v1 + first FHIR-backed card (Wave 3 opener), per Prompt B's stop-between-units contract.
+- Await user confirmation before starting Unit 16 — telehealth session orchestration on the clinician side (scheduling integration, "start telehealth" button on /patients + the schedule screen, ops-side session list / monitoring), per Prompt B's stop-between-units contract.
 
 ## Completed
 
@@ -189,6 +189,17 @@
   - copilot-event endpoint extended: SECTION_COPIED_TO_CLIPBOARD added to allowlist; itemCount cap raised from 1000 to 100_000 to accommodate section character counts.
   - 113 tests pass; build clean; 3 new flag routes + analyzer worker dispatch ship.
 
+- **2026-05-17 — Unit 15: Telehealth infrastructure + patient auth** (PR #16 — `feat(unit-15): telehealth infra + patient auth`).
+  - Spec at `context/specs/15-telehealth-infra-patient-auth.md`. Wave 3 opener.
+  - 8 new AuditAction values: TELEHEALTH_SESSION_CREATED, TELEHEALTH_MAGIC_LINK_FAILED, TELEHEALTH_PATIENT_VERIFIED, TELEHEALTH_CONSENT_CAPTURED, TELEHEALTH_SESSION_STARTED, TELEHEALTH_SESSION_ENDED, TELEHEALTH_ROOM_CREATED, TELEHEALTH_ROOM_DESTROYED.
+  - Schema: new `TelehealthSessionStatus` enum (SCHEDULED/VERIFIED/CONSENT_CAPTURED/ACTIVE/COMPLETED/CANCELLED/EXPIRED) + `TelehealthSession` model (1:1 with Schedule via `scheduleId @unique`; magicToken @unique; magicExpiresAt; verifiedAt; consentAt + consentVersion; roomUrl + roomName + roomExpiresAt; status; lifecycle timestamps). Back-relations on Schedule, Patient, Organization.
+  - `src/lib/telehealth/magic-link.ts` — generateMagicToken (22-char URL-safe base64 from randomBytes(16); ~131 bits entropy), computeMagicExpiresAt (min of issuedAt+24h, scheduledEnd+2h), verifyDobAgainst (strict YYYY-MM-DD day-equality), isExpired. 9 vitest cases.
+  - `src/services/telehealth/daily.ts` — stub-mode wrapper matching Soniox/Bedrock/S3/Stripe/Resend pattern; createRoom returns `{ stub: true, roomUrl: 'https://stub.daily.co/...', roomName: 'stub-tele-...' }` when DAILY_API_KEY unset; real-mode throws an explicit gap error until first paying customer signs. Same isStubMode flag pattern available for /owner/health (Wave 3 polish).
+  - Admin APIs (NextAuth session + TELEHEALTH_SESSION_MANAGE feature gate): `POST /api/admin/telehealth/sessions` (mints token + computes expiry + writes session row + sends magic link email via Resend; 409 on duplicate scheduleId), `POST /api/admin/telehealth/sessions/[id]/start` (creates Daily.co room, flips to ACTIVE + emits TELEHEALTH_ROOM_CREATED), `POST /api/admin/telehealth/sessions/[id]/end` (destroys room, flips to COMPLETED + emits TELEHEALTH_ROOM_DESTROYED).
+  - Patient APIs (token-as-auth, no NextAuth gate): `POST /api/telehealth/v/[token]/verify` (DOB check with anti-enumeration — single `{ code: 'invalid' }` 401 for unknown/expired/consumed/DOB-mismatch; audit row captures internal reason via fail() helper; sets httpOnly tele_session cookie on success), `POST /api/telehealth/v/[token]/consent`, `GET /api/telehealth/v/[token]/status` (waiting room poll; roomUrl surfaced ONLY when status is ACTIVE so a leaked token can't fish for the room URL). Cookie-backed twins `/api/telehealth/me/status` + `/me/consent` so the waiting room never has to handle the raw magic token in JS.
+  - Patient UI: `(patient)/` route group with branded shell matching auth/onboarding. `/v/[token]` — server gate (404/expired/already-used) + DOB form client; redirects authenticated refreshers straight to the waiting room. `/telehealth/waiting/[scheduleId]` — server validates cookie↔scheduleId pairing; status-driven UI (VERIFIED → consent form → CONSENT_CAPTURED waiting state → ACTIVE "Join call" CTA). Polling stops on terminal states. Robots noindex on both surfaces (magic-token URLs must not get cached by crawlers).
+  - 122 tests pass; build clean; 5 new admin APIs + 5 new patient APIs + 2 new patient surfaces ship.
+
 ## In Progress
 
 None.
@@ -197,7 +208,7 @@ None.
 
 In priority order:
 
-1. **Unit 15 — Encounter copilot Watch v1 (Wave 3 opener)** — first FHIR-backed card, Watch panel layout polish, integration of brief snippets into in-visit surfaces, additional Watch cards (recent labs / med list / care gaps).
+1. **Unit 16 — Telehealth session orchestration (clinician side)** — "Start telehealth" button on the schedule + patient surfaces, admin/clinician session list, mid-visit lifecycle controls (cancel, force-end), integration with the existing capture flow so a telehealth visit naturally flows into transcription. Builds directly on Unit 15's session model + APIs.
 8. **Unit 07 — Encounter Copilot Watch v0** ([`context/specs/07-encounter-copilot-watch-v0.md`](specs/07-encounter-copilot-watch-v0.md)) — beacon + open-follow-ups + plan-for-today cards.
 9. **Unit 08 — Admin & Compliance Ready** ([`context/specs/08-admin-and-compliance-ready.md`](specs/08-admin-and-compliance-ready.md)) — Sites + Rooms CRUD, admin-initiated MFA reset + password reset, customer self-onboarding wizard, BAA admin UI.
 
@@ -215,7 +226,7 @@ These need user/PM decision before the depending unit can ship. Quote the source
 
 3. ~~**Watch v0 card content scope**~~ — RESOLVED in Unit 07 (one PR; both cards land together since they share `NoteBrief.content` as the data source — splitting would have added merge overhead without meaningful blast-radius separation).
 
-4. **Telehealth provider** — Daily.co is recommended in `references/telehealth-architecture-spec.md`. Confirm before Wave 3 starts.
+4. ~~**Telehealth provider**~~ — RESOLVED in Unit 15 (Daily.co confirmed; stub-mode wrapper ships in `src/services/telehealth/daily.ts` matching the Soniox/Bedrock/S3/Stripe/Resend pattern; real-mode SDK call throws an explicit gap error until DAILY_API_KEY is set and the integration is finished — better than silent failure or fake data in v1).
 
 5. **FHIR SMART launch model** — provider-launched per-clinician or per-org for v1? Affects token storage shape + consent UX. Decide before Wave 4 (Unit 19).
 
@@ -379,6 +390,15 @@ These need user/PM decision before the depending unit can ship. Quote the source
 - **2026-05-17 — Copy-to-clipboard fires SECTION_COPIED_TO_CLIPBOARD via the copilot-event endpoint with itemCount = char count.** PHI-free at the audit layer (content never leaves the client beyond the clipboard write). The cap raise (1000 → 100_000) accommodates real section sizes; the prior cap was sized for "items in a list" not "characters in a section."
 - **2026-05-17 — Accordion animation polish ships data-state + transition-duration classes only — no CSS keyframes.** The simplest cross-browser solution that works inside Tailwind v4 without custom @keyframes. Future polish (CSS-only height animation for collapse/expand) can hook the data-state attribute when the design asks for it.
 - **2026-05-17 — Wave 2 COMPLETE.** Units 10–14 close the clinical-surface trust gaps. /review now has: SSE reconnect indicator (10), section regenerate with diff (10), failure-recovery banner (10), per-section observability (10), inline goal progression on the patient panel (11), snapshot strip + override-wins on /patients/[id] (12), templates authoring with version history (13), and AI compliance flags with severity-grouped review (14). The clinical surfaces are no longer "works" — they're "trusted daily."
+
+### Unit 15 (2026-05-17)
+
+- **2026-05-17 — Daily.co stub-mode follows the established stub pattern (Soniox / Bedrock / S3 / Stripe / Resend).** When DAILY_API_KEY is unset, createRoom returns a synthetic `{ stub: true, ... }` so the session lifecycle works end-to-end in dev. Real-mode SDK call lives in the same file but throws an explicit gap error until wired — better than silent failure or fake-looking data. /owner/health (Wave 3 polish) can pick up `dailyConfig.isStubMode` alongside the other provider flags.
+- **2026-05-17 — Magic token is single-use with anti-enumeration on the verify path; differentiated on the GET page.** The verify endpoint maps unknown-token / expired / consumed / DOB-mismatch to a SINGLE `{ code: 'invalid' }` 401 response; the internal reason lives in the TELEHEALTH_MAGIC_LINK_FAILED audit metadata for ops triage. The /v/[token] PAGE can be more humane — "link already used" UX is shown only when the token is consumed because only the legitimate patient could have reached that state via the URL (the magic-token URL itself is the secret).
+- **2026-05-17 — httpOnly cookie moves the magic token server-side after verify.** On POST /verify success the route sets `tele_session=<token>` (httpOnly, sameSite=lax, 2h max-age). Two cookie-backed twin endpoints (`/api/telehealth/me/status` + `/me/consent`) let the waiting room poll + capture consent without exposing the token to JS or passing it through prop drilling. Cookie lifetime intentionally short (2h vs. magic-link's 24h+grace) so a tab left open on a shared device closes faster than the link's own expiry.
+- **2026-05-17 — Rooms created on session START, not at schedule time.** Daily.co rooms consume provider allotment; a no-show patient shouldn't burn one. The admin's "Start telehealth" call (Unit 16 surface; Unit 15 ships only the API) creates the room and flips status to ACTIVE. Conversely, room destroy happens on session end so we don't accumulate idle rooms.
+- **2026-05-17 — Magic link expiry is `min(issuedAt+24h, scheduledEnd+2h)`.** The 24h cap prevents links from outliving their visit by more than a day; the 2h scheduledEnd grace covers visits that run over or patients who show up late. Computed in `computeMagicExpiresAt` so the rule is testable + has one source of truth.
+- **2026-05-17 — Robots noindex on patient surfaces.** /v/[token] and /telehealth/waiting/[scheduleId] both set `robots: { index: false, follow: false }` so search crawlers don't cache magic-token URLs even if they somehow leak (link forwarded, copy/pasted into a shared doc). The token is still the auth; the noindex is defense-in-depth.
 
 ### Pre-existing (foundational, from spec)
 
