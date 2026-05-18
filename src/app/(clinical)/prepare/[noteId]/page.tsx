@@ -196,7 +196,7 @@ export default async function PreparePage({ params }: { params: Promise<{ noteId
         </Card>
       </div>
 
-      <CopilotShell surface="prepare" noteId={note.id} />
+      <CopilotShell surface="prepare" noteId={note.id} patientId={note.patient.id} />
     </div>
   );
 }
