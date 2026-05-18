@@ -159,14 +159,62 @@ export const BriefLLMOutputSchema = z.object({
 export type BriefLLMOutput = z.infer<typeof BriefLLMOutputSchema>;
 
 /**
+ * Hydrated EHR enrichment block — Unit 23 (F5). Each entry from the LLM
+ * output is augmented with the cache's fetchedAt at brief generation
+ * time (the LLM doesn't emit timestamps). The hydrated shape lets the
+ * BriefCard render staleness chips per row without a server round-trip.
+ */
+const HydratedConditionSchema = z.object({
+  display: z.string().min(1),
+  code: z.string().nullable(),
+  onsetDate: z.string().nullable(),
+  fhirResourceId: z.string().min(1),
+  fetchedAt: z.string().min(1),
+});
+const HydratedMedicationSchema = z.object({
+  display: z.string().min(1),
+  status: z.string().min(1),
+  fhirResourceId: z.string().min(1),
+  fetchedAt: z.string().min(1),
+});
+const HydratedAllergySchema = z.object({
+  display: z.string().min(1),
+  criticality: z.string().nullable(),
+  fhirResourceId: z.string().min(1),
+  fetchedAt: z.string().min(1),
+});
+const HydratedObservationSchema = z.object({
+  display: z.string().min(1),
+  value: z.string().min(1),
+  unit: z.string().nullable(),
+  effectiveDate: z.string().nullable(),
+  fhirResourceId: z.string().min(1),
+  fetchedAt: z.string().min(1),
+});
+
+export const HydratedBriefEhrEnrichmentSchema = z.object({
+  ehrSystem: z.string().min(1),
+  activeConditions: z.array(HydratedConditionSchema).optional(),
+  currentMedications: z.array(HydratedMedicationSchema).optional(),
+  allergies: z.array(HydratedAllergySchema).optional(),
+  recentObservations: z.array(HydratedObservationSchema).optional(),
+});
+export type HydratedBriefEhrEnrichment = z.infer<typeof HydratedBriefEhrEnrichmentSchema>;
+
+/**
  * The full brief stored in NoteBrief.content. Adds metadata the worker stamps
  * AFTER the LLM call returns + openFollowUps derived from the DB (so we don't
- * let the model hallucinate follow-ups).
+ * let the model hallucinate follow-ups). The optional `ehrEnrichment` here
+ * is the HYDRATED shape (with fetchedAt per entry) — the LLM-output shape on
+ * BriefLLMOutputSchema is `.omit`-ed and replaced.
  */
-export const PriorContextBriefContentSchema = BriefLLMOutputSchema.extend({
+export const PriorContextBriefContentSchema = BriefLLMOutputSchema.omit({
+  ehrEnrichment: true,
+}).extend({
   generatedAt: z.string().min(1),
   generatorVersion: z.string().min(1),
   openFollowUps: z.array(FollowUpPreviewSchema),
+  ehrEnrichment: HydratedBriefEhrEnrichmentSchema.optional(),
 });
 export type PriorContextBriefContent = z.infer<typeof PriorContextBriefContentSchema>;
 

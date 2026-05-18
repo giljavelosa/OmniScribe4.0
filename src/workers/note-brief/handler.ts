@@ -15,6 +15,7 @@ import {
   projectSignedNoteForBrief,
 } from '@/lib/notes/build-brief-prompt';
 import { loadExternalEhrContext } from '@/lib/fhir/project-ehr-context';
+import { hydrateEhrEnrichment } from '@/lib/notes/hydrate-ehr-enrichment';
 import type {
   PriorContextBriefContent,
   FollowUpPreview,
@@ -221,11 +222,19 @@ export async function handle(job: Job<NoteBriefJob>) {
     },
   }));
 
+  // Unit 23 / F5 — drop the LLM-output ehrEnrichment shape; replace with
+  // the hydrated shape (each entry augmented with fetchedAt from the
+  // projected cache). hydrateEhrEnrichment returns undefined when the
+  // LLM emitted no recognized ids OR when no externalEhrContext was loaded.
+  const { ehrEnrichment: llmEhrEnrichment, ...briefRest } = briefResult.brief;
+  const hydratedEhrEnrichment = hydrateEhrEnrichment(llmEhrEnrichment, externalEhrContext);
+
   const briefContent: PriorContextBriefContent = {
-    ...briefResult.brief,
+    ...briefRest,
     generatedAt: todayIso,
     generatorVersion: briefResult.generatorVersion,
     openFollowUps: openFollowUpsPreview,
+    ...(hydratedEhrEnrichment ? { ehrEnrichment: hydratedEhrEnrichment } : {}),
   };
 
   await prisma.noteBrief.upsert({
