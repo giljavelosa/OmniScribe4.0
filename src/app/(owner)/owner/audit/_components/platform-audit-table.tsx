@@ -38,9 +38,26 @@ const EMPTY: Filter = { from: '', to: '', action: '', orgId: '', userId: '', res
 type Props = {
   knownActions: string[];
   knownOrgs: { id: string; name: string }[];
+  /** Unit 33 — endpoint overrides so /ops/audit (PLATFORM_STAFF-gated)
+   *  can reuse this component pointed at `/api/ops/audit-search` instead
+   *  of the owner's `/api/owner/audit`. Defaults preserve the original
+   *  /owner/audit behavior so nothing breaks. */
+  searchPath?: string;
+  exportPath?: string;
+  /** Header copy — defaults to the owner-console phrasing; the ops
+   *  page overrides to clarify the gate distinction. */
+  title?: string;
+  description?: string;
 };
 
-export function PlatformAuditTable({ knownActions, knownOrgs }: Props) {
+export function PlatformAuditTable({
+  knownActions,
+  knownOrgs,
+  searchPath = '/api/owner/audit',
+  exportPath = '/api/owner/audit/export',
+  title = 'Platform-wide audit',
+  description = "Every org's audit rows in one place. PHI-free by the writeAuditLog denylist; reads themselves audit to PlatformAuditLog as PLATFORM_AUDIT_VIEWED.",
+}: Props) {
   const [filter, setFilter] = useState<Filter>(EMPTY);
   const [rows, setRows] = useState<AuditRow[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -54,7 +71,7 @@ export function PlatformAuditTable({ knownActions, knownOrgs }: Props) {
     startLoading(async () => {
       const q = new URLSearchParams(queryString);
       if (opts.cursor) q.set('cursor', opts.cursor);
-      const res = await fetch(`/api/owner/audit?${q.toString()}`);
+      const res = await fetch(`${searchPath}?${q.toString()}`);
       if (!res.ok) {
         const payload = await res.json().catch(() => null);
         setError(payload?.error?.message ?? `Load failed (${res.status}).`);
@@ -74,17 +91,14 @@ export function PlatformAuditTable({ knownActions, knownOrgs }: Props) {
 
   function downloadCsv() {
     const q = new URLSearchParams(queryString);
-    window.open(`/api/owner/audit/export?${q.toString()}`, '_blank');
+    window.open(`${exportPath}?${q.toString()}`, '_blank');
   }
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-md">Platform-wide audit</CardTitle>
-        <CardDescription>
-          Every org&apos;s audit rows in one place. PHI-free by the writeAuditLog denylist;
-          reads themselves audit to PlatformAuditLog as PLATFORM_AUDIT_VIEWED.
-        </CardDescription>
+        <CardTitle className="text-md">{title}</CardTitle>
+        <CardDescription>{description}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
