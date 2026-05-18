@@ -500,6 +500,7 @@ model Patient {
   notes                    Note[]
   briefs                   NoteBrief[]
   followUps                FollowUp[]
+  snapshotOverrides        SnapshotOverride[]
 
   @@unique([orgId, mrn])
   @@index([orgId, lastName, firstName])
@@ -702,9 +703,10 @@ model EpisodeOfCare {
   /** DISCHARGED → ACTIVE re-open reason (required at API). */
   reopenReason       String?
 
-  goals      EpisodeGoal[]
-  encounters Encounter[]
-  followUps  FollowUp[]
+  goals             EpisodeGoal[]
+  encounters        Encounter[]
+  followUps         FollowUp[]
+  snapshotOverrides SnapshotOverride[]
 
   @@index([patientId, status])
   @@index([orgId, status, recertDueAt])
@@ -965,4 +967,45 @@ model FollowUp {
   @@index([patientId, status])
   @@index([orgId, status])
   @@index([episodeId])
+}
+
+// =============================================================================
+// Unit 12 — Patient detail redesign / snapshot strip
+//
+// SnapshotOverride is the per-(measureKey, scope) clinician-edited override
+// for the snapshot strip on /patients/[id]. Soft-deleted via supersededAt
+// so the override history is queryable (rule 7-ish: clinical data is never
+// hard-deleted). Stored value is a Json to handle scalars, strings, and
+// structured measures (e.g. BP {systolic, diastolic}).
+//
+// scope is implicit in (patientId, episodeId): episodeId set → episode-
+// scoped (rehab measures), null → patient-scoped (medical vitals, BH
+// totals). The build-snapshot-strip pipeline looks up the latest non-
+// superseded row per (measureKey, scope) on every read.
+// =============================================================================
+model SnapshotOverride {
+  id                    String    @id @default(cuid())
+  orgId                 String
+  patientId             String
+  patient               Patient   @relation(fields: [patientId], references: [id])
+  episodeId             String?
+  episode               EpisodeOfCare? @relation(fields: [episodeId], references: [id])
+  measureKey            String
+  /** Scalar (number), string ("3+"), or structured object ({systolic, diastolic}).
+   *  No Zod validation at the DB layer — the snapshot pipeline coerces to
+   *  the registry's expected shape at render time. */
+  valueJson             Json
+  unit                  String?
+  /** Clinician-supplied "as of" time. */
+  recordedAt            DateTime
+  enteredAt             DateTime  @default(now())
+  enteredByOrgUserId    String
+  /** Soft-delete: when set, this row is superseded. The latest non-
+   *  superseded row per (measureKey, scope) wins. */
+  supersededAt          DateTime?
+  supersededByOrgUserId String?
+
+  @@index([patientId, measureKey, supersededAt])
+  @@index([episodeId, measureKey, supersededAt])
+  @@index([orgId, supersededAt])
 }

@@ -6,6 +6,9 @@ import { requireFeatureAccess } from '@/lib/authz/server';
 import { writeAuditLog } from '@/lib/audit/log';
 import { assertOrgScoped } from '@/lib/phi-access';
 import { Division, PatientSex } from '@prisma/client';
+import { buildSnapshotStrip } from '@/lib/snapshots/build-snapshot-strip';
+import { deriveAssessmentSnippet } from '@/lib/notes/note-text';
+import type { FinalJsonShape } from '@/lib/notes/build-artifact-prompt';
 
 export const runtime = 'nodejs';
 
@@ -49,6 +52,39 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   }
   assertOrgScoped(patient.orgId, authorizationUser.orgId);
 
+  // Unit 12: compute snapshot strip + recent visits with assessment snippets.
+  const [snapshotStrip, recentVisits] = await Promise.all([
+    buildSnapshotStrip({ orgId: authorizationUser.orgId, patientId: patient.id }),
+    prisma.note.findMany({
+      where: {
+        patientId: patient.id,
+        orgId: authorizationUser.orgId,
+        status: { in: ['SIGNED', 'TRANSFERRED'] },
+      },
+      orderBy: { signedAt: 'desc' },
+      take: 10,
+      select: {
+        id: true,
+        signedAt: true,
+        signedByUserId: true,
+        division: true,
+        finalJson: true,
+        template: { select: { name: true } },
+      },
+    }),
+  ]);
+
+  const visitHistory = recentVisits.map((n) => ({
+    id: n.id,
+    signedAt: n.signedAt?.toISOString() ?? null,
+    signedByUserId: n.signedByUserId,
+    division: n.division,
+    templateName: n.template?.name ?? null,
+    assessmentSnippet: deriveAssessmentSnippet(
+      (n.finalJson as unknown as FinalJsonShape) ?? null,
+    ),
+  }));
+
   await writeAuditLog({
     userId: user.id,
     orgId: authorizationUser.orgId,
@@ -57,7 +93,13 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     resourceId: patient.id,
   });
 
-  return NextResponse.json({ data: patient });
+  return NextResponse.json({
+    data: {
+      ...patient,
+      snapshotStrip,
+      visitHistory,
+    },
+  });
 }
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -131,6 +173,31 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     metadata: { changedFields: changed },
   });
 
+  // Unit 12: if any demographics field actually moved, emit the dedicated
+  // PATIENT_DEMOGRAPHICS_EDITED row. Higher-severity than the generic
+  // PATIENT_UPDATED — surfaces cleanly in compliance dashboards that
+  // filter for demographic changes (e.g., HIPAA breach-trail audits).
+  const DEMOGRAPHIC_FIELDS = new Set([
+    'firstName',
+    'lastName',
+    'mrn',
+    'dob',
+    'sex',
+    'phone',
+    'email',
+    'preferredLanguage',
+  ]);
+  const demographicsChanged = changed.filter((f) => DEMOGRAPHIC_FIELDS.has(f));
+  if (demographicsChanged.length > 0) {
+    await writeAuditLog({
+      userId: user.id,
+      orgId: authorizationUser.orgId,
+      action: 'PATIENT_DEMOGRAPHICS_EDITED',
+      resourceType: 'Patient',
+      resourceId: id,
+      metadata: { changedFields: demographicsChanged },
+    });
+  }
   return NextResponse.json({ data: { ok: true } });
 }
 
