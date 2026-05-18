@@ -83,8 +83,8 @@ export async function startVisit(args: StartVisitArgs) {
     });
   }
 
-  // Audit (writeAuditLog writes via its own prisma; not inside this tx, but
-  // happens during the same request so any failure propagates to the caller).
+  // Audit must commit/rollback with the encounter+note writes — pass the same
+  // tx client so a transaction-commit failure doesn't leave orphan audit rows.
   await writeAuditLog({
     userId: args.actingUserId,
     orgId: args.orgId,
@@ -92,6 +92,7 @@ export async function startVisit(args: StartVisitArgs) {
     resourceType: 'Encounter',
     resourceId: encounter.id,
     metadata: { source: args.scheduleId ? 'schedule' : 'adhoc', division },
+    tx: args.tx,
   });
 
   return { encounter, note };

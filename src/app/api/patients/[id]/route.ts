@@ -80,18 +80,28 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   }
   assertOrgScoped(before.orgId, authorizationUser.orgId);
 
-  const changed: string[] = [];
-  for (const key of Object.keys(data)) {
-    if ((data as Record<string, unknown>)[key] !== (before as unknown as Record<string, unknown>)[key]) {
-      changed.push(key);
-    }
-  }
-
   let dob: Date | undefined;
   if (data.dob) {
     dob = new Date(data.dob);
     if (Number.isNaN(dob.getTime())) {
       return NextResponse.json({ error: { code: 'bad_request', message: 'Invalid DOB.' } }, { status: 400 });
+    }
+  }
+
+  const changed: string[] = [];
+  for (const key of Object.keys(data)) {
+    const incoming = (data as Record<string, unknown>)[key];
+    const existing = (before as unknown as Record<string, unknown>)[key];
+    // dob is a string in the request payload and a Date on the model — compare
+    // by timestamp so the audit log reflects real changes only.
+    if (key === 'dob') {
+      const existingMs = existing instanceof Date ? existing.getTime() : null;
+      const incomingMs = dob ? dob.getTime() : null;
+      if (existingMs !== incomingMs) changed.push(key);
+      continue;
+    }
+    if (incoming !== existing) {
+      changed.push(key);
     }
   }
 
