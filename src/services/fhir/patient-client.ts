@@ -249,9 +249,9 @@ function hashFromSeed(seed: string): string {
 }
 
 function misspell(s: string): string {
-  if (s.length < 2) return s + 'x';
-  // Swap two adjacent characters — common typo + obvious to read.
-  return s[0] + s[2] + s[1] + s.slice(3);
+  if (s.length < 3) return s + 'x';
+  // Swap chars at index 1 and 2 — common typo + obvious to read.
+  return `${s.charAt(0)}${s.charAt(2)}${s.charAt(1)}${s.slice(3)}`;
 }
 
 function shiftYearBy(iso: string, deltaYears: number): string {
