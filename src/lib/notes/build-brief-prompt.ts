@@ -2,6 +2,7 @@ import type { Division, EpisodeOfCare, EpisodeGoal, Note, Patient } from '@prism
 
 import type { BriefLLMOutput } from '@/types/brief';
 import type { FinalJsonShape } from '@/lib/notes/build-artifact-prompt';
+import type { ExternalEhrContext } from '@/lib/fhir/project-ehr-context';
 
 /**
  * Prior-Context Brief — prompt builder (spec: references/prior-context-brief-prompt.md).
@@ -62,6 +63,12 @@ export type BuildBriefPromptInput = {
   episode: BriefEpisodeProjection | null;
   priorNotes: BriefPriorNoteProjection[]; // oldest first; 1–3 notes
   topActiveGoals: BriefGoalProjection[];
+  /** Unit 22 / F4 — optional EHR enrichment from FhirCachedResource.
+   *  Null when no verified PatientFhirIdentity exists or every cached
+   *  row is stale. When present, the renderer emits an
+   *  <external_ehr_context> block AFTER prior_notes; the LLM treats it
+   *  as secondary ground truth per the EHR_CONTEXT_BLOCK system prompt. */
+  externalEhrContext?: ExternalEhrContext | null;
 };
 
 const SYSTEM_HEAD = `
@@ -130,6 +137,43 @@ BEHAVIORAL_HEALTH (patient-scoped):
   phq9-total, gad7-total, mood-rating
 `.trim();
 
+const EHR_CONTEXT_BLOCK = `
+═══ EXTERNAL EHR CONTEXT (optional) ═══
+
+When an <external_ehr_context> block is present, treat it as SECONDARY
+ground truth — equivalent in trust to the prior notes for the categories
+it covers (conditions, medications, allergies, recent labs). The notes
+remain the PRIMARY source for trajectory, plan, interventions, and
+clinical reasoning; the EHR block adds chart-side facts the notes may not
+have repeated.
+
+CONFLICT RULE. If the EHR contradicts the most recent signed note,
+prefer the note. Example: a Plan saying "discontinue metformin" overrides
+an EHR MedicationStatement still listing metformin as active. Note this
+gently in \`watch.recentMedChanges\` if the discrepancy is clinically
+relevant — never silently drop the EHR data.
+
+When you emit a brief value whose evidence came from the EHR block,
+populate the OPTIONAL top-level \`ehrEnrichment\` object with the matching
+fhirResourceId. \`ehrEnrichment\` is APPENDED to the brief — do not blend
+EHR facts into the note-sourced fields (objectiveMeasures, carryForwardPlan,
+etc.); those stay strictly note-sourced per Absolute Rule 1.
+
+EHR-sourced facts that don't appear in the notes belong in
+\`ehrEnrichment\`:
+  • \`activeConditions\`: chronic conditions the EHR carries that the
+    notes don't repeat
+  • \`currentMedications\`: full med list per EHR (the notes only carry
+    changes)
+  • \`allergies\`: chart-side allergy list
+  • \`recentObservations\`: chart labs / vitals from the last fetch
+
+NEVER invent. If the EHR block lists 30 conditions, list at most the 8
+most clinically prominent in ehrEnrichment.activeConditions. Choose
+prominence by onset recency + the categories already discussed in the
+notes (e.g. for an MSK visit, prioritize MSK conditions).
+`.trim();
+
 const SYSTEM_TAIL = `
 ═══ OUTPUT SCHEMA (strict) ═══
 
@@ -179,7 +223,21 @@ const SYSTEM_TAIL = `
     "precautions": [string, ...],
     "redFlagsFromPriorNote": [string, ...]
   },
-  "sourceNoteIds": [string, ...]
+  "sourceNoteIds": [string, ...],
+  "ehrEnrichment": {                       // OPTIONAL — only when <external_ehr_context> was provided
+    "activeConditions": [
+      { "display": string, "code": string | null, "onsetDate": string | null, "fhirResourceId": string }
+    ],
+    "currentMedications": [
+      { "display": string, "status": string, "fhirResourceId": string }
+    ],
+    "allergies": [
+      { "display": string, "criticality": string | null, "fhirResourceId": string }
+    ],
+    "recentObservations": [
+      { "display": string, "value": string, "unit": string | null, "effectiveDate": string | null, "fhirResourceId": string }
+    ]
+  } | undefined
 }
 
 The fields generatedAt, generatorVersion, and openFollowUps are added by the
@@ -200,7 +258,12 @@ calling code AFTER your output is parsed. DO NOT include them in your response.
 Now read the input. Output JSON only.
 `.trim();
 
-export const BRIEF_SYSTEM_PROMPT = [SYSTEM_HEAD, MEASURE_KEY_BLOCK, SYSTEM_TAIL].join('\n\n');
+export const BRIEF_SYSTEM_PROMPT = [
+  SYSTEM_HEAD,
+  MEASURE_KEY_BLOCK,
+  EHR_CONTEXT_BLOCK,
+  SYSTEM_TAIL,
+].join('\n\n');
 
 export function buildBriefUserMessage(input: BuildBriefPromptInput): string {
   const episodeJson = input.episode
@@ -251,8 +314,81 @@ export function buildBriefUserMessage(input: BuildBriefPromptInput): string {
     priorBlocks || '  (none — first visit on record)',
     '</prior_notes>',
     '',
+    renderExternalEhrContext(input.externalEhrContext ?? null),
+    '',
     'Now produce the brief JSON object. Output JSON only.',
   ].join('\n');
+}
+
+function renderExternalEhrContext(ctx: ExternalEhrContext | null): string {
+  if (!ctx) return '<external_ehr_context>\n  (no verified EHR link — skip ehrEnrichment in output)\n</external_ehr_context>';
+  const totals =
+    ctx.activeConditions.length +
+    ctx.currentMedications.length +
+    ctx.allergies.length +
+    ctx.recentObservations.length +
+    ctx.recentProcedures.length +
+    ctx.recentDiagnosticReports.length;
+  if (totals === 0) {
+    return `<external_ehr_context ehrSystem="${escapeAttr(ctx.ehrSystem)}">\n  (cache empty for this patient — skip ehrEnrichment in output)\n</external_ehr_context>`;
+  }
+  const lines = [`<external_ehr_context ehrSystem="${escapeAttr(ctx.ehrSystem)}">`];
+  if (ctx.activeConditions.length) {
+    lines.push('  <active_conditions>');
+    for (const c of ctx.activeConditions) {
+      lines.push(
+        `    - display="${escapeAttr(c.display)}" code=${c.code ?? 'null'} onsetDate=${c.onsetDate ?? 'null'} fhirResourceId="${escapeAttr(c.provenance.fhirResourceId)}" fetchedAt="${c.provenance.fetchedAt}"`,
+      );
+    }
+    lines.push('  </active_conditions>');
+  }
+  if (ctx.currentMedications.length) {
+    lines.push('  <current_medications>');
+    for (const m of ctx.currentMedications) {
+      lines.push(
+        `    - display="${escapeAttr(m.display)}" status=${m.status} sourceType=${m.sourceType} fhirResourceId="${escapeAttr(m.provenance.fhirResourceId)}"`,
+      );
+    }
+    lines.push('  </current_medications>');
+  }
+  if (ctx.allergies.length) {
+    lines.push('  <allergies>');
+    for (const a of ctx.allergies) {
+      lines.push(
+        `    - display="${escapeAttr(a.display)}" criticality=${a.criticality ?? 'null'} category=${a.category ?? 'null'} fhirResourceId="${escapeAttr(a.provenance.fhirResourceId)}"`,
+      );
+    }
+    lines.push('  </allergies>');
+  }
+  if (ctx.recentObservations.length) {
+    lines.push('  <recent_observations>');
+    for (const o of ctx.recentObservations) {
+      lines.push(
+        `    - display="${escapeAttr(o.display)}" value="${escapeAttr(o.value)}" unit=${o.unit ?? 'null'} effectiveDate=${o.effectiveDate ?? 'null'} fhirResourceId="${escapeAttr(o.provenance.fhirResourceId)}"`,
+      );
+    }
+    lines.push('  </recent_observations>');
+  }
+  if (ctx.recentProcedures.length) {
+    lines.push('  <recent_procedures>');
+    for (const p of ctx.recentProcedures) {
+      lines.push(
+        `    - display="${escapeAttr(p.display)}" performedDate=${p.performedDate ?? 'null'} fhirResourceId="${escapeAttr(p.provenance.fhirResourceId)}"`,
+      );
+    }
+    lines.push('  </recent_procedures>');
+  }
+  if (ctx.recentDiagnosticReports.length) {
+    lines.push('  <recent_diagnostic_reports>');
+    for (const r of ctx.recentDiagnosticReports) {
+      lines.push(
+        `    - display="${escapeAttr(r.display)}" effectiveDate=${r.effectiveDate ?? 'null'} conclusion="${escapeAttr(r.conclusion ?? '')}" fhirResourceId="${escapeAttr(r.provenance.fhirResourceId)}"`,
+      );
+    }
+    lines.push('  </recent_diagnostic_reports>');
+  }
+  lines.push('</external_ehr_context>');
+  return lines.join('\n');
 }
 
 function renderNoteSectionsForBrief(finalJson: FinalJsonShape): string {

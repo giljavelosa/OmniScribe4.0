@@ -184,5 +184,35 @@ function synthesizeStubBrief(input: BuildBriefPromptInput): BriefLLMOutput {
       redFlagsFromPriorNote: [],
     },
     sourceNoteIds: input.priorNotes.map((n) => n.noteId),
+    // Stub-mode EHR enrichment so the F5 provenance UI is exercisable
+    // end-to-end without a real Bedrock call. Maps the projected cache
+    // shape directly into the schema's fhirResourceId-keyed entries.
+    ehrEnrichment: input.externalEhrContext
+      ? {
+          activeConditions: input.externalEhrContext.activeConditions.slice(0, 8).map((c) => ({
+            display: c.display,
+            code: c.code,
+            onsetDate: c.onsetDate,
+            fhirResourceId: c.provenance.fhirResourceId,
+          })),
+          currentMedications: input.externalEhrContext.currentMedications.map((m) => ({
+            display: m.display,
+            status: m.status,
+            fhirResourceId: m.provenance.fhirResourceId,
+          })),
+          allergies: input.externalEhrContext.allergies.map((a) => ({
+            display: a.display,
+            criticality: a.criticality,
+            fhirResourceId: a.provenance.fhirResourceId,
+          })),
+          recentObservations: input.externalEhrContext.recentObservations.map((o) => ({
+            display: o.display,
+            value: o.value,
+            unit: o.unit,
+            effectiveDate: o.effectiveDate,
+            fhirResourceId: o.provenance.fhirResourceId,
+          })),
+        }
+      : undefined,
   };
 }

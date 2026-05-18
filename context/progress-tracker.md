@@ -4,11 +4,11 @@
 
 ## Current Phase
 
-- **Wave 4 / F3 shipped — Unit 21.** PR #22 (branch `feat/unit-21-fhir-resource-sync`, stacked on `feat/unit-20-fhir-patient-identity`). Activates `FhirCachedResource` (schema-shipped Unit 19). 8 per-resource adapters (Patient + 7 clinical) map FHIR → simplified internal shapes; sync orchestrator pulls each type for a verified patient link with per-type failure isolation; cache writer upserts `{ raw, simplified }` together so F5's provenance UI has both views without re-fetching. Clinician-triggered "Sync EHR data" button on the verified EhrLinkPanel state + last-synced indicator + per-type count chips. On-demand only in v1; background BullMQ staleness sweeper is Wave 4.5 polish.
+- **Wave 4 / F4 shipped — Unit 22.** PR #23 (branch `feat/unit-22-fhir-brief-enrichment`, stacked on `feat/unit-21-fhir-resource-sync`). Extends Unit 06's BriefBuilderInput with an optional `<external_ehr_context>` block sourced from Unit 21's cache. The Sonnet brief generator now sees the patient's EHR conditions / medications / allergies / recent labs alongside prior signed notes, with per-field provenance baked into the schema so F5 (Unit 23) can render "from <ehrSystem>" pills. Conflict rule baked into the system prompt: notes remain the PRIMARY source; EHR is SECONDARY; prefer the most recent attested source when they disagree. Stub-mode mirrors the cache into `ehrEnrichment` so F5's render path is exercisable without a real Bedrock call.
 
 ## Current Goal
 
-- Await user confirmation before starting Unit 22 — Wave 4 F4 (Brief generator FHIR integration). Extends the Unit 06 BriefBuilderInput with an optional `<external_ehr_context>` block; maps cached FHIR resources to brief fields (active conditions / medications / recent observations / allergies); per-field provenance (which FHIR resource, when fetched). Per Prompt B's stop-between-units contract.
+- Await user confirmation before starting Unit 23 — Wave 4 F5 (Provenance UI on the brief). Surface per-field source pills in the BriefCard (Unit 06's component): note-sourced fields get the existing "from Note 2025-09-04" pill; EHR-sourced fields get a new "from NextGen, fetched 3h ago" pill; staleness chips (>7d warning, >30d stale) on the EHR pills; a drawer that shows the raw FHIR resource on click. Per Prompt B's stop-between-units contract.
 
 ## Completed
 
@@ -303,6 +303,16 @@
   - `src/components/fhir/sync-status.tsx` — three visual modes (idle / pending / result); auto-refreshes on mount + after every successful sync; stale types in header with AlertTriangle. Slots into EhrLinkPanel's verified state above the Unlink button.
   - 185 tests pass (was 166); build/lint/typecheck clean. 19 new tests: 14 adapter shape tests (each resource type + sensitivity + the type-set lock), 5 staleness threshold cases.
 
+- **2026-05-17 — Unit 22: FHIR / Brief generator enrichment (Wave 4 / F4)** (PR #23 — `feat(unit-22): fhir brief enrichment`).
+  - Spec at `context/specs/22-fhir-brief-enrichment.md`. Wave 4 F4. Purely additive — no schema changes, no new audit actions; brief still works identically for callers without a verified link.
+  - Locked decisions: EHR context optional (no link → identical Unit 06 behavior); stale rows (>7d via Unit 21 isStale) excluded; projection scope = active conditions + active/intended/on-hold meds + all allergies + recent 10 obs + recent 5 procedures + recent 5 reports; prompt position AFTER prior_notes; per-field provenance via fhirResourceId baked into the schema.
+  - `src/lib/fhir/project-ehr-context.ts` — `loadExternalEhrContext` (DB-backed) + `projectCachedRows` (pure). Returns null only when no verified PatientFhirIdentity / empty cache / all-stale; returns the empty shape (with attached arrays) when fresh rows exist but project to nothing. Every entry carries a `FhirProvenance` block (source/ehrSystem/fhirResourceType/fhirResourceId/fetchedAt). 10 vitest cases cover all projection rules.
+  - `src/types/brief.ts` — `BriefLLMOutputSchema` gains optional `ehrEnrichment` (4 sub-arrays: activeConditions / currentMedications / allergies / recentObservations; each entry carries fhirResourceId for F5 pill rendering).
+  - `src/lib/notes/build-brief-prompt.ts` — `BuildBriefPromptInput` gains optional `externalEhrContext`. New `EHR_CONTEXT_BLOCK` in the system prompt locks the contract: EHR is SECONDARY ground truth; on conflict prefer the most recent attested note; surface clinically-relevant discrepancies in `watch.recentMedChanges`; EHR-derived facts appended to `ehrEnrichment` (NOT blended into note-sourced fields per Absolute Rule 1); cap `ehrEnrichment.activeConditions` at 8 most prominent. Renderer emits per-category sub-blocks with fhirResourceId + fetchedAt inline so the LLM has provenance per fact.
+  - `src/services/brief/BriefGenerator.ts` — `synthesizeStubBrief` mirrors the cache into `ehrEnrichment` so F5's render path is exercisable without a real Bedrock call.
+  - `src/workers/note-brief/handler.ts` — calls `loadExternalEhrContext` before generating; passes through `BuildBriefPromptInput.externalEhrContext`. `BRIEF_GENERATED` audit metadata gains `hasEhrContext` (boolean) + `ehrResourceCount` (int aggregate) for the auditor lens.
+  - 195 tests pass (was 185); build/lint/typecheck clean. 10 new tests: projection rules + provenance attachment + empty-shape vs null contract.
+
 ## In Progress
 
 None.
@@ -311,7 +321,7 @@ None.
 
 In priority order:
 
-1. **Unit 22 — Wave 4 F4: Brief generator FHIR integration** ([`references/fhir-integration-spec.md`](../references/fhir-integration-spec.md) F4). Extend Unit 06's BriefBuilderInput with optional `<external_ehr_context>` block; map cached FHIR resources to brief fields (active conditions / current medications / recent observations / allergies); per-field provenance (which FHIR resource + when fetched). Use Unit 21's staleness helper to skip cache entries older than 7 days — better to surface no EHR context than stale EHR context.
+1. **Unit 23 — Wave 4 F5: Provenance UI on the brief** ([`references/fhir-integration-spec.md`](../references/fhir-integration-spec.md) F5). Surface per-field source pills in the BriefCard (Unit 06's component): note-sourced fields get the existing "from Note 2025-09-04" pill; EHR-sourced fields (the new `ehrEnrichment` block from Unit 22) get a "from NextGen, fetched 3h ago" pill; staleness chips (>7d warning, >30d stale) on EHR pills; a drawer that shows the raw FHIR resource on click. Reads the existing `FhirCachedResource.resource: { raw, simplified }` shape so no new server lookups.
 
 Wave 4.5 (deferred polish, can land alongside Wave 5):
 - Background BullMQ staleness sweeper for FhirCachedResource (currently on-demand only).
@@ -504,6 +514,15 @@ These need user/PM decision before the depending unit can ship. Quote the source
 - **2026-05-17 — Copy-to-clipboard fires SECTION_COPIED_TO_CLIPBOARD via the copilot-event endpoint with itemCount = char count.** PHI-free at the audit layer (content never leaves the client beyond the clipboard write). The cap raise (1000 → 100_000) accommodates real section sizes; the prior cap was sized for "items in a list" not "characters in a section."
 - **2026-05-17 — Accordion animation polish ships data-state + transition-duration classes only — no CSS keyframes.** The simplest cross-browser solution that works inside Tailwind v4 without custom @keyframes. Future polish (CSS-only height animation for collapse/expand) can hook the data-state attribute when the design asks for it.
 - **2026-05-17 — Wave 2 COMPLETE.** Units 10–14 close the clinical-surface trust gaps. /review now has: SSE reconnect indicator (10), section regenerate with diff (10), failure-recovery banner (10), per-section observability (10), inline goal progression on the patient panel (11), snapshot strip + override-wins on /patients/[id] (12), templates authoring with version history (13), and AI compliance flags with severity-grouped review (14). The clinical surfaces are no longer "works" — they're "trusted daily."
+
+### Unit 22 (2026-05-17)
+
+- **2026-05-17 — Conflict rule: prefer the most recent attested note over the EHR.** The brief's purpose is to surface what was DECIDED at the last visit. An EHR MedicationStatement is the EHR's running inventory; it lags clinician decisions by days-to-weeks (the next clinic visit refreshes it). When the most recent note's Plan says "stop drug X" but the EHR still lists it, the note wins. The EHR_CONTEXT_BLOCK prompt also asks the model to surface the discrepancy in `watch.recentMedChanges` when clinically relevant — silently dropping the conflict would hide ambiguity from the next clinician.
+- **2026-05-17 — `ehrEnrichment` is APPENDED, not blended.** EHR-derived facts NEVER end up in `objectiveMeasures` / `carryForwardPlan` / `interventionsPerformed` etc. — those stay strictly note-sourced per Unit 06's Absolute Rule 1 (source-grounded only). Otherwise an auditor reading the brief would have to disentangle which `objectiveMeasures[]` row came from a note vs. an EHR lab. Keeping ehrEnrichment as its own top-level block makes the source attribution structural, not parsing.
+- **2026-05-17 — Stale rows (>7d) excluded at projection time, not at prompt time.** The 7-day threshold lives in `lib/fhir/staleness.ts` (Unit 21); projection filters with it. Pushing the filter into the renderer would risk the renderer emitting a stale-flagged block the LLM then has to be told to ignore. Filtering at projection means the LLM sees only fresh data + the system prompt's contract holds.
+- **2026-05-17 — `loadExternalEhrContext` returns null only on the "no usable cache" case.** Fresh rows that project to nothing return the empty-arrays shape (not null). Reasoning: callers should ALWAYS know whether the cache exists at all (for the `hasEhrContext` audit flag + future "stale EHR" surfacing), independent of whether any specific category had entries. This contract is locked by test (the "Patient-only rows" case asserts the empty shape, not null).
+- **2026-05-17 — Stub-mode synthesizes `ehrEnrichment` from the projected cache directly.** Real Bedrock would generate the block based on the prompt; stub mode mirrors the cache 1:1 (active conditions capped at 8 per the system prompt's instruction). This lets F5's render path be exercised end-to-end in dev without a real LLM call AND gives the F5 implementation a stable input shape to develop against.
+- **2026-05-17 — No new audit actions; BRIEF_GENERATED metadata extended.** Adding FHIR_BRIEF_ENRICHED felt right initially but BRIEF_GENERATED already fires once per brief; adding `hasEhrContext` + `ehrResourceCount` keeps the audit row count stable + lets the auditor lens count enriched-vs-not-enriched briefs with one query. Easier to reason about than two parallel actions.
 
 ### Unit 21 (2026-05-17)
 
