@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { BaaForm } from './_components/baa-form';
+import { OwnerSeatsCard } from './_components/owner-seats-card';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Organization' };
@@ -57,11 +58,14 @@ export default async function OwnerOrgPage({ params }: { params: Promise<{ id: s
             <p>Users: {org._count.orgUsers}</p>
             <p>Created: {org.createdAt.toLocaleDateString()}</p>
             <p className="pt-2 text-xs italic">
-              Seat allocation, subscription view, and impersonation arrive in Unit 09.
+              Impersonation is intentionally deferred — high blast radius; planned for a
+              dedicated Ops Console unit alongside hardened session-mint controls.
             </p>
           </CardContent>
         </Card>
       </div>
+
+      <OwnerSeatsCard orgId={org.id} />
     </div>
   );
 }
