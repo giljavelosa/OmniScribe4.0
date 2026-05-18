@@ -306,4 +306,24 @@ export type AuditAction =
   // + rowsComputed + durationMs. PHI-free (just counts). Lets the
   // auditor see "did the daily refresh actually run for org X?" without
   // hitting the cache table directly.
-  | 'ROLLUP_REFRESHED';
+  | 'ROLLUP_REFRESHED'
+  // ---- External context upload (per-patient prior-visit context) ----
+  // Spec: context/specs/external-context-upload.md
+  //
+  // EXTERNAL_CONTEXT_ADDED fires per row on POST. Metadata: dateOfRecord
+  // (ISO date string), source (enum value), mode ('paste' | 'upload'),
+  // hasEpisodeLink (boolean). PHI-fenced: the transcript / sourceLabel /
+  // file bytes are NEVER in metadata — only structural counts + enums.
+  //
+  // EXTERNAL_CONTEXT_VIEWED fires on the GET-detail route. Metadata:
+  // hasAudio (boolean), source (enum). Captures who-saw-what for the
+  // auditor lens.
+  //
+  // EXTERNAL_CONTEXT_TRANSCRIPTION_COMPLETED + _FAILED fire from the
+  // worker. Completed metadata: durationMs (worker wall time), wordCount
+  // of cleaned transcript, source enum, stub (boolean — true when
+  // Soniox was in stub mode). Failed metadata: errorClass + attempt.
+  | 'EXTERNAL_CONTEXT_ADDED'
+  | 'EXTERNAL_CONTEXT_VIEWED'
+  | 'EXTERNAL_CONTEXT_TRANSCRIPTION_COMPLETED'
+  | 'EXTERNAL_CONTEXT_TRANSCRIPTION_FAILED';

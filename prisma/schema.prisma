@@ -120,6 +120,7 @@ model Organization {
   usageDaily         OrgUsageDaily[]
   llmCalls           LlmCallLog[]
   llmCostDaily       OrgLlmCostDaily[]
+  externalContexts   ExternalContext[]
 
   @@index([baaExecutedAt])
   @@index([subscriptionPlan])
@@ -291,6 +292,7 @@ model OrgUser {
   seat                Seat?                @relation(fields: [seatId], references: [id])
   practitionerProfile PractitionerProfile?
   fhirIdentities      FhirIdentity[]       @relation("FhirIdentityClinician")
+  externalContextsAdded ExternalContext[]  @relation("ExternalContextAddedBy")
 
   @@unique([userId, orgId])
   @@index([orgId, role])
@@ -625,6 +627,7 @@ model Patient {
   telehealthSessions       TelehealthSession[]
   fhirIdentities           PatientFhirIdentity[]
   fhirCachedResources      FhirCachedResource[]
+  externalContexts         ExternalContext[]
 
   @@unique([orgId, mrn])
   @@index([orgId, lastName, firstName])
@@ -833,6 +836,7 @@ model EpisodeOfCare {
   encounters        Encounter[]
   followUps         FollowUp[]
   snapshotOverrides SnapshotOverride[]
+  externalContexts  ExternalContext[]
 
   @@index([patientId, status])
   @@index([orgId, status, recertDueAt])
@@ -1417,5 +1421,74 @@ model OrgEhrConnection {
   updatedAt       DateTime @updatedAt
 
   @@unique([orgId, ehrSystem])
+  @@index([orgId])
+}
+
+// =============================================================================
+// External Context — per-patient prior-visit reference material.
+//
+// Spec: context/specs/external-context-upload.md
+//
+// Use-cases: audio/transcript from a telehealth visit the patient sent in;
+// referring-provider documentation; a prior visit the clinician did but
+// never documented; patient-supplied symptom-diary audio.
+//
+// Never billable, never sign-able. Read-only after upload. Surfaces in the
+// Unit 06 brief alongside signed Notes but with lower-confidence framing
+// (source-pill provenance "per outside provider note dated YYYY-MM-DD").
+//
+// Date attribution is split into two columns: `dateOfRecord` is when the
+// underlying event happened; `addedAt` is when the row was created. Never
+// confuse them.
+// =============================================================================
+
+enum ExternalContextSource {
+  PATIENT_SUPPLIED      // patient sent audio / transcript
+  OUTSIDE_PROVIDER      // referring doc, prior facility
+  EARLIER_UNDOCUMENTED  // visit clinician did but never documented
+  CLINICIAN_NOTES       // free-text recollection
+  OTHER
+}
+
+enum ExternalContextStatus {
+  PENDING_TRANSCRIPTION  // audio uploaded, batch job queued
+  READY                  // transcript + (optional) audio stored
+  FAILED                 // transcription failed; transcript not available
+}
+
+model ExternalContext {
+  id                String   @id @default(cuid())
+  orgId             String
+  organization      Organization @relation(fields: [orgId], references: [id])
+  patientId         String
+  patient           Patient  @relation(fields: [patientId], references: [id])
+  episodeOfCareId   String?
+  episode           EpisodeOfCare? @relation(fields: [episodeOfCareId], references: [id])
+
+  /// Date the underlying event happened — NOT when the row was created.
+  dateOfRecord      DateTime
+  source            ExternalContextSource
+  /// Optional human note about the source ("Dr. Smith referral letter",
+  /// "patient phone follow-up", etc.).
+  sourceLabel       String?
+
+  /// Free-text recollection / paste-in transcript / batch transcript output.
+  /// Always present once status === READY. For PENDING_TRANSCRIPTION rows
+  /// (upload mode pre-worker) this is the empty string; the worker overwrites
+  /// it when the Soniox batch completes.
+  transcriptClean   String
+  /// Soniox batch result raw form (if from audio upload). Null when transcript
+  /// was pasted directly.
+  transcriptRaw     Json?
+  /// S3 key for the source audio. Null when transcript-only.
+  audioFileKey      String?
+
+  status            ExternalContextStatus
+
+  addedAt           DateTime @default(now())
+  addedByOrgUserId  String
+  addedBy           OrgUser  @relation("ExternalContextAddedBy", fields: [addedByOrgUserId], references: [id])
+
+  @@index([patientId, dateOfRecord])
   @@index([orgId])
 }

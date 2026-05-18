@@ -7,6 +7,7 @@ import { voiceIdHandler } from './voice-id.worker';
 import { aiGenerationHandler } from './ai-generation.worker';
 import { postSignArtifactsHandler } from './post-sign-artifacts.worker';
 import { noteBriefHandler } from './note-brief.worker';
+import { externalContextHandler } from './external-context.worker';
 import { noteFinalizeStub } from './stubs';
 
 /**
@@ -34,6 +35,7 @@ const workers = [
   new Worker(QUEUE_NAMES.voiceId, voiceIdHandler, baseOptions),
   new Worker(QUEUE_NAMES.noteBrief, noteBriefHandler, baseOptions),
   new Worker(QUEUE_NAMES.postSignArtifacts, postSignArtifactsHandler, baseOptions),
+  new Worker(QUEUE_NAMES.externalContextTranscription, externalContextHandler, baseOptions),
 ];
 
 for (const w of workers) {

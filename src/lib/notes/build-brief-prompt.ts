@@ -56,6 +56,23 @@ export type BriefPriorNoteProjection = {
   finalJson: FinalJsonShape;
 };
 
+/**
+ * External-context records — patient-supplied / outside-provider / earlier-
+ * undocumented prior-visit material. Lower trust than signed Notes (the
+ * clinician didn't attest) but useful chart-side context.
+ *
+ * Spec: context/specs/external-context-upload.md §Brief integration.
+ */
+export type BriefExternalContextProjection = {
+  externalContextId: string;
+  dateOfRecordIso: string;
+  source: string;
+  sourceLabel: string | null;
+  addedByName: string;
+  /** Plain-text transcript (paste mode) or cleaned batch transcript (audio mode). */
+  transcriptClean: string;
+};
+
 export type BuildBriefPromptInput = {
   division: Division;
   todayIso: string; // ISO date used for daysAgo computation
@@ -69,6 +86,8 @@ export type BuildBriefPromptInput = {
    *  <external_ehr_context> block AFTER prior_notes; the LLM treats it
    *  as secondary ground truth per the EHR_CONTEXT_BLOCK system prompt. */
   externalEhrContext?: ExternalEhrContext | null;
+  /** External-context — most recent first; max 5; dateOfRecord ≤ today. */
+  externalContexts?: BriefExternalContextProjection[];
 };
 
 const SYSTEM_HEAD = `
@@ -258,10 +277,45 @@ calling code AFTER your output is parsed. DO NOT include them in your response.
 Now read the input. Output JSON only.
 `.trim();
 
+const EXTERNAL_CONTEXT_BLOCK = `
+═══ EXTERNAL CONTEXT (optional) ═══
+
+An <external_context> block, when present, carries up to 5 records of
+prior-visit material added to the chart by the care team. Sources include
+patient-supplied audio/transcripts, referring-provider documentation,
+earlier visits the clinician did but never documented, and
+free-text recollection.
+
+LOWER-CONFIDENCE THAN SIGNED NOTES. The current clinician did not attest
+to these records. They are NOT visit notes. Treat them as secondary
+ground truth for narrative history only:
+
+  • You MAY use them to add background context to \`chiefConcern\` or
+    \`priorAssessment\` when the signed notes are thin and the external
+    context is clearly relevant.
+  • You MUST NOT pull plan items, measurements, goals, dosages, or
+    medication changes from external context into \`carryForwardPlan\`,
+    \`objectiveMeasures\`, \`topActiveGoals\`, or \`watch.recentMedChanges\`.
+    Those fields are signed-note-only.
+  • When you cite a fact whose only source is an external-context record,
+    phrase it explicitly: "per outside provider note dated YYYY-MM-DD",
+    "per patient-supplied audio dated YYYY-MM-DD", etc. NEVER write
+    "Last visit X said" for external-context content — that phrasing is
+    reserved for signed notes.
+
+If an external-context record contradicts a signed note, prefer the
+signed note. Note the discrepancy in narrative context if clinically
+relevant; never silently override.
+
+NEVER invent. If external context is empty, the brief omits any
+mention of it.
+`.trim();
+
 export const BRIEF_SYSTEM_PROMPT = [
   SYSTEM_HEAD,
   MEASURE_KEY_BLOCK,
   EHR_CONTEXT_BLOCK,
+  EXTERNAL_CONTEXT_BLOCK,
   SYSTEM_TAIL,
 ].join('\n\n');
 
@@ -314,10 +368,42 @@ export function buildBriefUserMessage(input: BuildBriefPromptInput): string {
     priorBlocks || '  (none — first visit on record)',
     '</prior_notes>',
     '',
+    renderExternalContexts(input.externalContexts ?? []),
+    '',
     renderExternalEhrContext(input.externalEhrContext ?? null),
     '',
     'Now produce the brief JSON object. Output JSON only.',
   ].join('\n');
+}
+
+/**
+ * Render the external-context block. When empty the renderer emits a
+ * marker line so the LLM sees that the absence is deliberate (not an
+ * omission). Transcripts are bounded to 4 KB each — the brief prompt's
+ * 8 K token budget cannot accommodate full referring-letter dumps.
+ */
+const EXTERNAL_CONTEXT_TRANSCRIPT_CHAR_LIMIT = 4_000;
+
+function renderExternalContexts(items: BriefExternalContextProjection[]): string {
+  if (items.length === 0) {
+    return '<external_context>\n  (no external context on file for this patient)\n</external_context>';
+  }
+  const lines: string[] = [`<external_context count="${items.length}">`];
+  for (const item of items) {
+    const dateOnly = item.dateOfRecordIso.slice(0, 10);
+    const transcript =
+      item.transcriptClean.length > EXTERNAL_CONTEXT_TRANSCRIPT_CHAR_LIMIT
+        ? item.transcriptClean.slice(0, EXTERNAL_CONTEXT_TRANSCRIPT_CHAR_LIMIT) +
+          '\n…[truncated]'
+        : item.transcriptClean;
+    lines.push(
+      `  <record id="${item.externalContextId}" dateOfRecord="${dateOnly}" source="${item.source}" sourceLabel="${escapeAttr(item.sourceLabel ?? '')}" addedBy="${escapeAttr(item.addedByName)}">`,
+    );
+    lines.push(transcript);
+    lines.push('  </record>');
+  }
+  lines.push('</external_context>');
+  return lines.join('\n');
 }
 
 function renderExternalEhrContext(ctx: ExternalEhrContext | null): string {
