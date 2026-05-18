@@ -189,4 +189,13 @@ export type AuditAction =
   | 'FHIR_AUTH_GRANTED'
   | 'FHIR_AUTH_FAILED'
   | 'FHIR_TOKEN_REFRESHED'
-  | 'FHIR_DISCONNECTED';
+  | 'FHIR_DISCONNECTED'
+  // ---- Unit 20: FHIR / Patient identity matching (Wave 4 / F2) ----
+  // Search + link lifecycle. PHI fence: FHIR_PATIENT_SEARCH metadata
+  // carries field NAMES (which fields the clinician queried by), never
+  // the values. LINK actions carry fhirPatientId which is the EHR-side
+  // identifier (not HIPAA Safe Harbor PHI).
+  | 'FHIR_PATIENT_SEARCH'
+  | 'FHIR_PATIENT_LINK_CREATED'
+  | 'FHIR_PATIENT_LINK_VERIFIED'
+  | 'FHIR_PATIENT_LINK_REMOVED';
