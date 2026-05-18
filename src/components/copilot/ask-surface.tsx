@@ -9,13 +9,23 @@ import { Textarea } from '@/components/ui/textarea';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { StatusBanner } from '@/components/ui/status-banner';
 import { cn } from '@/lib/cn';
+import { DraftCard } from './draft-card';
 
-type SourceKind = 'note' | 'follow-up' | 'goal' | 'patient';
+type SourceKind = 'note' | 'follow-up' | 'goal' | 'patient' | 'fhir' | 'literature';
 
 type Source = {
   kind: SourceKind;
   id: string;
   label: string;
+};
+
+type DraftKind = 'patient-message' | 'followup-cadence' | 'referral-letter';
+
+type Draft = {
+  draftId: string;
+  kind: DraftKind;
+  content: string;
+  meta: Record<string, unknown>;
 };
 
 type ChatMessage = {
@@ -29,6 +39,10 @@ type ChatMessage = {
   isClarification?: boolean;
   /** Assistant-only: stub-mode response gets a small banner. */
   stub?: boolean;
+  /** Assistant-only: Unit 30 drafts to render as DraftCards beneath
+   *  the bubble. Each card is self-contained (owns its own confirm/
+   *  discard state). */
+  drafts?: Draft[];
 };
 
 /**
@@ -90,6 +104,7 @@ export function AskSurface({
           data: {
             answer: { text: string; sources: Source[]; isClarification: boolean };
             toolCalls: Array<{ tool: string; rowCount: number; resultOk: boolean }>;
+            drafts?: Draft[];
             stub: boolean;
           };
         };
@@ -103,6 +118,7 @@ export function AskSurface({
             toolCalls: body.data.toolCalls.length,
             isClarification: a.isClarification,
             stub: body.data.stub,
+            drafts: body.data.drafts,
           },
         ]);
         // Defer scroll so the new message is in the DOM.
@@ -119,7 +135,12 @@ export function AskSurface({
           <EmptyState onPick={(q) => send(q)} disabled={pending} />
         )}
         {messages.map((m, i) => (
-          <MessageBubble key={i} message={m} />
+          <MessageBubble
+            key={i}
+            message={m}
+            patientId={patientId}
+            noteId={noteId}
+          />
         ))}
         {pending && (
           <div className="flex items-start gap-2 text-sm text-muted-foreground">
@@ -167,44 +188,71 @@ export function AskSurface({
   );
 }
 
-function MessageBubble({ message }: { message: ChatMessage }) {
+function MessageBubble({
+  message,
+  patientId,
+  noteId,
+}: {
+  message: ChatMessage;
+  patientId: string;
+  noteId: string;
+}) {
   const isUser = message.role === 'user';
   return (
-    <div className={cn('flex gap-2', isUser ? 'justify-end' : 'justify-start')}>
-      {!isUser && <Sparkles className="h-3.5 w-3.5 mt-2 text-muted-foreground shrink-0" aria-hidden />}
-      <div
-        className={cn(
-          'rounded-lg px-3 py-2 max-w-[80%] text-sm',
-          isUser
-            ? 'bg-[var(--status-info-bg)] text-foreground'
-            : 'bg-muted/40 text-foreground',
-        )}
-      >
-        <p className="whitespace-pre-wrap">{message.content}</p>
-        {message.stub && (
-          <p className="mt-1 text-[10px] uppercase tracking-wide text-[var(--status-warning-fg)]">
-            Stub mode
-          </p>
-        )}
-        {message.isClarification && !isUser && !message.stub && (
-          <p className="mt-1 text-[10px] uppercase tracking-wide text-muted-foreground">
-            Clarification question
-          </p>
-        )}
-        {message.toolCalls && message.toolCalls > 0 && (
-          <p className="mt-1 text-[11px] text-muted-foreground italic">
-            Looked up {message.toolCalls} source{message.toolCalls === 1 ? '' : 's'}.
-          </p>
-        )}
-        {message.sources && message.sources.length > 0 && (
-          <div className="mt-2 flex flex-wrap gap-1">
-            {message.sources.map((s, i) => (
-              <SourceChip key={`${s.kind}-${s.id}-${i}`} source={s} />
-            ))}
-          </div>
-        )}
+    <div className={cn('flex flex-col gap-2', isUser ? 'items-end' : 'items-start')}>
+      <div className={cn('flex gap-2', isUser ? 'justify-end' : 'justify-start')}>
+        {!isUser && <Sparkles className="h-3.5 w-3.5 mt-2 text-muted-foreground shrink-0" aria-hidden />}
+        <div
+          className={cn(
+            'rounded-lg px-3 py-2 max-w-[80%] text-sm',
+            isUser
+              ? 'bg-[var(--status-info-bg)] text-foreground'
+              : 'bg-muted/40 text-foreground',
+          )}
+        >
+          <p className="whitespace-pre-wrap">{message.content}</p>
+          {message.stub && (
+            <p className="mt-1 text-[10px] uppercase tracking-wide text-[var(--status-warning-fg)]">
+              Stub mode
+            </p>
+          )}
+          {message.isClarification && !isUser && !message.stub && (
+            <p className="mt-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+              Clarification question
+            </p>
+          )}
+          {message.toolCalls && message.toolCalls > 0 && (
+            <p className="mt-1 text-[11px] text-muted-foreground italic">
+              Looked up {message.toolCalls} source{message.toolCalls === 1 ? '' : 's'}.
+            </p>
+          )}
+          {message.sources && message.sources.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1">
+              {message.sources.map((s, i) => (
+                <SourceChip key={`${s.kind}-${s.id}-${i}`} source={s} />
+              ))}
+            </div>
+          )}
+        </div>
+        {isUser && <User className="h-3.5 w-3.5 mt-2 text-muted-foreground shrink-0" aria-hidden />}
       </div>
-      {isUser && <User className="h-3.5 w-3.5 mt-2 text-muted-foreground shrink-0" aria-hidden />}
+      {/* Unit 30 — drafts ride beneath the assistant bubble. Each card is
+          self-contained (owns its own pending/confirmed/discarded state). */}
+      {!isUser && message.drafts && message.drafts.length > 0 && (
+        <div className="w-full max-w-[95%] space-y-2">
+          {message.drafts.map((d) => (
+            <DraftCard
+              key={d.draftId}
+              draftId={d.draftId}
+              kind={d.kind}
+              initialContent={d.content}
+              meta={d.meta}
+              patientId={patientId}
+              noteId={noteId}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
