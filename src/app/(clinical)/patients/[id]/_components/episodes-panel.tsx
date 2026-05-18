@@ -505,7 +505,12 @@ function CloseDialog({
         <AlertDialogFooter>
           <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
           <AlertDialogAction
-            onClick={confirm}
+            // Suppress Radix auto-close so async errors land in the still-mounted
+            // dialog instead of disappearing with it.
+            onClick={(e) => {
+              e.preventDefault();
+              confirm();
+            }}
             disabled={pending}
             className="bg-destructive text-white hover:bg-destructive/90"
           >
@@ -582,7 +587,13 @@ function ReopenDialog({
         </div>
         <AlertDialogFooter>
           <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
-          <AlertDialogAction onClick={confirm} disabled={pending}>
+          <AlertDialogAction
+            onClick={(e) => {
+              e.preventDefault();
+              confirm();
+            }}
+            disabled={pending}
+          >
             {pending ? 'Reopening…' : 'Reopen episode'}
           </AlertDialogAction>
         </AlertDialogFooter>
