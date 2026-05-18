@@ -22,7 +22,7 @@ const bodySchema = z.object({
  * direction — captured in audit metadata when supplied.
  */
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const guard = await requireFeatureAccess('TEAM_MEMBERS_MANAGE');
+  const guard = await requireFeatureAccess('TEAM_MEMBERS_MANAGE', req);
   if ('error' in guard) return guard.error;
   const { user, authorizationUser } = guard;
 

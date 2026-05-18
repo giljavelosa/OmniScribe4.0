@@ -16,8 +16,8 @@ export const runtime = 'nodejs';
  * subscription-recount endpoint, but for v1 the seat count is consulted
  * lazily on the next allocation. Logged as a Unit 09 architecture decision.
  */
-export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const guard = await requireFeatureAccess('TEAM_MEMBERS_MANAGE');
+export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const guard = await requireFeatureAccess('TEAM_MEMBERS_MANAGE', req);
   if ('error' in guard) return guard.error;
   const { user, authorizationUser } = guard;
 

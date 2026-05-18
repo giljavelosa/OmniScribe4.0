@@ -29,8 +29,8 @@ export const runtime = 'nodejs';
  * Idempotent: a second POST after success returns the existing
  * noteId + roomUrl unchanged, no duplicate audit rows.
  */
-export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const guard = await requireFeatureAccess('VISITS_CREATE');
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const guard = await requireFeatureAccess('VISITS_CREATE', req);
   if ('error' in guard) return guard.error;
   const { user, authorizationUser } = guard;
 

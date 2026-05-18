@@ -55,7 +55,7 @@ const bodySchema = z.object({
  *     for incident response)
  */
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const guard = await requireFeatureAccess('NOTE_SIGN');
+  const guard = await requireFeatureAccess('NOTE_SIGN', req);
   if ('error' in guard) return guard.error;
   const { user, authorizationUser, orgUser } = guard;
 

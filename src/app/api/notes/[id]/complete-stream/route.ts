@@ -32,7 +32,7 @@ const MAX_AUDIO_BYTES = 32 * 60 * 16_000 * 2; // ~60 MB
  * transcript + enqueue ai-generation. Unit 03 just lands the durable bits.
  */
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const guard = await requireFeatureAccess('NOTE_CREATE');
+  const guard = await requireFeatureAccess('NOTE_CREATE', req);
   if ('error' in guard) return guard.error;
   const { user, authorizationUser, orgUser } = guard;
 

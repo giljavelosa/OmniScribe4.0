@@ -24,7 +24,7 @@ const deleteSchema = z.object({
  * the verification path.
  */
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string; fid: string }> }) {
-  const guard = await requireFeatureAccess('NOTE_REVIEW');
+  const guard = await requireFeatureAccess('NOTE_REVIEW', req);
   if ('error' in guard) return guard.error;
   const { user, authorizationUser } = guard;
 
@@ -79,7 +79,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
  * optional but captured in audit metadata when present.
  */
 export async function DELETE(req: Request, { params }: { params: Promise<{ id: string; fid: string }> }) {
-  const guard = await requireFeatureAccess('NOTE_REVIEW');
+  const guard = await requireFeatureAccess('NOTE_REVIEW', req);
   if ('error' in guard) return guard.error;
   const { user, authorizationUser } = guard;
 

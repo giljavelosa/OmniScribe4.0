@@ -11,7 +11,7 @@ export const runtime = 'nodejs';
 const bodySchema = z.object({ reason: z.string().min(1) });
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const guard = await requireFeatureAccess('VISITS_CREATE');
+  const guard = await requireFeatureAccess('VISITS_CREATE', req);
   if ('error' in guard) return guard.error;
   const { user, authorizationUser } = guard;
 

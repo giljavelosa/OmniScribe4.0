@@ -16,8 +16,8 @@ export const runtime = 'nodejs';
  * (just bumps the due date). Refuses 409 if the episode is DISCHARGED
  * or CANCELLED — close/reopen separately first.
  */
-export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const guard = await requireFeatureAccess('PATIENT_MANAGEMENT');
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const guard = await requireFeatureAccess('PATIENT_MANAGEMENT', req);
   if ('error' in guard) return guard.error;
   const { user, authorizationUser } = guard;
 

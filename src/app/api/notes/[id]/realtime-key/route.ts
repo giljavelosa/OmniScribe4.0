@@ -22,8 +22,8 @@ export const runtime = 'nodejs';
  * Rule 12: returned config locks { enable_speaker_diarization: true,
  * audio_format: 'pcm_s16le' } and 16,000 Hz mono.
  */
-export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const guard = await requireFeatureAccess('NOTE_CREATE');
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const guard = await requireFeatureAccess('NOTE_CREATE', req);
   if ('error' in guard) return guard.error;
   const { user, authorizationUser, orgUser } = guard;
 

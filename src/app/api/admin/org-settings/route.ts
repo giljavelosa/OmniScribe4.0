@@ -45,7 +45,7 @@ const ORG_FIELDS = [
  * note-style defaults).
  */
 export async function PATCH(req: Request) {
-  const guard = await requireFeatureAccess('TEAM_MEMBERS_MANAGE');
+  const guard = await requireFeatureAccess('TEAM_MEMBERS_MANAGE', req);
   if ('error' in guard) return guard.error;
   const { user, authorizationUser } = guard;
 

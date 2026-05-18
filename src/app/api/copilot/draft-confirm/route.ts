@@ -47,7 +47,7 @@ const bodySchema = z.object({
  * shape; v1 lets the clinician confirm one cadence at a time.
  */
 export async function POST(req: Request) {
-  const guard = await requireFeatureAccess('NOTE_REVIEW');
+  const guard = await requireFeatureAccess('NOTE_REVIEW', req);
   if ('error' in guard) return guard.error;
   const { user, authorizationUser } = guard;
 

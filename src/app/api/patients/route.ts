@@ -106,7 +106,7 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const guard = await requireFeatureAccess('PATIENT_MANAGEMENT');
+  const guard = await requireFeatureAccess('PATIENT_MANAGEMENT', req);
   if ('error' in guard) return guard.error;
   const { user, authorizationUser } = guard;
 

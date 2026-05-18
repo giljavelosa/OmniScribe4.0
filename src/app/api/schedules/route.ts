@@ -46,7 +46,7 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const guard = await requireFeatureAccess('VISITS_CREATE');
+  const guard = await requireFeatureAccess('VISITS_CREATE', req);
   if ('error' in guard) return guard.error;
   const { user, authorizationUser } = guard;
 

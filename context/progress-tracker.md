@@ -519,7 +519,11 @@ No more units. The 37-unit build plan is complete. Post-GA work lives outside th
 - Deployment automation: GitHub Actions → AWS pipeline
 - Monitoring: CloudWatch dashboards + alarms; per-org cost projections
 - Brand: 192/512 PWA icon PNGs; marketing surfaces beyond `/`
+<<<<<<< HEAD
 - Polish: ~~3 touch-target audit follow-ups~~ ✅ (PR #39 polish/touch-target-fixes), scoped impersonation mutations, BullMQ background aggregation jobs, deeper Watch v2 patterns, chip-style touch targets (audit skip needs visual-design follow-up), etc.
+=======
+- Polish: ~~3 touch-target audit follow-ups~~ ✅ (PR #39), ~~BullMQ background aggregation jobs~~ ✅ (PR #40 — shipped as cron CLI; BullMQ promotion still on the table when sub-daily refresh is demanded), ~~assertNotImpersonating audit-fidelity sweep~~ ✅ (PR #41 polish/impersonation-audit-sweep — extended `requireFeatureAccess(featureKey, req?)` chokepoint; migrated 60 mutation routes via a one-shot script; full audit fidelity for IMPERSONATION_BLOCKED_MUTATION across all feature-gated mutations), scoped impersonation mutations (v2), deeper Watch v2 patterns, chip-style touch targets (audit skip needs visual-design follow-up), etc.
+>>>>>>> b24562a (polish: assertNotImpersonating audit-fidelity sweep (60 routes))
 3. **Unit 35 — Per-org LLM cost rollup.** Track token usage per org per day; expose in owner console; alert thresholds; cost-per-note metric. Depends on Unit 32.
 4. **Unit 36 — Mobile / PWA polish.** next-pwa offline UX; iPad-specific layout audit; touch-target audit; reduced-motion audit. Depends on Unit 03.
 5. **Unit 37 — Public signup + self-serve org creation.** Public landing → signup → org provisioning; account lockout fields on User; invite-token expiration enforcement; rate-limit; CAPTCHA. Depends on Unit 08.

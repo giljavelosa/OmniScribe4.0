@@ -31,7 +31,7 @@ const bodySchema = z.object({
  * NEVER the reason text itself.
  */
 export async function POST(req: Request) {
-  const guard = await requireFeatureAccess('NOTE_REVIEW');
+  const guard = await requireFeatureAccess('NOTE_REVIEW', req);
   if ('error' in guard) return guard.error;
   const { user, authorizationUser } = guard;
 

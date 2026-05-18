@@ -32,7 +32,7 @@ export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string; sectionId: string }> },
 ) {
-  const guard = await requireFeatureAccess('NOTE_EDIT');
+  const guard = await requireFeatureAccess('NOTE_EDIT', req);
   if ('error' in guard) return guard.error;
   const { user, authorizationUser, orgUser } = guard;
 

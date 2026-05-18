@@ -24,7 +24,7 @@ const bodySchema = z.object({
  * scheduleId fails at the DB level → we surface 409 already_exists.
  */
 export async function POST(req: Request) {
-  const guard = await requireFeatureAccess('VISITS_CREATE');
+  const guard = await requireFeatureAccess('VISITS_CREATE', req);
   if ('error' in guard) return guard.error;
   const { user, authorizationUser } = guard;
 

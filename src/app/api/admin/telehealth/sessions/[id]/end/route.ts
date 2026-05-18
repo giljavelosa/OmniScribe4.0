@@ -32,7 +32,7 @@ const bodySchema = z.object({
  * sets endedAt + endedReason. Refuses 409 on already-COMPLETED.
  */
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const guard = await requireFeatureAccess('VISITS_CREATE');
+  const guard = await requireFeatureAccess('VISITS_CREATE', req);
   if ('error' in guard) return guard.error;
   const { user, authorizationUser } = guard;
 

@@ -11,8 +11,8 @@ import { buildPasswordResetEmail } from '@/lib/email/templates/password-reset';
 export const runtime = 'nodejs';
 const TOKEN_TTL_HOURS = 1;
 
-export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const guard = await requireFeatureAccess('TEAM_MEMBERS_MANAGE');
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const guard = await requireFeatureAccess('TEAM_MEMBERS_MANAGE', req);
   if ('error' in guard) return guard.error;
   const { user, authorizationUser, orgUser } = guard;
 

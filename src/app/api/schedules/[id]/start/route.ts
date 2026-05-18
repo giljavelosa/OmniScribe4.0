@@ -13,8 +13,8 @@ export const runtime = 'nodejs';
  * the Note (status PREPARING), and return the noteId so the client can route
  * to /prepare/[noteId]. Note.division is locked at this moment per spec §E.
  */
-export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const guard = await requireFeatureAccess('VISITS_CREATE');
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const guard = await requireFeatureAccess('VISITS_CREATE', req);
   if ('error' in guard) return guard.error;
   const { user, authorizationUser } = guard;
 

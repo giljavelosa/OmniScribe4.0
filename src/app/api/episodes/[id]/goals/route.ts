@@ -23,7 +23,7 @@ const createSchema = z.object({
  * grow new goals — reopen first, then add).
  */
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const guard = await requireFeatureAccess('PATIENT_MANAGEMENT');
+  const guard = await requireFeatureAccess('PATIENT_MANAGEMENT', req);
   if ('error' in guard) return guard.error;
   const { user, authorizationUser } = guard;
 

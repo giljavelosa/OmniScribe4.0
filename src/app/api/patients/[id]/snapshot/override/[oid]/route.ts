@@ -15,10 +15,10 @@ export const runtime = 'nodejs';
  * Idempotent: deleting an already-superseded row returns 409 already_superseded.
  */
 export async function DELETE(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string; oid: string }> },
 ) {
-  const guard = await requireFeatureAccess('PATIENT_MANAGEMENT');
+  const guard = await requireFeatureAccess('PATIENT_MANAGEMENT', req);
   if ('error' in guard) return guard.error;
   const { user, authorizationUser } = guard;
 
