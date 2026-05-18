@@ -17,6 +17,9 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 const scheduleFindFirst = vi.fn();
 const encounterFindUnique = vi.fn();
 const noteFindFirst = vi.fn();
+const orgUserFindUnique = vi.fn();
+const siteFindMany = vi.fn();
+const orgUserSiteFindMany = vi.fn();
 const txMock = vi.fn();
 
 vi.mock('@/lib/prisma', () => ({
@@ -24,6 +27,12 @@ vi.mock('@/lib/prisma', () => ({
     schedule: { findFirst: (...a: unknown[]) => scheduleFindFirst(...a) },
     encounter: { findUnique: (...a: unknown[]) => encounterFindUnique(...a) },
     note: { findFirst: (...a: unknown[]) => noteFindFirst(...a) },
+    // Multi-site enrollment: getClinicianSiteIds reads orgUser + orgUserSite.
+    // Default to a CLINICIAN enrolled at the schedule.siteId so picker-only
+    // tests don't trip the new `site_not_enrolled` guard.
+    orgUser: { findUnique: (...a: unknown[]) => orgUserFindUnique(...a) },
+    site: { findMany: (...a: unknown[]) => siteFindMany(...a) },
+    orgUserSite: { findMany: (...a: unknown[]) => orgUserSiteFindMany(...a) },
     $transaction: (cb: (tx: unknown) => Promise<unknown>) => txMock(cb),
   },
 }));
@@ -49,10 +58,17 @@ beforeEach(() => {
   scheduleFindFirst.mockReset();
   encounterFindUnique.mockReset();
   noteFindFirst.mockReset();
+  orgUserFindUnique.mockReset();
+  siteFindMany.mockReset();
+  orgUserSiteFindMany.mockReset();
   txMock.mockReset();
   requireFeatureAccess.mockReset();
   writeAuditLog.mockReset();
   startVisit.mockReset();
+  // Default site-scope: caller is a CLINICIAN enrolled at site_1, matching the
+  // schedule fixtures below. Individual tests can override these mocks.
+  orgUserFindUnique.mockResolvedValue({ role: 'CLINICIAN', orgId: 'org_1' });
+  orgUserSiteFindMany.mockResolvedValue([{ siteId: 'site_1' }]);
 });
 
 function authedGuard() {

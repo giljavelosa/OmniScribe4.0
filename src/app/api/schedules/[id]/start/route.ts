@@ -4,6 +4,7 @@ import { z } from 'zod';
 
 import { prisma } from '@/lib/prisma';
 import { requireFeatureAccess } from '@/lib/authz/server';
+import { canActAtSite, getClinicianSiteIds } from '@/lib/authz/site-scope';
 import { writeAuditLog } from '@/lib/audit/log';
 import { startVisit, type PickerSource } from '@/lib/encounters/start';
 
@@ -61,6 +62,27 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     where: { id, orgId: authorizationUser.orgId },
   });
   if (!schedule) return NextResponse.json({ error: { code: 'not_found' } }, { status: 404 });
+
+  // Multi-site enrollment guard — the schedule.siteId must be in the caller's
+  // scope. Org-wide roles bypass via scope 'all'. Cross-coverage exception is
+  // hard-blocked in v1 per spec; warn-and-proceed lands when the per-org
+  // policy toggle ships.
+  const siteScope = await getClinicianSiteIds(
+    authorizationUser.orgUserId,
+    authorizationUser.orgId,
+  );
+  if (!canActAtSite(siteScope, schedule.siteId)) {
+    return NextResponse.json(
+      {
+        error: {
+          code: 'site_not_enrolled',
+          message:
+            'You are not enrolled at this site. Ask your admin to add you on the Team members page.',
+        },
+      },
+      { status: 400 },
+    );
+  }
 
   // Decide which episode the encounter should link to:
   //   1. Explicit body param wins (clinician used the picker, or chose skip).

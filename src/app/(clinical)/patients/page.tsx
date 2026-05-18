@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { Division, Prisma } from '@prisma/client';
+import { getClinicianSiteIds } from '@/lib/authz/site-scope';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { PatientsSearchForm } from './_components/patients-search-form';
@@ -14,25 +15,53 @@ export const metadata: Metadata = { title: 'Patients' };
 
 const PAGE_SIZE = 20;
 
-type SearchParamsShape = Promise<{ query?: string; division?: string; page?: string }>;
+const ADMIN_ROLES = ['SUPER_ADMIN', 'ORG_ADMIN'] as const;
+
+type SearchParamsShape = Promise<{
+  query?: string;
+  division?: string;
+  page?: string;
+  scope?: string;
+}>;
 
 export default async function PatientsPage({
   searchParams,
 }: {
   searchParams: SearchParamsShape;
 }) {
-  const { query, division, page } = await searchParams;
+  const { query, division, page, scope } = await searchParams;
   const session = await auth();
-  if (!session?.user?.orgId) return null;
+  if (!session?.user?.orgId || !session.user.orgUserId) return null;
 
   const rawQuery = (query ?? '').trim();
   const divisionFilter = (division as Division | undefined) ?? undefined;
   const pageNum = Math.max(1, Number(page ?? '1') || 1);
 
+  // "My sites only" filter chip. Defaults ON for clinicians, OFF for admins.
+  // ?scope=all explicitly disables; ?scope=mine explicitly enables.
+  const role = session.user.role;
+  const isAdmin = role && (ADMIN_ROLES as readonly string[]).includes(role);
+  const mineDefault = !isAdmin;
+  const mineActive =
+    scope === 'mine' ? true : scope === 'all' ? false : mineDefault;
+
+  const siteScope = await getClinicianSiteIds(
+    session.user.orgUserId,
+    session.user.orgId,
+  );
+  // Only narrow by siteId when the caller actually has enrolled sites; an admin
+  // with scope 'all' may still tick "My sites only" but their enrollment list
+  // is the org's whole site list, which gives the same result either way.
+  const siteFilter =
+    mineActive && siteScope.scope === 'enrolled' && siteScope.siteIds.length > 0
+      ? { siteId: { in: siteScope.siteIds } }
+      : {};
+
   const where: Prisma.PatientWhereInput = {
     orgId: session.user.orgId,
     isDeleted: false,
     ...(divisionFilter ? { division: divisionFilter } : {}),
+    ...siteFilter,
     ...(rawQuery
       ? {
           OR: [
@@ -64,6 +93,40 @@ export default async function PatientsPage({
         <AddPatientButton />
       </div>
       <PatientsSearchForm initialQuery={rawQuery} initialDivision={divisionFilter ?? ''} />
+
+      {siteScope.scope === 'enrolled' && siteScope.siteIds.length > 0 && (
+        <div className="flex items-center gap-2 text-sm">
+          <Link
+            href={pageHref({
+              query: rawQuery,
+              division: divisionFilter,
+              page: 1,
+              scope: mineActive ? undefined : 'mine',
+            })}
+            aria-pressed={mineActive}
+            className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs transition-colors min-h-[var(--touch-min)] ${
+              mineActive
+                ? 'border-primary bg-primary/10 text-primary'
+                : 'border-border text-muted-foreground hover:bg-muted/40'
+            }`}
+          >
+            {mineActive ? '✓ My sites only' : 'My sites only'}
+          </Link>
+          {mineActive && (
+            <Link
+              href={pageHref({
+                query: rawQuery,
+                division: divisionFilter,
+                page: 1,
+                scope: 'all',
+              })}
+              className="text-xs text-muted-foreground underline"
+            >
+              Show all
+            </Link>
+          )}
+        </div>
+      )}
 
       <Card>
         <CardHeader>
@@ -117,12 +180,28 @@ export default async function PatientsPage({
           </span>
           <div className="flex gap-2">
             {pageNum > 1 && (
-              <Link href={pageHref({ query: rawQuery, division: divisionFilter, page: pageNum - 1 })} className="underline">
+              <Link
+                href={pageHref({
+                  query: rawQuery,
+                  division: divisionFilter,
+                  page: pageNum - 1,
+                  scope: mineActive ? 'mine' : undefined,
+                })}
+                className="underline"
+              >
                 ← Prev
               </Link>
             )}
             {pageNum * PAGE_SIZE < total && (
-              <Link href={pageHref({ query: rawQuery, division: divisionFilter, page: pageNum + 1 })} className="underline">
+              <Link
+                href={pageHref({
+                  query: rawQuery,
+                  division: divisionFilter,
+                  page: pageNum + 1,
+                  scope: mineActive ? 'mine' : undefined,
+                })}
+                className="underline"
+              >
                 Next →
               </Link>
             )}
@@ -133,10 +212,16 @@ export default async function PatientsPage({
   );
 }
 
-function pageHref(args: { query: string; division: Division | undefined; page: number }) {
+function pageHref(args: {
+  query: string;
+  division: Division | undefined;
+  page: number;
+  scope?: 'mine' | 'all' | undefined;
+}) {
   const u = new URLSearchParams();
   if (args.query) u.set('query', args.query);
   if (args.division) u.set('division', args.division);
   u.set('page', String(args.page));
+  if (args.scope) u.set('scope', args.scope);
   return `/patients?${u.toString()}`;
 }

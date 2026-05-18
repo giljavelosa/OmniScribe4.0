@@ -219,6 +219,7 @@ model Site {
   rooms       Room[]
   patients    Patient[]
   departments Department[]
+  enrollments OrgUserSite[]
 
   @@index([orgId])
 }
@@ -293,6 +294,8 @@ model OrgUser {
   practitionerProfile PractitionerProfile?
   fhirIdentities      FhirIdentity[]       @relation("FhirIdentityClinician")
   externalContextsAdded ExternalContext[]  @relation("ExternalContextAddedBy")
+  siteEnrollments     OrgUserSite[]        @relation("OrgUserSiteMember")
+  siteEnrollmentsCreated OrgUserSite[]     @relation("OrgUserSiteEnroller")
 
   @@unique([userId, orgId])
   @@index([orgId, role])
@@ -1501,4 +1504,37 @@ model ExternalContext {
 
   @@index([patientId, dateOfRecord])
   @@index([orgId])
+}
+
+// -----------------------------------------------------------------------------
+// Multi-site clinician enrollment
+// Spec: context/specs/clinician-site-enrollment.md
+//
+// Append-only (rule 1): no existing tables touched. Models the explicit
+// clinician ↔ site link. Org-wide roles (ORG_ADMIN+, PLATFORM_*) implicitly
+// cover every site via the `getClinicianSiteIds` helper without needing rows
+// here.
+// -----------------------------------------------------------------------------
+
+model OrgUserSite {
+  id        String  @id @default(cuid())
+  orgUserId String
+  orgUser   OrgUser @relation("OrgUserSiteMember", fields: [orgUserId], references: [id], onDelete: Cascade)
+  siteId    String
+  site      Site    @relation(fields: [siteId], references: [id])
+
+  /// True for the clinician's primary/home site. UI defaults (schedule
+  /// "My sites" filter, patient creation default siteId) use this.
+  isPrimary       Boolean  @default(false)
+
+  /// Free-text scope notes — "OR privileges", "evening shift only",
+  /// "supervision required". Surfaced in admin UI; not enforced.
+  credentialNotes String?
+
+  enrolledAt         DateTime @default(now())
+  enrolledByOrgUserId String?
+  enrolledBy         OrgUser? @relation("OrgUserSiteEnroller", fields: [enrolledByOrgUserId], references: [id])
+
+  @@unique([orgUserId, siteId])
+  @@index([siteId])
 }

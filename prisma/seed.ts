@@ -216,6 +216,27 @@ async function main() {
         });
       }
     }
+
+    // Multi-site enrollment seed — pre-enroll the clinician and the site
+    // admin at the demo site as primary so the demo flows work end-to-end
+    // without an admin click. Org-wide-admins (admin@demo.local /
+    // owner@demo.local) don't need rows here.
+    if (u.email === 'clinician@demo.local' || u.email === 'siteadmin@demo.local') {
+      const ou = await prisma.orgUser.findUnique({
+        where: { userId_orgId: { userId: user.id, orgId: org.id } },
+      });
+      if (ou) {
+        await prisma.orgUserSite.upsert({
+          where: { orgUserId_siteId: { orgUserId: ou.id, siteId: site.id } },
+          update: { isPrimary: true },
+          create: {
+            orgUserId: ou.id,
+            siteId: site.id,
+            isPrimary: true,
+          },
+        });
+      }
+    }
   }
 
   // Backfill org.baaCountersignedBy with the platform owner now that they exist.
