@@ -3,6 +3,8 @@ import { Inter, Geist, Geist_Mono } from 'next/font/google';
 import { Providers } from '@/components/providers';
 import './globals.css';
 import { ImpersonationBanner } from '@/components/impersonation-banner';
+import { RegisterServiceWorker } from '@/components/pwa/register-sw';
+import { InstallPrompt } from '@/components/pwa/install-prompt';
 
 const inter = Inter({
   subsets: ['latin'],
@@ -30,6 +32,14 @@ export const metadata: Metadata = {
   description: 'HIPAA-grade medical AI scribe with an integrated agentic clinical copilot.',
   applicationName: 'OmniScribe',
   formatDetection: { telephone: false },
+  // Unit 36 — PWA manifest reference. Static file at public/manifest.json;
+  // Next emits the proper <link rel="manifest"> tag.
+  manifest: '/manifest.json',
+  appleWebApp: {
+    capable: true,
+    title: 'OmniScribe',
+    statusBarStyle: 'default',
+  },
 };
 
 export const viewport: Viewport = {
@@ -51,6 +61,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           {/* Unit 32 — global impersonation banner. Self-renders nothing
               when no impersonation is active, so safe to mount at root. */}
           <ImpersonationBanner />
+          {/* Unit 36 — PWA infrastructure. RegisterServiceWorker is
+              effect-only (no DOM); InstallPrompt self-renders nothing
+              until beforeinstallprompt fires + the user is eligible. */}
+          <RegisterServiceWorker />
+          <InstallPrompt />
           {children}
         </Providers>
       </body>

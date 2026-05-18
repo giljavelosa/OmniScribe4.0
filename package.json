@@ -18,6 +18,7 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "verify:providers": "node --env-file=.env --import=tsx scripts/verify-providers.ts",
+    "touch-audit": "node scripts/touch-target-audit.mjs",
     "postinstall": "node scripts/postinstall.mjs"
   },
   "prisma": {

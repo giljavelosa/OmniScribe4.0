@@ -285,4 +285,6 @@ export type AuditAction =
   | 'AUDIT_RETENTION_UPDATED'
   | 'AUDIT_PURGE_RUN'
   // ---- Unit 35: Per-org LLM cost rollup ----
-  | 'LLM_BUDGET_UPDATED';
+  | 'LLM_BUDGET_UPDATED'
+  // ---- Unit 36: Mobile / PWA polish ----
+  | 'PWA_INSTALL_PROMPTED';
