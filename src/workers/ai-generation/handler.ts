@@ -322,8 +322,17 @@ async function regenerateOne(
  * text as content.
  */
 function extractContent(rawText: string, sectionId: string): string {
-  const trimmed = rawText.trim();
-  // Try JSON parse first.
+  let trimmed = rawText.trim();
+  // Strip markdown code fence if present. Claude and many other LLMs wrap
+  // JSON in ```json … ``` (or ``` … ```) even when asked for raw JSON via
+  // jsonMode. Without unwrapping, JSON.parse fails and the entire fenced
+  // block (including the ```json header and the inner { sectionId, content }
+  // wrapper) ends up rendered to the clinician as raw JSON in /review.
+  const fenceMatch = trimmed.match(/^```(?:json)?\s*\r?\n([\s\S]*?)\r?\n```$/);
+  if (fenceMatch?.[1]) {
+    trimmed = fenceMatch[1].trim();
+  }
+  // Try JSON parse.
   try {
     const parsed = JSON.parse(trimmed) as { content?: string; sectionId?: string };
     if (typeof parsed.content === 'string') return parsed.content;
