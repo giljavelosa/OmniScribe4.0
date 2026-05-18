@@ -96,6 +96,7 @@ model Organization {
   followUps          FollowUp[]
   telehealthSessions TelehealthSession[]
   fhirIdentities     FhirIdentity[]
+  ehrConnections     OrgEhrConnection[]
 
   @@index([baaExecutedAt])
 }
@@ -1266,4 +1267,38 @@ model FhirLaunchState {
   expiresAt          DateTime
 
   @@index([expiresAt])
+}
+
+/**
+ * Per-org EHR connection — Unit 24 / F6 schema only.
+ *
+ * Houses encrypted client credentials + the FHIR base URL per (org,
+ * ehrSystem) tuple. Lets a future unit support multi-EHR-per-org or
+ * per-customer credential rotation without an env-var redeploy.
+ *
+ * v1 ships ZERO callers — the existing NextGen flow stays env-driven
+ * (rule 14: client secrets in env / Secrets Manager). When the first
+ * paying customer demands Epic / Cerner, the per-org config flow lands
+ * with the wiring that reads from this table.
+ *
+ * Credentials encrypted with the same AES-256-GCM envelope as
+ * FhirIdentity tokens (lib/fhir/token-crypto.ts) so the at-rest
+ * encryption posture is identical.
+ */
+model OrgEhrConnection {
+  id              String   @id @default(cuid())
+  orgId           String
+  organization    Organization @relation(fields: [orgId], references: [id])
+  ehrSystem       String   // matches EhrVendor: 'nextgen' | 'epic' | 'cerner'
+  displayName     String
+  fhirBaseUrl     String
+  clientIdEnc     String   @db.Text
+  clientSecretEnc String   @db.Text
+  redirectUri     String
+  enabled         Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([orgId, ehrSystem])
+  @@index([orgId])
 }
