@@ -11,14 +11,20 @@ import { POST } from '@/app/api/onboarding/[token]/password/route';
  * cheaper to validate end-to-end than to mock module by module).
  *
  * Cleans up its own fixtures regardless of pass/fail (idempotent re-runs).
+ *
+ * Skipped in CI (no Postgres). Run locally via `npm test` with
+ * `DATABASE_URL` set.
  */
-const prisma = new PrismaClient();
+const hasDb = !!process.env.DATABASE_URL;
+const describeMaybe = hasDb ? describe : describe.skip;
+const prisma = hasDb ? new PrismaClient() : (null as unknown as PrismaClient);
 
 const TEST_ORG_ID = 'test-org-unit-08-expired-invite';
 const TEST_INVITE_ID = 'test-inv-unit-08-expired';
 const TEST_INVITE_TOKEN = 'unit-08-expired-token-' + Math.random().toString(36).slice(2, 10);
 
 beforeAll(async () => {
+  if (!hasDb) return;
   await prisma.organization.upsert({
     where: { id: TEST_ORG_ID },
     update: {},
@@ -46,6 +52,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  if (!hasDb) return;
   await prisma.invite.deleteMany({ where: { id: TEST_INVITE_ID } });
   // OrgUser fixtures may exist if a sibling test crossed paths — best-effort.
   await prisma.orgUser.deleteMany({ where: { orgId: TEST_ORG_ID } });
@@ -53,7 +60,7 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
-describe('POST /api/onboarding/[token]/password', () => {
+describeMaybe('POST /api/onboarding/[token]/password', () => {
   it('returns 410 Gone for an expired invite token', async () => {
     const req = new Request('http://test.local/api/onboarding/_/password', {
       method: 'POST',
