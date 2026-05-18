@@ -11,6 +11,7 @@ import { UsageChart } from './_components/usage-chart';
 import { TransactionsTimeline } from './_components/transactions-timeline';
 import { ImpersonateControl } from './_components/impersonate-control';
 import { AuditRetentionForm } from './_components/audit-retention-form';
+import { LlmCostCard } from './_components/llm-cost-card';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Organization' };
@@ -123,6 +124,20 @@ export default async function OwnerOrgPage({ params }: { params: Promise<{ id: s
         <CardHeader><CardTitle className="text-md">30-day usage</CardTitle></CardHeader>
         <CardContent>
           <UsageChart orgId={org.id} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle className="text-md">LLM cost</CardTitle></CardHeader>
+        <CardContent>
+          <LlmCostCard
+            orgId={org.id}
+            initial={{
+              monthlyBudgetUsd: org.monthlyLlmBudgetUsd
+                ? Number(org.monthlyLlmBudgetUsd)
+                : null,
+            }}
+          />
         </CardContent>
       </Card>
 
