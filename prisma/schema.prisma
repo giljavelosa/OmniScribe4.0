@@ -831,26 +831,38 @@ model Note {
 // surface; Unit 05 ships only the seeded presets.
 // =============================================================================
 model NoteTemplate {
-  id                 String               @id @default(cuid())
-  orgId              String?
-  organization       Organization?        @relation(fields: [orgId], references: [id])
-  name               String
-  description        String?
-  division           Division
-  specialty          String?
-  visibility         String // 'PERSONAL' | 'TEAM' | 'PUBLIC'
-  isPreset           Boolean              @default(false)
-  sectionSchema      Json // { sections: [{ id, label, required?, promptHint? }] }
-  promptHints        Json?
-  sensitivityDefault NoteSensitivityLevel @default(STANDARD_CLINICAL)
-  version            Int                  @default(1)
-  createdByOrgUserId String?
-  createdAt          DateTime             @default(now())
-  updatedAt          DateTime             @updatedAt
+  id                  String               @id @default(cuid())
+  orgId               String?
+  organization        Organization?        @relation(fields: [orgId], references: [id])
+  name                String
+  description         String?
+  division            Division
+  specialty           String?
+  visibility          String // 'PERSONAL' | 'TEAM' | 'PUBLIC'
+  isPreset            Boolean              @default(false)
+  sectionSchema       Json // { sections: [{ id, label, required?, promptHint? }] }
+  promptHints         Json?
+  sensitivityDefault  NoteSensitivityLevel @default(STANDARD_CLINICAL)
+  version             Int                  @default(1)
+  createdByOrgUserId  String?
+  /** Unit 13 — source template when this row was cloned (drives version-
+   *  history chain). null when this is an original. */
+  clonedFromId        String?
+  clonedFrom          NoteTemplate?        @relation("TemplateClonedFrom", fields: [clonedFromId], references: [id])
+  clones              NoteTemplate[]       @relation("TemplateClonedFrom")
+  /** Unit 13 — soft-delete. Archived templates don't surface in the picker;
+   *  the row stays for historical note reference. */
+  isArchived          Boolean              @default(false)
+  archivedAt          DateTime?
+  archivedByOrgUserId String?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
 
   notes Note[]
 
   @@index([orgId, division, isPreset])
+  @@index([orgId, isArchived])
+  @@index([clonedFromId])
 }
 
 // =============================================================================

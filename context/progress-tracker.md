@@ -4,11 +4,11 @@
 
 ## Current Phase
 
-- **Wave 2 — progressing.** Unit 12 shipped (PR #13 — branch `feat/unit-12-patient-detail-redesign`). Unit 11 shipped (PR #12). Unit 10 shipped (PR #11). Wave 1 complete (PRs #6–#10). Wave 0 complete (PRs #1–#5). Wave 2 maturing the clinical surfaces: Unit 10 closed regenerate-flow trust gaps; Unit 11 filled in the Episode-of-Care lifecycle; Unit 12 turns `/patients/[id]` into a multi-division-aware clinical reference surface (snapshot strip + override-wins precedence + visit-history snippets + inline-editable demographics).
+- **Wave 2 — progressing.** Unit 13 shipped (PR #14 — branch `feat/unit-13-templates-editor-maturity`). Unit 12 shipped (PR #13). Unit 11 shipped (PR #12). Unit 10 shipped (PR #11). Wave 1 complete (PRs #6–#10). Wave 0 complete (PRs #1–#5). Wave 2 maturing the clinical surfaces: Unit 10 closed regenerate-flow trust gaps; Unit 11 filled in the Episode-of-Care lifecycle; Unit 12 redesigned `/patients/[id]`; Unit 13 ships the templates authoring surface (visibility UX, copy/clone with version history via clonedFromId chain, live section preview, sensitivityDefault picker, archive lifecycle).
 
 ## Current Goal
 
-- Await user confirmation before starting Unit 13 — Templates editor maturity (Wave 2 / unit 4), per Prompt B's stop-between-units contract.
+- Await user confirmation before starting Unit 14 — Review screen polish (Wave 2's closing unit), per Prompt B's stop-between-units contract.
 
 ## Completed
 
@@ -169,6 +169,15 @@
   - Patient detail page restructured: two-column desktop (`lg:grid-cols-[1fr_20rem]`), single-column mobile. Left: snapshot strip (full-width above), then episodes / visits / demographics stacked. Right sticky aside: addresses + coverage.
   - 113 tests pass; build clean; 2 new routes ship (`/api/patients/[id]/snapshot/override` + `/[oid]`).
 
+- **2026-05-17 — Unit 13: Templates editor maturity** (PR #14 — `feat(unit-13): templates editor maturity`).
+  - Spec at `context/specs/13-templates-editor-maturity.md`.
+  - 5 new AuditAction values: TEMPLATE_CREATED / _UPDATED / _CLONED / _ARCHIVED / _UNARCHIVED.
+  - Schema: NoteTemplate gains `clonedFromId String?` + self-relation (drives version-history chain), `isArchived Boolean` + `archivedAt` + `archivedByOrgUserId` (soft-delete; archived templates don't surface in the picker but the row stays so historical notes still resolve their template). Two new indexes: (orgId, isArchived), (clonedFromId).
+  - `src/lib/templates/section-schema.ts` — Zod schema validated at every CRUD boundary so the ai-generation worker always sees a known shape. Section ids constrained to lowercase + digits + `_-`; max 20 sections per template.
+  - APIs: `GET /api/admin/templates` (list, scopes presets + org PERSONAL filtered to creator + TEAM/PUBLIC), `POST` (create org-scoped), `GET /api/admin/templates/[id]` (detail + clonedFrom chain), `PATCH /[id]` (update + version bump on sectionSchema change), `POST /[id]/clone` (any visible source → new org row at version 1 + clonedFromId), `POST /[id]/archive` (soft-delete + restore; preset_readonly 403). Section id uniqueness enforced at the API layer.
+  - UI: `/admin/templates` two-section list (org's templates + read-only platform presets); CreateTemplateSheet seeds a single "Notes" section then routes to the editor; CloneTemplateButton (AlertDialog) on every row. `/admin/templates/[id]` two-column editor with header form + sections list (add / reorder / delete / required toggle / promptHint) + sticky LivePreview pane that renders the section list exactly as SectionAccordion would on /review. Archive AlertDialog at the bottom.
+  - Admin nav grows: Users · Sites · Seats · Templates · Audit · Org settings.
+
 ## In Progress
 
 None.
@@ -177,7 +186,7 @@ None.
 
 In priority order:
 
-1. **Unit 13 — Templates editor maturity** — template authoring with live section preview (graduates from raw JSON editor), visibility (PERSONAL/TEAM/PUBLIC) UX, specialty/org defaults rule editor, copy/clone with version history, sensitivityDefault picker.
+1. **Unit 14 — Review screen polish (Wave 2's closing unit)** — TipTap rich editor for sections (graduates from textarea), AI compliance-flag inline annotations on the review surface, status-changed audit at the review-screen sensitivity-tier-picker, sign-time co-sign workflow for sensitive overrides.
 8. **Unit 07 — Encounter Copilot Watch v0** ([`context/specs/07-encounter-copilot-watch-v0.md`](specs/07-encounter-copilot-watch-v0.md)) — beacon + open-follow-ups + plan-for-today cards.
 9. **Unit 08 — Admin & Compliance Ready** ([`context/specs/08-admin-and-compliance-ready.md`](specs/08-admin-and-compliance-ready.md)) — Sites + Rooms CRUD, admin-initiated MFA reset + password reset, customer self-onboarding wizard, BAA admin UI.
 
@@ -338,6 +347,15 @@ These need user/PM decision before the depending unit can ship. Quote the source
 - **2026-05-17 — PATIENT_DEMOGRAPHICS_EDITED is a separate audit row alongside PATIENT_UPDATED.** Same rationale as Unit 08's USER_ROLE_CHANGED separation: demographic changes are higher-severity than (say) phone-number tweaks (legal name change → claim history reconciliation; DOB change → potential identity-fraud signal). Compliance dashboards filtering for demographic changes shouldn't have to scan every PATIENT_UPDATED row. The check covers 8 fields: firstName / lastName / mrn / dob / sex / phone / email / preferredLanguage.
 - **2026-05-17 — visit-history snippet derived server-side from finalJson.** `deriveAssessmentSnippet` walks Assessment → Subjective → first non-empty section, truncates to 280 chars. Server-side because (a) finalJson contains PHI and shouldn't ship to the client for client-side truncation, (b) the server already has finalJson loaded for the visit-history query, (c) consistency: the same snippet logic powers both the wire response on GET /api/patients/[id] and the SSR render on /patients/[id]. Future units (Unit 13 templates) may swap the heuristic; the helper stays pure so it can be tested independently.
 - **2026-05-17 — Two-column layout with sticky right aside.** `lg:grid-cols-[1fr_20rem]` left:auto / right:20rem. Snapshot strip lives ABOVE the grid so it spans full-width (the visual emphasis is intentional — it's the first thing the clinician orients on). On `< lg`, everything stacks; the sticky aside un-sticks naturally because Tailwind only applies `sticky` when the parent has a height context, which a single column doesn't.
+
+### Unit 13 (2026-05-17)
+
+- **2026-05-17 — Templates use the `version`-bump-on-sectionSchema-change pattern instead of immutable versioned rows.** Spec mentioned "version history"; we ship `clonedFromId` (the lineage chain) + `version` (current revision number) instead of full immutable history per version. Rationale: full version history would double DB rows + force a "which version did this note use" join on every note read. The `version` bumps in-place on sectionSchema edits so audit metadata captures `before: v3 → after: v4`; the prior schema content lives in the audit log's metadata, not in a separate template row. Future ops surfaces (Wave 3) can reconstruct historical schema from audit + clonedFrom chain.
+- **2026-05-17 — Presets are read-only via API + UI redirect.** Preset templates (isPreset=true, orgId=null) reject PATCH / archive with 403 preset_readonly + the /admin/templates/[id] page redirects to the list. Reasoning: presets ship in the seed + can change across deploys; allowing per-org edits would break the seed contract. The clone path is the canonical way to customize — `POST /clone` lands a new editable org row + sets clonedFromId so the "this is based on the General SOAP preset" lineage is preserved.
+- **2026-05-17 — Two-step create flow: sheet seeds, then editor.** CreateTemplateSheet collects only the header fields (name / division / visibility / etc.) + seeds a single "Notes" section, then routes to /admin/templates/[id]. Reasoning: cramming section authoring into the sheet would require either a complex multi-step form (high cognitive load) or a buried "Add section" affordance (poor discoverability). The two-step flow lets the editor's live preview show the structure clinicians will see + uses the same surface that all edits flow through (consistent mental model).
+- **2026-05-17 — LivePreview is text-only, not interactive.** The preview pane renders the section list with the same glyphs + required-asterisk that SectionAccordion uses on /review, but it's not editable + has no real content. Reasoning: making it interactive would either require duplicating SectionAccordion's state machine (complex) or mounting the real component with stub data (PHI-adjacent risk). Text-only preview is enough for the "see what the clinician will see" guarantee + keeps the editor surface simple.
+- **2026-05-17 — Section id uniqueness enforced at BOTH the API + client layer.** The Zod schema in the API blocks duplicate ids; the client-side SectionEditor's save handler also checks before POST. Two reasons: (a) the client check gives instant feedback (no 400 round trip); (b) the API check is the source of truth that prevents direct-API mistakes. Same belt-and-suspenders pattern used for the recert interval bounds (Unit 11).
+- **2026-05-17 — Cloning copies sectionSchema + promptHints but resets version to 1.** A clone is a NEW template, not a continuation of the source. The clonedFromId field preserves the lineage for audit + UI surfacing; the version counter starts fresh because clones diverge — a v3 clone is unrelated to whatever happens to the source's v5 next month. Mirrors git's branch semantics: the parent is recorded, but the commit history is independent.
 
 ### Pre-existing (foundational, from spec)
 
