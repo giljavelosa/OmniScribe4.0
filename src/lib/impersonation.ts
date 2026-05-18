@@ -48,11 +48,14 @@ export const IMPERSONATION_MAX_DURATION_MS = 60 * 60 * 1000; // 60 min
  *  else returns 403 impersonation_read_only. */
 export const IMPERSONATION_SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
-/** Path suffixes that REMAIN callable during impersonation regardless of
- *  method — currently only the end-impersonation route (so the owner
- *  can actually exit). Match by suffix (not exact) because the route is
- *  `/api/owner/orgs/[id]/impersonate` with `[id]` interpolated. */
-export const IMPERSONATION_BYPASS_PATH_SUFFIXES = ['/impersonate'];
+/** Path+method tuples that REMAIN callable during impersonation. Currently
+ *  only DELETE on the end-impersonation route (so the owner can exit). Method
+ *  is constrained because POST /impersonate is the BEGIN action and must NOT
+ *  bypass the read-only guard during an active session. Match path by suffix
+ *  because the route is `/api/owner/orgs/[id]/impersonate` with `[id]` interpolated. */
+export const IMPERSONATION_BYPASS_RULES: ReadonlyArray<{ method: string; pathSuffix: string }> = [
+  { method: 'DELETE', pathSuffix: '/impersonate' },
+];
 
 /**
  * Reads the impersonation context off a JWT and validates it hasn't
@@ -91,9 +94,13 @@ export function shouldBlockUnderImpersonation(input: {
 }): boolean {
   if (!input.impersonation) return false;
   if (IMPERSONATION_SAFE_METHODS.has(input.method.toUpperCase())) return false;
-  // End-impersonation endpoint must remain reachable.
+  // End-impersonation endpoint must remain reachable — but only for the
+  // exact method/path tuple the begin path is NOT covered.
+  const method = input.method.toUpperCase();
   if (
-    IMPERSONATION_BYPASS_PATH_SUFFIXES.some((suffix) => input.pathname.endsWith(suffix))
+    IMPERSONATION_BYPASS_RULES.some(
+      (rule) => rule.method === method && input.pathname.endsWith(rule.pathSuffix),
+    )
   ) {
     return false;
   }
