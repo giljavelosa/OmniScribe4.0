@@ -11,7 +11,9 @@ import { LiveNotePanel } from './LiveNotePanel';
 import { RecordingControls } from './RecordingControls';
 import { useTranscript } from '../_hooks/capture-state';
 import { PlanForTodayCard } from '@/components/copilot/cards/plan-for-today-card';
+import { FhirWatchCards } from '@/components/copilot/cards/fhir-watch-cards';
 import type { PriorContextBriefContent } from '@/types/brief';
+import type { ExternalEhrContext } from '@/lib/fhir/project-ehr-context';
 
 type LiveFollowUp = {
   id: string;
@@ -30,6 +32,10 @@ type Props = {
   patientId: string;
   nowMs: number;
   hasPriorSignedNote: boolean;
+  /** Unit 25 / Watch v1 — projected FHIR cache for the FhirWatchCards
+   *  bundle. Null when patient has no verified PatientFhirIdentity or
+   *  the cache is empty / fully stale; bundle renders nothing then. */
+  fhirContext: ExternalEhrContext | null;
 };
 
 /**
@@ -47,6 +53,7 @@ export function MobileCaptureLayout({
   patientId,
   nowMs,
   hasPriorSignedNote,
+  fhirContext,
 }: Props) {
   const [active, setActive] = useState<'transcript' | 'note' | 'history' | 'setup'>('transcript');
   const transcriptCountRef = useRef(0);
@@ -124,6 +131,12 @@ export function MobileCaptureLayout({
               noteId={noteId}
             />
           )}
+          <FhirWatchCards
+            context={fhirContext}
+            surface="capture"
+            noteId={noteId}
+            nowMs={nowMs}
+          />
         </TabsContent>
         <TabsContent value="setup" className="flex-1 p-2 min-h-0">
           <p className="text-sm text-muted-foreground p-2">

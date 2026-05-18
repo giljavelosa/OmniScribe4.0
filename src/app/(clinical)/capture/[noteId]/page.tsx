@@ -9,6 +9,7 @@ import { CopilotShell } from '@/components/copilot/copilot-shell';
 import { CaptureStateProvider } from './_hooks/capture-state';
 import { DesktopCaptureLayout } from './_components/DesktopCaptureLayout';
 import { MobileCaptureLayout } from './_components/MobileCaptureLayout';
+import { loadExternalEhrContext } from '@/lib/fhir/project-ehr-context';
 import { ClientStubBanner } from './_components/ClientStubBanner';
 
 export const dynamic = 'force-dynamic';
@@ -79,6 +80,14 @@ export default async function CapturePage({ params }: { params: Promise<{ noteId
   // eslint-disable-next-line react-hooks/purity
   const nowMs = Date.now();
 
+  // Unit 25 / Watch v1 — projected FHIR cache for FhirWatchCards.
+  // Returns null when no verified PatientFhirIdentity or stale cache;
+  // the bundle renders nothing in that case (Rule 20).
+  const fhirContext = await loadExternalEhrContext({
+    patientId: note.patient.id,
+    ehrSystem: 'nextgen',
+  });
+
   const briefContent = (brief?.content ?? null) as PriorContextBriefContent | null;
   const initialOpenFollowUps = openFollowUps.map((fu) => ({
     id: fu.id,
@@ -120,6 +129,7 @@ export default async function CapturePage({ params }: { params: Promise<{ noteId
         patientId={note.patient.id}
         nowMs={nowMs}
         hasPriorSignedNote={hasPriorSignedNote}
+        fhirContext={fhirContext}
       />
       <MobileCaptureLayout
         noteId={note.id}
@@ -131,6 +141,7 @@ export default async function CapturePage({ params }: { params: Promise<{ noteId
         patientId={note.patient.id}
         nowMs={nowMs}
         hasPriorSignedNote={hasPriorSignedNote}
+        fhirContext={fhirContext}
       />
       <CopilotShell surface="capture" noteId={note.id} />
     </CaptureStateProvider>

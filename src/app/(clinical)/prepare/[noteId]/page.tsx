@@ -13,6 +13,8 @@ import { EmptyBrief } from '@/components/brief/empty-brief';
 import { CopilotShell } from '@/components/copilot/copilot-shell';
 import { OpenFollowUpsCard, type CopilotFollowUp } from '@/components/copilot/cards/open-followups-card';
 import { PlanForTodayCard, type PlanItem } from '@/components/copilot/cards/plan-for-today-card';
+import { FhirWatchCards } from '@/components/copilot/cards/fhir-watch-cards';
+import { loadExternalEhrContext } from '@/lib/fhir/project-ehr-context';
 import type { PriorContextBriefContent } from '@/types/brief';
 import { PasteTranscriptForm } from './_components/paste-transcript-form';
 import { UploadAudioForm } from './_components/upload-audio-form';
@@ -66,6 +68,14 @@ export default async function PreparePage({ params }: { params: Promise<{ noteId
   // eslint-disable-next-line react-hooks/purity
   const nowMs = Date.now();
 
+  // Unit 25 / Watch v1 — load the projected FHIR cache once. Returns
+  // null when no verified PatientFhirIdentity OR all rows stale; the
+  // FhirWatchCards bundle renders nothing in that case.
+  const fhirContext = await loadExternalEhrContext({
+    patientId: note.patient.id,
+    ehrSystem: 'nextgen',
+  });
+
   const briefContent = brief?.content
     ? (brief.content as unknown as PriorContextBriefContent)
     : null;
@@ -116,6 +126,13 @@ export default async function PreparePage({ params }: { params: Promise<{ noteId
           <PlanForTodayCard items={planForTodayItems} surface="prepare" noteId={note.id} />
         </div>
       )}
+
+      <FhirWatchCards
+        context={fhirContext}
+        surface="prepare"
+        noteId={note.id}
+        nowMs={nowMs}
+      />
 
       <Card>
         <CardHeader>

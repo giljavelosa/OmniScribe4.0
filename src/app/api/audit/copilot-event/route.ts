@@ -42,7 +42,17 @@ const bodySchema = z.object({
   action: z.enum(ALLOWED_ACTIONS as readonly string[]),
   surface: z.enum(SURFACES),
   noteId: z.string().min(1).max(64),
-  cardType: z.enum(['open-followups', 'plan-for-today']).optional(),
+  // Unit 25 — extended for Watch v1 FHIR-backed cards.
+  cardType: z
+    .enum([
+      'open-followups',
+      'plan-for-today',
+      'active-conditions',
+      'current-medications',
+      'recent-observations',
+      'allergies',
+    ])
+    .optional(),
   itemCount: z.number().int().min(0).max(100_000).optional(),
   // Unit 18: which preflight check failed + a shape-locked reason. Required
   // for ops triage — without these every TELEHEALTH_PRECALL_CHECK_FAILED row
