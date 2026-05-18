@@ -56,6 +56,25 @@ To use it:
 Alternatively, `npx prisma db seed` prints the current token at the end of
 its output as a one-time sanity check.
 
+### CLI fallback (no authenticator app handy)
+
+Generate a code on demand from your terminal — uses the project's own
+otplib config so the result matches what the server expects:
+
+```bash
+cd /Users/gil/Downloads/OmniScribe4.0
+npx tsx -e "import('./src/lib/mfa.ts').then(m => m.generateTotpToken('7FSWEU6M2MYDQONC5WHDM72MK3FUQZ4Q').then(c => console.log(c)))"
+```
+
+Paste the printed 6-digit code immediately — TOTP windows are 30 seconds,
+and otplib's default `window: 1` tolerance gives you ±1 step (90 s
+effective grace). Re-run if the window flips before you submit.
+
+> **Tripwire**: a `node -e "const {TOTP} = require('otplib')..."` one-liner
+> from the bare Node REPL will fail with `CryptoPluginMissingError` —
+> v13's CJS entry doesn't auto-attach the crypto + base32 plugins.
+> ESM resolution via `tsx` does, which is why the snippet above works.
+
 ## Recovery codes
 
 Recovery codes are regenerated at seed time and printed once to the seed

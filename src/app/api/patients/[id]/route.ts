@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma';
 import { requireFeatureAccess } from '@/lib/authz/server';
 import { writeAuditLog } from '@/lib/audit/log';
 import { assertOrgScoped } from '@/lib/phi-access';
+import { isValidPersonName } from '@/lib/patient/name-validator';
 import { Division, PatientSex } from '@prisma/client';
 import { buildSnapshotStrip } from '@/lib/snapshots/build-snapshot-strip';
 import { deriveAssessmentSnippet } from '@/lib/notes/note-text';
@@ -14,8 +15,16 @@ export const runtime = 'nodejs';
 
 const patchSchema = z
   .object({
-    firstName: z.string().min(1).optional(),
-    lastName: z.string().min(1).optional(),
+    firstName: z
+      .string()
+      .min(1)
+      .refine(isValidPersonName, { message: 'invalid characters in first name' })
+      .optional(),
+    lastName: z
+      .string()
+      .min(1)
+      .refine(isValidPersonName, { message: 'invalid characters in last name' })
+      .optional(),
     mrn: z.string().min(1).optional(),
     dob: z.string().optional(),
     sex: z.enum(PatientSex).optional(),
