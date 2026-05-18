@@ -27,7 +27,10 @@ import {
  * cache isn't leaking state across cases.
  */
 
-const prisma = new PrismaClient();
+// Skipped in CI (no Postgres). Run locally via `npm test` with DATABASE_URL set.
+const hasDb = !!process.env.DATABASE_URL;
+const describeMaybe = hasDb ? describe : describe.skip;
+const prisma = hasDb ? new PrismaClient() : (null as unknown as PrismaClient);
 
 const ORG_ID = 'test-org-unit-33-metrics';
 const USER_ID = 'test-user-unit-33-metrics';
@@ -35,6 +38,7 @@ const ORG_USER_ID = 'test-orguser-unit-33-metrics';
 const PATIENT_ID = 'test-pat-unit-33-metrics';
 
 beforeAll(async () => {
+  if (!hasDb) return;
   const now = new Date();
   const sixHoursAgo = new Date(now.getTime() - 6 * 60 * 60 * 1000);
   const fiveDaysAgo = new Date(now.getTime() - 5 * 24 * 60 * 60 * 1000);
@@ -148,6 +152,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  if (!hasDb) return;
   await prisma.auditLog.deleteMany({ where: { orgId: ORG_ID } });
   for (const id of ['test-note-33-recent', 'test-note-33-older', 'test-note-33-interrupted']) {
     await prisma.note.deleteMany({ where: { id } });
@@ -163,7 +168,7 @@ beforeEach(() => {
   _resetPlatformMetricsCacheForTest();
 });
 
-describe('getPlatformMetrics', () => {
+describeMaybe('getPlatformMetrics', () => {
   it('returns aggregated counts that include the fixture data', async () => {
     const metrics = await getPlatformMetrics();
     expect(metrics.orgs.total).toBeGreaterThanOrEqual(1);
