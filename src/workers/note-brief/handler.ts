@@ -14,6 +14,7 @@ import {
   projectGoalForBrief,
   projectSignedNoteForBrief,
 } from '@/lib/notes/build-brief-prompt';
+import { loadExternalEhrContext } from '@/lib/fhir/project-ehr-context';
 import type {
   PriorContextBriefContent,
   FollowUpPreview,
@@ -114,6 +115,14 @@ export async function handle(job: Job<NoteBriefJob>) {
     ?.filter((g) => g.status === 'ACTIVE' || g.status === 'PARTIALLY_MET')
     .slice(0, 3) ?? [];
 
+  // Unit 22 / F4 — pull EHR enrichment if the patient has a verified
+  // PatientFhirIdentity. Silent skip on absent link or empty/stale cache;
+  // BRIEF_GENERATED audit metadata records whether the brief was enriched.
+  const externalEhrContext = await loadExternalEhrContext({
+    patientId: note.patientId,
+    ehrSystem: 'nextgen',
+  });
+
   const briefInput = {
     division: note.division,
     todayIso,
@@ -123,6 +132,7 @@ export async function handle(job: Job<NoteBriefJob>) {
       : null,
     priorNotes: briefPriorNotes,
     topActiveGoals: topGoals.map(projectGoalForBrief),
+    externalEhrContext,
   };
 
   let briefResult;
@@ -254,6 +264,16 @@ export async function handle(job: Job<NoteBriefJob>) {
       generatorVersion: briefResult.generatorVersion,
       attempts: briefResult.attempts,
       stub: briefResult.stub,
+      // Unit 22 / F4 — auditor lens: was this brief EHR-enriched?
+      hasEhrContext: !!externalEhrContext,
+      ehrResourceCount: externalEhrContext
+        ? externalEhrContext.activeConditions.length +
+          externalEhrContext.currentMedications.length +
+          externalEhrContext.allergies.length +
+          externalEhrContext.recentObservations.length +
+          externalEhrContext.recentProcedures.length +
+          externalEhrContext.recentDiagnosticReports.length
+        : 0,
     },
   });
 
