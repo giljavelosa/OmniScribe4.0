@@ -5,8 +5,10 @@ import { Sparkles } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/cn';
 import { AskSurface } from './ask-surface';
+import { ResearchSurface } from './research-surface';
 
 export type CopilotSurface = 'prepare' | 'capture' | 'review';
 
@@ -87,9 +89,18 @@ export function CopilotShell({
               Co-Pilot
             </SheetTitle>
           </SheetHeader>
-          <div className="flex-1 min-h-0">
-            <AskSurface patientId={patientId} noteId={noteId} />
-          </div>
+          <Tabs defaultValue="chart" className="flex-1 min-h-0 flex flex-col">
+            <TabsList className="mx-4 mt-3">
+              <TabsTrigger value="chart">Chart</TabsTrigger>
+              <TabsTrigger value="research">Research</TabsTrigger>
+            </TabsList>
+            <TabsContent value="chart" className="flex-1 min-h-0 mt-3">
+              <AskSurface patientId={patientId} noteId={noteId} />
+            </TabsContent>
+            <TabsContent value="research" className="flex-1 min-h-0 mt-3">
+              <ResearchSurface />
+            </TabsContent>
+          </Tabs>
         </SheetContent>
       </Sheet>
     </>
