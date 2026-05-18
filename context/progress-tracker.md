@@ -4,11 +4,11 @@
 
 ## Current Phase
 
-- **Wave 0 — Foundation, COMPLETE end-to-end.** Unit 05 shipped (PR #6 — branch `feat/unit-05-note-generation-sign`). Unit 04 shipped (PR #5). Unit 03 shipped (PR #4). Unit 02 shipped (PR #3). Unit 01 shipped (PR #2). Scaffold (PR #1). Wave 0 (Units 01–05) is now a working end-to-end medical AI scribe: schedule → capture → transcribe → AI draft → review → sign → post-sign artifacts.
+- **Wave 1 — opening.** Unit 06 shipped (PR #7 — branch `feat/unit-06-prior-context-brief`). Wave 0 complete (PRs #1–#6). OmniScribe now goes beyond "scribe" into "scribe + clinical context system": precomputed 30-second brief renders on /prepare + /capture, follow-up commitments are extracted from signed notes and held across visits, and the sign flow blocks until each open follow-up has a decision.
 
 ## Current Goal
 
-- Await user confirmation before starting Unit 06 — Prior-Context Brief, per Prompt B's stop-between-units contract.
+- Await user confirmation before starting Unit 07 — Encounter Copilot Watch v0, per Prompt B's stop-between-units contract.
 
 ## Completed
 
@@ -93,6 +93,20 @@
   - Seed adds 4 platform-level preset NoteTemplates (orgId null): General SOAP + Acute Care Visit (MEDICAL), Behavioral Health Session (BH), PT/OT Daily Note (REHAB). Each section carries a promptHint surfaced by the division master prompts.
   - 14 new AuditAction values appended (NOTE_GENERATION_*, SECTION_*, NOTE_SIGN_OPENED, NOTE_SIGNED, NOTE_TEMPLATE_SELECTED, NOTE_BRIEF_ENQUEUED, POST_SIGN_ARTIFACT_*).
 
+- **2026-05-17 — Unit 06: Prior-Context Brief + Follow-up lifecycle** (PR #7 — `feat(unit-06): prior-context brief & follow-ups`).
+  - Schema: new `NoteBrief` (1:1 with signed Note; sibling table per rule 3 — finalJson immutable but the brief must remain regenerable), new `FollowUp` with `FollowUpStatus` enum (OPEN / MET / CARRIED / DROPPED / CLOSED_BY_DISCHARGE), back-relations added to Patient / Note (originFollowUps + closingFollowUps) / EpisodeOfCare / Organization.
+  - `src/types/brief.ts` — `BriefLLMOutputSchema` (strict, what the LLM returns) + `PriorContextBriefContentSchema` (LLM output + generatedAt + generatorVersion + openFollowUps stamped by the worker) + `FollowupExtractionSchema`. Zod-validated on every write.
+  - `src/lib/notes/build-brief-prompt.ts` — `BRIEF_SYSTEM_PROMPT` bakes the three absolute rules (source-grounded only / verbatim where precision matters / no clinical conclusions beyond the notes) + Phase-13b measure-key registry block + strict JSON output schema. PHI-aware projections (`projectPatientForBrief` returns first + last-initial only; DOB/SSN/phone/email NEVER projected). Separate `FOLLOWUP_EXTRACTOR_SYSTEM_PROMPT` for the Haiku-class extractor (skips done-this-visit / HEP / education items).
+  - `src/services/brief/BriefGenerator.ts` — two Sonnet attempts with the Zod validation error appended to the user message on retry, then a single Haiku fallback that stamps `generatorVersion: 'llm-v1-fallback-haiku'`. Stub-mode aware: synthesizes a minimal-but-valid brief from the input when Bedrock isn't configured so dev exercises the full pipeline.
+  - `src/services/brief/FollowupExtractor.ts` — Haiku-class extractor over the Plan section. Returns `{ items: [] }` on parse failure or empty plan (a valid outcome — no future-facing commitments).
+  - `src/workers/note-brief/handler.ts` — replaces the stub. Loads up to 2 prior signed notes (preferring same-episode), generates the brief, upserts `NoteBrief` on noteId, extracts follow-ups idempotently (skipped if any row with this originNoteId already exists), creates `FollowUp` rows in a single `$transaction`, audits `FOLLOWUP_CREATED` per row + `BRIEF_GENERATED` once with PHI-free metadata. Rule 20 grep-enforceable: status filter `{ in: [SIGNED, TRANSFERRED] }`.
+  - APIs: `GET /api/patients/[id]/brief?episodeId=...` (returns most-recent brief, 30s cache), `GET /api/notes/[id]/brief` (1:1 debug surface), `GET /api/patients/[id]/follow-ups?status=OPEN` (live list), `PATCH /api/follow-ups/[id]` (OPEN → MET/DROPPED/CARRIED with lifecycle invariants enforced + 409 on already-resolved).
+  - UI components (in `src/components/brief/`): `BriefCard`, `BriefHeader`, `BriefSection`, `TrajectoryTable` (improving/worsening token colors — rule 23), `FollowUpPreviewList`, `GoalsSnapshot`, `WatchList`, `BriefFooter` (stale chip if >30 days), `EmptyBrief` (first-visit / unavailable / loading variants), `SourcePill` (every fact carries one — spec's "no pill = no render" trust contract). React 19 purity: BriefCard takes `nowMs` as a prop so the footer's "X days ago" stays pure across re-renders.
+  - /prepare renders `BriefCard` above the capture-mode cards (or `EmptyBrief` when no prior signed notes).
+  - /capture `PriorContextPanel` (real implementation, replaces Unit-03 stub): wraps `BriefCard` with `FollowUpQuickAction` chips injected into the `followUpsSlot`. Chip state machine: idle → Met (inline closing-note input ≥5 chars) / Drop (inline reason input ≥5 chars) / Carry (no input) → saving → saved status pill. Mobile "History" tab now hosts the real panel.
+  - /sign integration: sign route refuses 409 `open_followups_present` + the list when any FollowUp is still OPEN and `sweepAcknowledged` is not set. `SignFollowUpSweep` AlertDialog (rule 22; new sibling component — never modifies review-shell files) forces a decision on every open item with batch "Carry all" / "Drop all…" + safety-net "Skip — auto-carry" path. Continue → disabled until every row has a non-OPEN decision. SignClient holds the MFA token in a ref so post-sweep retry doesn't re-prompt.
+  - 10 new AuditAction values appended (BRIEF_GENERATED / _FAILED / _FALLBACK_HAIKU / _VIEWED; FOLLOWUP_CREATED / _STATUS_CHANGED / _CLOSED / _SWEEP_OPENED / _SWEEP_SKIPPED / _SWEEP_RESOLVED).
+
 ## In Progress
 
 None.
@@ -101,7 +115,7 @@ None.
 
 In priority order:
 
-1. **Unit 06 — Prior-Context Brief** ([`context/specs/06-prior-context-brief.md`](specs/06-prior-context-brief.md)) — `NoteBrief` precompute + brief UI + `FollowUp` lifecycle.
+1. **Unit 07 — Encounter Copilot Watch v0** ([`context/specs/07-encounter-copilot-watch-v0.md`](specs/07-encounter-copilot-watch-v0.md)) — beacon + open-follow-ups + plan-for-today cards.
 8. **Unit 07 — Encounter Copilot Watch v0** ([`context/specs/07-encounter-copilot-watch-v0.md`](specs/07-encounter-copilot-watch-v0.md)) — beacon + open-follow-ups + plan-for-today cards.
 9. **Unit 08 — Admin & Compliance Ready** ([`context/specs/08-admin-and-compliance-ready.md`](specs/08-admin-and-compliance-ready.md)) — Sites + Rooms CRUD, admin-initiated MFA reset + password reset, customer self-onboarding wizard, BAA admin UI.
 
@@ -189,6 +203,17 @@ These need user/PM decision before the depending unit can ship. Quote the source
 - **2026-05-17 — 4 platform-level preset NoteTemplates seeded (orgId null), not 6.** Spec suggested "2 per division" (6 total). Shipped 4 (2 MEDICAL + 1 BH + 1 REHAB) — the BH + REHAB workflows each have a single dominant note shape per division, and extra templates would dilute the default. Adding more is a one-PR migration when a real customer asks.
 - **2026-05-17 — `NoteArtifact` idempotency by (noteId, kind) at the worker, not the schema.** No unique constraint because a future workflow may legitimately regenerate artifacts (e.g., clinician edits an addendum). The worker skips + audits POST_SIGN_ARTIFACT_SKIPPED when one already exists; a future "regenerate artifact" path will delete-then-enqueue.
 - **2026-05-17 — TipTap deferred to Unit 14.** Spec mentioned TipTap for the review editor; we ship `<Textarea>` with 1s debounce auto-save now. TipTap brings a non-trivial bundle + a new mental model for content storage (ProseMirror JSON vs. plain string). Unit 14 is where compliance-flag inline annotations land and TipTap pays for itself.
+
+### Unit 06 (2026-05-17)
+
+- **2026-05-17 — BriefGenerator synthesizes a valid stub-mode brief from the input.** When Bedrock returns its `{ stub: true, text }` envelope, we don't fail — we synthesize a minimal-but-valid `BriefLLMOutput` grounded in the real input (uses real noteIds, real lastVisit date, derives carryForwardPlan from the actual Plan section). Reasoning: the whole pipeline (worker → upsert → UI render) needs to exercise end-to-end in dev without a live Bedrock account. The audit row stamps `stub: true` so production logs never confuse a stub brief for a real one.
+- **2026-05-17 — Brief stores currently-open follow-ups for THIS patient at generation time, not just follow-ups originating from THIS note.** Reasoning: the next visit's clinician should see every commitment that's still alive, even ones from older notes. The list is a snapshot — the capture screen + sign-time sweep both re-fetch from `GET /api/patients/[id]/follow-ups?status=OPEN` for live state.
+- **2026-05-17 — Follow-up extraction is idempotent on `originNoteId`.** A BullMQ retry shouldn't double-insert. The worker checks for any existing FollowUp with `originNoteId === noteId` and skips the entire extract step if any exist — simpler than per-row dedupe + matches the spec's "extraction runs once per origin note" intent. The trade-off: if a customer ever wants to re-extract after a prompt improvement, that's a separate manual sweep job (out of scope for v1).
+- **2026-05-17 — `BriefFooter` takes `nowMs` as a prop instead of calling `Date.now()` at render time.** React 19's `react-hooks/purity` rule flags `Date.now()` inside components as nondeterministic. The pure helper `formatBriefAge(generatedAt, nowMs)` runs at the server-component boundary (page.tsx), and the component receives pre-computed `daysOld` + `relativeLabel`. Same pattern in BriefCard.
+- **2026-05-17 — Sign-time sweep gates the sign route, not the sign button.** The button still opens the sign flow with MFA input; the server-side preflight runs after MFA verify is queued but before the transaction commits. Reasoning: putting the gate on the route keeps it server-enforced (a malicious client can't bypass by toggling a UI flag), and the sweep modal opening client-side keeps the workflow conversational rather than forcing the clinician to leave the sign page.
+- **2026-05-17 — Sweep skip path is a real workflow, not an escape hatch.** "Skip — auto-carry" patches every still-open item to CARRIED + retries sign with `sweepAcknowledged: true`. Audited (FOLLOWUP_SWEEP_RESOLVED on the sign side). Reasoning: forcing the clinician to manually carry each item when they're in a hurry just teaches them to mash the button — the skip path is the honest version of that behavior, and audit trails make it visible.
+- **2026-05-17 — Source pill = "no pill, no render" trust contract.** Every fact in the BriefCard carries a SourcePill linking to /review/<sourceNoteId>. Reasoning: the brief's whole value proposition is "you can verify any line in one tap." If we ever surface a fact without a pill (e.g., a derived value), the trust contract breaks and clinicians fall back to manual chart review — which is the failure mode we're trying to eliminate.
+- **2026-05-17 — Watch section omits itself entirely when empty.** Reasoning: the spec called for four sub-arrays (med changes / recent results / precautions / red flags). When all four are empty, rendering an empty section adds visual noise without information. `isWatchEmpty()` gates the section at the card layer.
 
 ### Pre-existing (foundational, from spec)
 

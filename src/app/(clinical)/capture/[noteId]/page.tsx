@@ -4,6 +4,7 @@ import { notFound, redirect } from 'next/navigation';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { StatusBadge } from '@/components/ui/status-badge';
+import type { PriorContextBriefContent } from '@/types/brief';
 import { CaptureStateProvider } from './_hooks/capture-state';
 import { DesktopCaptureLayout } from './_components/DesktopCaptureLayout';
 import { MobileCaptureLayout } from './_components/MobileCaptureLayout';
@@ -26,7 +27,10 @@ export default async function CapturePage({ params }: { params: Promise<{ noteId
 
   const note = await prisma.note.findFirst({
     where: { id: noteId, orgId: session.user.orgId },
-    include: { patient: { select: { firstName: true, lastName: true, mrn: true } } },
+    include: {
+      patient: { select: { id: true, firstName: true, lastName: true, mrn: true } },
+      encounter: { select: { episodeOfCareId: true } },
+    },
   });
   if (!note) notFound();
 
@@ -36,6 +40,54 @@ export default async function CapturePage({ params }: { params: Promise<{ noteId
   if (!['PREPARING', 'RECORDING', 'PAUSED'].includes(note.status)) {
     redirect(`/prepare/${note.id}`);
   }
+
+  // Prior-context brief + live open follow-ups (both server-fetched so the
+  // panel renders synchronously on first paint).
+  const episodeId = note.encounter?.episodeOfCareId ?? null;
+  const brief =
+    (episodeId
+      ? await prisma.noteBrief.findFirst({
+          where: { patientId: note.patient.id, orgId: session.user.orgId, episodeId },
+          orderBy: { generatedAt: 'desc' },
+        })
+      : null) ??
+    (await prisma.noteBrief.findFirst({
+      where: { patientId: note.patient.id, orgId: session.user.orgId },
+      orderBy: { generatedAt: 'desc' },
+    }));
+
+  const openFollowUps = await prisma.followUp.findMany({
+    where: { patientId: note.patient.id, orgId: session.user.orgId, status: 'OPEN' },
+    orderBy: { createdAt: 'desc' },
+    include: { originNote: { select: { signedAt: true } } },
+    take: 20,
+  });
+
+  const hasPriorSignedNote = !!(await prisma.note.findFirst({
+    where: {
+      patientId: note.patient.id,
+      orgId: session.user.orgId,
+      id: { not: note.id },
+      status: { in: ['SIGNED', 'TRANSFERRED'] },
+    },
+    select: { id: true },
+  }));
+
+  const patientDisplayName = `${note.patient.firstName} ${note.patient.lastName[0] ?? ''}.`.trim();
+  // Server component runs once per request; "now" is request-scoped.
+  // eslint-disable-next-line react-hooks/purity
+  const nowMs = Date.now();
+
+  const briefContent = (brief?.content ?? null) as PriorContextBriefContent | null;
+  const initialOpenFollowUps = openFollowUps.map((fu) => ({
+    id: fu.id,
+    text: fu.text,
+    status: fu.status,
+    source: {
+      noteId: fu.originNoteId,
+      date: (fu.originNote?.signedAt ?? fu.createdAt).toISOString().slice(0, 10),
+    },
+  }));
 
   const patientHeader = (
     <div className="min-w-0">
@@ -61,11 +113,23 @@ export default async function CapturePage({ params }: { params: Promise<{ noteId
         noteId={note.id}
         patientHeader={patientHeader}
         stubBanner={stubBanner}
+        brief={briefContent}
+        initialOpenFollowUps={initialOpenFollowUps}
+        patientDisplayName={patientDisplayName}
+        patientId={note.patient.id}
+        nowMs={nowMs}
+        hasPriorSignedNote={hasPriorSignedNote}
       />
       <MobileCaptureLayout
         noteId={note.id}
         patientHeader={patientHeader}
         stubBanner={stubBanner}
+        brief={briefContent}
+        initialOpenFollowUps={initialOpenFollowUps}
+        patientDisplayName={patientDisplayName}
+        patientId={note.patient.id}
+        nowMs={nowMs}
+        hasPriorSignedNote={hasPriorSignedNote}
       />
     </CaptureStateProvider>
   );

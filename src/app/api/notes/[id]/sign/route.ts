@@ -19,6 +19,10 @@ export const runtime = 'nodejs';
 
 const bodySchema = z.object({
   mfaToken: z.string().regex(/^\d{6}$/, 'Invalid MFA token'),
+  /** Set true by the client after the sign-time follow-up sweep modal has
+   *  been resolved (Unit 06). Default false → sign refuses with 409
+   *  open_followups_present + the open list if any are still OPEN. */
+  sweepAcknowledged: z.boolean().optional(),
 });
 
 /**
@@ -88,6 +92,51 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     );
   }
 
+  // Open-follow-ups preflight — sign-time sweep (Unit 06 spec §I). If any
+  // FollowUp for this patient is still OPEN and the client hasn't sent
+  // sweepAcknowledged=true, we refuse with 409 + the open list. The client
+  // opens SignFollowUpSweep, resolves each one (Met / Drop / Carry), then
+  // re-tries this POST with sweepAcknowledged=true.
+  if (!parsed.data.sweepAcknowledged) {
+    const openFollowUps = await prisma.followUp.findMany({
+      where: { patientId: note.patientId, orgId: authorizationUser.orgId, status: 'OPEN' },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+      include: { originNote: { select: { signedAt: true } } },
+    });
+    if (openFollowUps.length > 0) {
+      await writeAuditLog({
+        userId: user.id,
+        orgId: orgUser.orgId,
+        action: 'FOLLOWUP_SWEEP_OPENED',
+        resourceType: 'Note',
+        resourceId: noteId,
+        metadata: { openCount: openFollowUps.length },
+      });
+      return NextResponse.json(
+        {
+          error: {
+            code: 'open_followups_present',
+            message: `${openFollowUps.length} follow-up${openFollowUps.length === 1 ? '' : 's'} still open — resolve before signing.`,
+          },
+          data: {
+            openFollowUps: openFollowUps.map((fu) => ({
+              id: fu.id,
+              text: fu.text,
+              status: fu.status,
+              createdAt: fu.createdAt.toISOString(),
+              source: {
+                noteId: fu.originNoteId,
+                date: (fu.originNote?.signedAt ?? fu.createdAt).toISOString().slice(0, 10),
+              },
+            })),
+          },
+        },
+        { status: 409 },
+      );
+    }
+  }
+
   // MFA re-verify
   const me = await prisma.user.findUnique({
     where: { id: user.id },
@@ -147,8 +196,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       mfaReverified: true,
       sectionCount: sections.length,
       signedAt: now.toISOString(),
+      sweepAcknowledged: !!parsed.data.sweepAcknowledged,
     },
   });
+
+  if (parsed.data.sweepAcknowledged) {
+    await writeAuditLog({
+      userId: user.id,
+      orgId: orgUser.orgId,
+      action: 'FOLLOWUP_SWEEP_RESOLVED',
+      resourceType: 'Note',
+      resourceId: noteId,
+    });
+  }
 
   // Post-sign enqueues — outside the transaction so a Redis hiccup doesn't
   // roll back the signed note.

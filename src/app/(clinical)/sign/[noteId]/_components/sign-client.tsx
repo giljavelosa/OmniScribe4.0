@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { StatusBanner } from '@/components/ui/status-banner';
+import { SignFollowUpSweep, type SweepFollowUp } from './sign-followup-sweep';
 
 type Props = {
   noteId: string;
@@ -28,6 +29,20 @@ export function SignClient({ noteId, patientName, mrn, division, sections }: Pro
   const [mfaToken, setMfaToken] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const [sweepOpen, setSweepOpen] = useState(false);
+  const [sweepFollowUps, setSweepFollowUps] = useState<SweepFollowUp[]>([]);
+  // Holds the MFA token captured at the user's "Sign" click so the post-
+  // sweep retry uses the same value without re-asking.
+  const pendingMfaTokenRef = useRef<string | null>(null);
+
+  function postSign(opts: { sweepAcknowledged: boolean }) {
+    const token = pendingMfaTokenRef.current ?? mfaToken;
+    return fetch(`/api/notes/${noteId}/sign`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mfaToken: token, sweepAcknowledged: opts.sweepAcknowledged }),
+    });
+  }
 
   function sign() {
     setError(null);
@@ -35,23 +50,45 @@ export function SignClient({ noteId, patientName, mrn, division, sections }: Pro
       setError('Enter a 6-digit code from your authenticator.');
       return;
     }
+    pendingMfaTokenRef.current = mfaToken;
     startTransition(async () => {
-      const res = await fetch(`/api/notes/${noteId}/sign`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mfaToken }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        const code = body?.error?.code as string | undefined;
-        if (code === 'invalid_mfa') setError('Invalid 6-digit code.');
-        else if (code === 'not_ready') setError('Required sections still need attention — return to review.');
-        else if (code === 'already_signed') setError('This note is already signed.');
-        else setError(body?.error?.message ?? `Sign failed (${res.status}).`);
+      const res = await postSign({ sweepAcknowledged: false });
+      if (res.ok) {
+        pendingMfaTokenRef.current = null;
+        router.push(`/review/${noteId}`);
+        router.refresh();
         return;
       }
-      router.push(`/review/${noteId}`);
-      router.refresh();
+      const body = await res.json().catch(() => null);
+      const code = body?.error?.code as string | undefined;
+      if (code === 'open_followups_present') {
+        const followUps = (body?.data?.openFollowUps ?? []) as SweepFollowUp[];
+        setSweepFollowUps(followUps);
+        setSweepOpen(true);
+        return;
+      }
+      if (code === 'invalid_mfa') setError('Invalid 6-digit code.');
+      else if (code === 'not_ready') setError('Required sections still need attention — return to review.');
+      else if (code === 'already_signed') setError('This note is already signed.');
+      else setError(body?.error?.message ?? `Sign failed (${res.status}).`);
+    });
+  }
+
+  function afterSweepResolved() {
+    setSweepOpen(false);
+    setSweepFollowUps([]);
+    startTransition(async () => {
+      const res = await postSign({ sweepAcknowledged: true });
+      if (res.ok) {
+        pendingMfaTokenRef.current = null;
+        router.push(`/review/${noteId}`);
+        router.refresh();
+        return;
+      }
+      const body = await res.json().catch(() => null);
+      const code = body?.error?.code as string | undefined;
+      if (code === 'invalid_mfa') setError('Invalid 6-digit code.');
+      else setError(body?.error?.message ?? `Sign failed after sweep (${res.status}).`);
     });
   }
 
@@ -121,6 +158,18 @@ export function SignClient({ noteId, patientName, mrn, division, sections }: Pro
           </div>
         </CardContent>
       </Card>
+
+      <SignFollowUpSweep
+        open={sweepOpen}
+        onOpenChange={(next) => {
+          // Outside-tap is suppressed by AlertDialog itself; the only path
+          // to close is the Skip/Continue buttons inside the modal, which
+          // set state explicitly.
+          if (!next) setSweepOpen(false);
+        }}
+        followUps={sweepFollowUps}
+        onResolved={afterSweepResolved}
+      />
     </div>
   );
 }
