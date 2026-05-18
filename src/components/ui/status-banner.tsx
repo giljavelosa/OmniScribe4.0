@@ -86,7 +86,7 @@ export function StatusBanner({
         <button
           type="button"
           onClick={onDismiss}
-          className="rounded-md p-1 -mr-1 -mt-1 opacity-70 transition-opacity hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-current"
+          className="inline-flex items-center justify-center min-h-[var(--touch-min)] min-w-[var(--touch-min)] rounded-md -mr-2 -mt-2 -mb-2 opacity-70 transition-opacity hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-current"
           aria-label="Dismiss"
         >
           <X className="h-4 w-4" aria-hidden />

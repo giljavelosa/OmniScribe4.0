@@ -68,7 +68,7 @@ export function ImpersonationBanner() {
           type="button"
           onClick={endImpersonation}
           disabled={pending}
-          className="inline-flex items-center gap-1 rounded-md bg-[var(--status-danger-fg)] text-[var(--status-danger-bg)] px-2 py-1 text-xs uppercase tracking-wide hover:opacity-90 disabled:opacity-50"
+          className="inline-flex items-center gap-1 min-h-[var(--touch-min)] rounded-md bg-[var(--status-danger-fg)] text-[var(--status-danger-bg)] px-3 py-1 text-xs uppercase tracking-wide hover:opacity-90 disabled:opacity-50"
         >
           <X className="h-3 w-3" aria-hidden />
           {pending ? 'Ending…' : 'End impersonation'}
