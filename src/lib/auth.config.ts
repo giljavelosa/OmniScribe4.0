@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
 import { writeAuditLog } from '@/lib/audit/log';
 import { PlatformRole } from '@prisma/client';
+import { readActiveImpersonation, type ImpersonationContext } from '@/lib/impersonation';
 
 const credentialsSchema = z.object({
   email: z.email().transform((s) => s.toLowerCase()),
@@ -100,6 +101,17 @@ export const authConfig = {
         if (typeof session.mfaVerified === 'boolean') token.mfaVerified = session.mfaVerified;
         if (typeof session.mfaEnabled === 'boolean') token.mfaEnabled = session.mfaEnabled;
 
+        // Unit 32 — impersonation begin/end goes through update().
+        // `session.impersonation === null` clears the field; an object
+        // sets it; absence leaves the existing value untouched.
+        if (session.impersonation === null) {
+          token.impersonation = null;
+        } else if (session.impersonation !== undefined) {
+          // Cast through unknown — the update payload is loosely typed
+          // by NextAuth but we wrote this contract ourselves.
+          token.impersonation = session.impersonation as ImpersonationContext;
+        }
+
         const fresh = await prisma.user.findUnique({
           where: { id: token.id },
           include: {
@@ -121,6 +133,14 @@ export const authConfig = {
         }
       }
 
+      // Unit 32 — defensively drop expired impersonation tokens on
+      // every JWT pass. Past the 60-min cap the field is treated as
+      // null at the read site anyway; clearing it here keeps the
+      // cookie tidy.
+      if (token.impersonation && !readActiveImpersonation(token)) {
+        token.impersonation = null;
+      }
+
       return token;
     },
 
@@ -140,6 +160,10 @@ export const authConfig = {
         mfaVerified: token.mfaVerified,
         platformRole: token.platformRole,
       };
+      // Unit 32 — surface the active impersonation context (already
+      // validated for expiry by the jwt callback above). Banner +
+      // route guards read off session.impersonation.
+      session.impersonation = readActiveImpersonation(token);
       return session;
     },
   },
