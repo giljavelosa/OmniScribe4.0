@@ -79,7 +79,10 @@ export async function GET(req: Request) {
         hasFrom: !!filter.from,
         hasTo: !!filter.to,
         action: filter.action ?? null,
-        userId: filter.userId ?? null,
+        // Capture filter shape, not the actual id being searched for — the
+        // audit-meta read should not re-leak the resource identifier under
+        // investigation (matches the export endpoint's hasUserId pattern).
+        hasUserId: !!filter.userId,
         hasResourceId: !!filter.resourceId,
       },
       count: page.length,

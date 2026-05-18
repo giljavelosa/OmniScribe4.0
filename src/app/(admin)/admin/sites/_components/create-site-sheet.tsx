@@ -34,11 +34,16 @@ export function CreateSiteSheet() {
 
   function submit(formData: FormData) {
     setError(null);
+    // The <Select> "(no primary division)" option uses the __none__ sentinel
+    // because Radix forbids the empty string as a value. Strip it before the
+    // API call — the server expects a valid Division enum or null.
+    const rawDivision = (formData.get('primaryDivision') as string) || '';
+    const primaryDivision = rawDivision && rawDivision !== '__none__' ? rawDivision : null;
     const body = {
       name: String(formData.get('name') ?? '').trim(),
       address: (formData.get('address') as string)?.trim() || null,
       phone: (formData.get('phone') as string)?.trim() || null,
-      primaryDivision: (formData.get('primaryDivision') as string) || null,
+      primaryDivision,
     };
     if (!body.name) {
       setError('Site name is required.');

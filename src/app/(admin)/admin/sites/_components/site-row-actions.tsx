@@ -128,7 +128,14 @@ export function SiteRowActions({ siteId, siteName, isArchived }: Props) {
           <AlertDialogFooter>
             <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              onClick={() => commit('archive')}
+              // Prevent Radix's default auto-close so the dialog stays open
+              // until the async commit resolves — otherwise an error setState
+              // fires after the dialog has already unmounted and the user
+              // never sees the failure message.
+              onClick={(e) => {
+                e.preventDefault();
+                commit('archive');
+              }}
               disabled={pending}
               className="bg-destructive text-white hover:bg-destructive/90"
             >

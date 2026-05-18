@@ -39,7 +39,7 @@ export async function GET() {
   await writeAuditLog({
     userId: user.id,
     orgId: authorizationUser.orgId,
-    action: 'AUDIT_LOG_VIEWED',
+    action: 'SITES_LIST_VIEWED',
     resourceType: 'Site',
     resourceId: 'list',
     metadata: { listScope: 'sites', count: sites.length },
