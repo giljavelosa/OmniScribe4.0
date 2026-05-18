@@ -261,4 +261,18 @@ export type AuditAction =
   // ships the adapter seam + OrgEhrConnection schema; the emitters
   // land when a customer demands a second EHR vendor.
   | 'ORG_EHR_CONNECTION_CREATED'
-  | 'ORG_EHR_CONNECTION_REMOVED';
+  | 'ORG_EHR_CONNECTION_REMOVED'
+  // ---- Unit 32: Owner console maturity (Wave 6 / Phase 61+) ----
+  // ORG_SUBSCRIPTION_UPDATED captures before/after on the subscription
+  // tier + notes LENGTH (notes content excluded — sales context can
+  // be sensitive). Two impersonation actions both written through
+  // writePlatformAuditLog so they cross-anchor: appear in the platform
+  // audit log AND the per-org Transactions view. BLOCKED_MUTATION
+  // fires when a route refuses a mutation during an impersonation
+  // session — auditor can quantify how often the read-only gate
+  // actually fires (i.e. "did the owner try to write while
+  // impersonating?").
+  | 'ORG_SUBSCRIPTION_UPDATED'
+  | 'IMPERSONATION_BEGAN'
+  | 'IMPERSONATION_ENDED'
+  | 'IMPERSONATION_BLOCKED_MUTATION';

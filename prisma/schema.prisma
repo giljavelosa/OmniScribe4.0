@@ -80,6 +80,15 @@ model Organization {
   baaCountersignedBy String? // userId of the platform owner who countersigned
   complianceProfile  ComplianceProfile @default(STANDARD)
 
+  // Unit 32 — Owner-facing subscription metadata. Pricing source of truth
+  // stays in Stripe (via stripeCustomerId above); this is the at-a-glance
+  // tier for owner console triage + the free-text notes field captures
+  // sales-approved overrides ("$2k/mo discount through 2026-Q3" etc.).
+  // Override notes are length-only in audit metadata — sales context can
+  // be sensitive.
+  subscriptionPlan          SubscriptionPlan @default(STARTER)
+  subscriptionOverrideNotes String? // ≤500 chars enforced at the route
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -97,8 +106,44 @@ model Organization {
   telehealthSessions TelehealthSession[]
   fhirIdentities     FhirIdentity[]
   ehrConnections     OrgEhrConnection[]
+  usageDaily         OrgUsageDaily[]
 
   @@index([baaExecutedAt])
+  @@index([subscriptionPlan])
+}
+
+enum SubscriptionPlan {
+  STARTER
+  PROFESSIONAL
+  ENTERPRISE
+  CUSTOM
+}
+
+/// Unit 32 — Owner console usage rollup cache.
+///
+/// One row per org × day (UTC midnight buckets). Populated on-demand
+/// when the owner opens an org page; if the row is missing OR its
+/// `computedAt` is > 60 minutes old, the route recomputes synchronously
+/// before render. No background job in v1 — promotes to BullMQ when the
+/// owner page becomes hot.
+///
+/// `computedAtSourceCount` is a debug breadcrumb so an operator can
+/// distinguish "row exists but counted zero events" from "row was
+/// never recomputed against fresh data."
+model OrgUsageDaily {
+  id                    String       @id @default(cuid())
+  orgId                 String
+  organization          Organization @relation(fields: [orgId], references: [id])
+  day                   DateTime     // midnight UTC of the calendar day
+  notesSigned           Int          @default(0)
+  transcriptionMinutes  Int          @default(0)
+  copilotAsks           Int          @default(0)
+  draftsAccepted        Int          @default(0)
+  computedAt            DateTime
+  computedAtSourceCount Int          @default(0)
+
+  @@unique([orgId, day])
+  @@index([orgId, day])
 }
 
 model Site {
