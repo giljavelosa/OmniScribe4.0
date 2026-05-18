@@ -1,0 +1,21 @@
+{
+  "name": "omniscribe-infra",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OmniScribe AWS infrastructure (CDK v2). Data plane only — compute layer is a follow-up.",
+  "scripts": {
+    "build": "tsc --noEmit",
+    "synth": "cdk synth",
+    "diff": "cdk diff",
+    "deploy": "cdk deploy",
+    "destroy": "cdk destroy"
+  },
+  "devDependencies": {
+    "@types/node": "20.11.5",
+    "aws-cdk": "2.155.0",
+    "aws-cdk-lib": "2.155.0",
+    "constructs": "10.3.0",
+    "tsx": "4.19.2",
+    "typescript": "5.9.3"
+  }
+}

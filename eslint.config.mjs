@@ -16,6 +16,10 @@ const eslintConfig = [
       'src/generated/**',
       'prisma/migrations/**',
       'coverage/**',
+      // Polish (post-Wave 6) — CDK app is a separate workspace with
+      // its own package.json + tsconfig. Lint + typecheck happen
+      // inside `infra/` via its own scripts.
+      'infra/**',
     ],
   },
 
