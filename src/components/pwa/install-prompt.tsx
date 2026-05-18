@@ -110,7 +110,7 @@ export function InstallPrompt() {
           type="button"
           onClick={dismiss}
           aria-label="Dismiss install prompt"
-          className="text-muted-foreground hover:text-foreground"
+          className="inline-flex items-center justify-center min-h-[var(--touch-min)] min-w-[var(--touch-min)] -m-2 text-muted-foreground hover:text-foreground"
         >
           <X className="h-4 w-4" aria-hidden />
         </button>
