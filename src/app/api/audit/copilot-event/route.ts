@@ -8,11 +8,19 @@ import type { AuditAction } from '@/lib/audit/actions';
 export const runtime = 'nodejs';
 
 const SURFACES = ['prepare', 'capture', 'review'] as const;
+// Client-side fire-and-forget audit ingress. Each action is shape-locked
+// here at the route boundary so PHI can't be smuggled through the
+// metadata fields. Adding new actions: extend this allowlist AND update
+// the bodySchema if a new metadata field is needed.
 const ALLOWED_ACTIONS: ReadonlyArray<AuditAction> = [
   'COPILOT_CARD_RENDERED',
   'COPILOT_CARD_DISMISSED',
   'COPILOT_BEACON_OPENED',
   'COPILOT_BEACON_CLOSED',
+  // Unit 10 — batch retry for failed sections, fired by the
+  // FailureRecoveryBanner on /review. itemCount carries the count of
+  // sections being retried; no PHI.
+  'SECTION_REGEN_RETRY_BATCH',
 ];
 
 const bodySchema = z.object({

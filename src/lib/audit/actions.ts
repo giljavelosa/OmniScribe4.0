@@ -129,4 +129,7 @@ export type AuditAction =
   | 'SEAT_ALLOCATED'
   | 'SEAT_REVOKED'
   | 'STRIPE_SUBSCRIPTION_UPDATED'
-  | 'STRIPE_SUBSCRIPTION_STUB';
+  | 'STRIPE_SUBSCRIPTION_STUB'
+  // ---- Unit 10: Section-regenerate UX maturity ----
+  | 'SECTION_DIFF_VIEWED'
+  | 'SECTION_REGEN_RETRY_BATCH';

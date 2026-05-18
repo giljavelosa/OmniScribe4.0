@@ -10,6 +10,7 @@ import {
   markSectionStatus,
   appendRegeneration,
   mergeSectionIntoDraft,
+  recordSectionAttempt,
 } from '@/lib/notes/section-status';
 import type { TranscriptClean } from '@/services/transcription';
 
@@ -189,6 +190,7 @@ export async function handle(job: Job<AiGenerationJob>) {
         tokensIn: result.tokensIn,
         tokensOut: result.tokensOut,
       });
+      await recordSectionAttempt(noteId, { latencyMs: result.latencyMs, success: true });
       await writeAuditLog({
         orgId,
         action: 'SECTION_GENERATED',
@@ -203,6 +205,7 @@ export async function handle(job: Job<AiGenerationJob>) {
         status: 'failed',
         error: { code: 'GENERATION_FAILED', message: message.slice(0, 300) },
       });
+      await recordSectionAttempt(noteId, { latencyMs: 0, success: false });
       await writeAuditLog({
         orgId,
         action: 'SECTION_GENERATION_FAILED',
@@ -255,6 +258,16 @@ async function regenerateOne(
     throw new Error(`regenerate-section: section ${sectionId} not in template`);
   }
 
+  // Snapshot the PREVIOUS content BEFORE we mark status=generating + overwrite.
+  // Unit 10: the diff dialog renders this against the new content so the
+  // clinician can confirm "what changed."
+  const beforeNote = await prisma.note.findUnique({
+    where: { id: noteId },
+    select: { draftJson: true },
+  });
+  const beforeDraft = (beforeNote?.draftJson as Record<string, { content: string }> | null) ?? {};
+  const previousContent = beforeDraft[sectionId]?.content;
+
   await markSectionStatus(noteId, sectionId, {
     status: 'generating',
     generationStartedAt: new Date().toISOString(),
@@ -282,7 +295,9 @@ async function regenerateOne(
       triggeredByUserId,
       at: new Date().toISOString(),
       overwroteEdited: !!overwroteEdited,
+      previousContent,
     });
+    await recordSectionAttempt(noteId, { latencyMs: result.latencyMs, success: true });
     await writeAuditLog({
       orgId,
       action: 'SECTION_REGENERATED',
@@ -303,6 +318,7 @@ async function regenerateOne(
       status: 'failed',
       error: { code: 'GENERATION_FAILED', message: message.slice(0, 300) },
     });
+    await recordSectionAttempt(noteId, { latencyMs: 0, success: false });
     await writeAuditLog({
       orgId,
       action: 'SECTION_GENERATION_FAILED',

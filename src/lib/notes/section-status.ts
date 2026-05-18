@@ -54,12 +54,39 @@ export type RegenerationEntry = {
   triggeredByUserId?: string;
   at: string;
   overwroteEdited: boolean;
+  /** The content that was REPLACED by this regenerate. Captured at the
+   *  moment of regenerate so the diff dialog can render "what changed."
+   *  Unit 10. Bounded by appendRegeneration's per-section cap (10) so
+   *  the inferenceLog Json doesn't grow unbounded. */
+  previousContent?: string;
+};
+
+/** Per-section cap on _regenerations entries with `previousContent`. The
+ *  per-section history bounds memory growth (a long visit with many
+ *  regenerates would otherwise accumulate large content snapshots). */
+export const REGENERATION_HISTORY_CAP_PER_SECTION = 10;
+
+export type SectionStats = {
+  totalAttempts: number;
+  successCount: number;
+  failureCount: number;
+  latencyP50Ms: number | null;
+  latencyP95Ms: number | null;
+  lastUpdatedAt: string;
+  /** Rolling window of recent attempt latencies (cap RECENT_LATENCY_CAP)
+   *  used to compute online p50/p95. */
+  recentLatenciesMs: number[];
 };
 
 export type InferenceLog = {
   _sectionStatus?: Record<string, SectionStatusEntry>;
   _regenerations?: RegenerationEntry[];
+  _sectionStats?: SectionStats;
 };
+
+/** Rolling-window cap for recentLatenciesMs. 50 attempts is enough for
+ *  stable online p50/p95 without bloating the Json column. */
+export const RECENT_LATENCY_CAP = 50;
 
 export function readInferenceLog(value: unknown): InferenceLog {
   if (!value || typeof value !== 'object') return {};
@@ -111,14 +138,96 @@ export async function appendRegeneration(
   });
   if (!note) throw new Error(`appendRegeneration: note ${noteId} not found`);
   const log = readInferenceLog(note.inferenceLog);
+  const all = [...(log._regenerations ?? []), entry];
+
+  // Cap per-section history of entries CARRYING previousContent so the
+  // inferenceLog Json doesn't grow unbounded across long visits. We keep
+  // every regeneration's metadata, but only the most recent
+  // REGENERATION_HISTORY_CAP_PER_SECTION per section retain previousContent.
+  const trimmed = trimRegenerationHistory(all);
+
   const next: InferenceLog = {
     ...log,
-    _regenerations: [...(log._regenerations ?? []), entry],
+    _regenerations: trimmed,
   };
   await prisma.note.update({
     where: { id: noteId },
     data: { inferenceLog: next as unknown as Prisma.InputJsonValue },
   });
+}
+
+/**
+ * Update aggregate _sectionStats with the result of one attempt. Online
+ * p50/p95 over the rolling window. PHI-free; safe to surface in admin
+ * observability dashboards.
+ */
+export async function recordSectionAttempt(
+  noteId: string,
+  attempt: { latencyMs: number; success: boolean },
+): Promise<void> {
+  const note = await prisma.note.findUnique({
+    where: { id: noteId },
+    select: { inferenceLog: true },
+  });
+  if (!note) throw new Error(`recordSectionAttempt: note ${noteId} not found`);
+  const log = readInferenceLog(note.inferenceLog);
+  const prev: SectionStats =
+    log._sectionStats ?? {
+      totalAttempts: 0,
+      successCount: 0,
+      failureCount: 0,
+      latencyP50Ms: null,
+      latencyP95Ms: null,
+      lastUpdatedAt: new Date(0).toISOString(),
+      recentLatenciesMs: [],
+    };
+  const recent = [...prev.recentLatenciesMs, attempt.latencyMs].slice(-RECENT_LATENCY_CAP);
+  const next: SectionStats = {
+    totalAttempts: prev.totalAttempts + 1,
+    successCount: prev.successCount + (attempt.success ? 1 : 0),
+    failureCount: prev.failureCount + (attempt.success ? 0 : 1),
+    latencyP50Ms: percentile(recent, 0.5),
+    latencyP95Ms: percentile(recent, 0.95),
+    lastUpdatedAt: new Date().toISOString(),
+    recentLatenciesMs: recent,
+  };
+  const merged: InferenceLog = { ...log, _sectionStats: next };
+  await prisma.note.update({
+    where: { id: noteId },
+    data: { inferenceLog: merged as unknown as Prisma.InputJsonValue },
+  });
+}
+
+export function percentile(values: number[], p: number): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const idx = Math.min(sorted.length - 1, Math.floor(p * sorted.length));
+  return sorted[idx] ?? null;
+}
+
+/**
+ * Per-section: keep all entries, but strip previousContent off any entry
+ * outside the most-recent REGENERATION_HISTORY_CAP_PER_SECTION window.
+ * The audit-trail metadata (who/when/overwroteEdited) is preserved; only
+ * the heavy content snapshot is dropped.
+ */
+export function trimRegenerationHistory(entries: RegenerationEntry[]): RegenerationEntry[] {
+  const bySectionRecentFirst = new Map<string, number>();
+  // First pass: walk newest → oldest, track count per section.
+  const result: RegenerationEntry[] = [];
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const e = entries[i]!;
+    const count = bySectionRecentFirst.get(e.sectionId) ?? 0;
+    if (count >= REGENERATION_HISTORY_CAP_PER_SECTION && e.previousContent !== undefined) {
+      const { previousContent: _drop, ...rest } = e;
+      void _drop;
+      result.unshift(rest);
+    } else {
+      result.unshift(e);
+    }
+    bySectionRecentFirst.set(e.sectionId, count + 1);
+  }
+  return result;
 }
 
 /**
