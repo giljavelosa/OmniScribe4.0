@@ -2,7 +2,7 @@
 
 import { useCallback, useRef, useState, useTransition } from 'react';
 import Link from 'next/link';
-import { Loader2, Send, Sparkles, User } from 'lucide-react';
+import { CornerUpRight, Loader2, Send, Sparkles, User, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -10,6 +10,11 @@ import { StatusBadge } from '@/components/ui/status-badge';
 import { StatusBanner } from '@/components/ui/status-banner';
 import { cn } from '@/lib/cn';
 import { DraftCard } from './draft-card';
+import { ReasoningChain, type ReasoningStep } from './reasoning-chain';
+
+/** Unit 31 — prefix the inline Redirect composer pre-fills with so the
+ *  clinician sees the system's framing before typing their pivot. */
+const REDIRECT_PREFIX = 'Pivot from this answer: ';
 
 type SourceKind = 'note' | 'follow-up' | 'goal' | 'patient' | 'fhir' | 'literature';
 
@@ -43,6 +48,10 @@ type ChatMessage = {
    *  the bubble. Each card is self-contained (owns its own confirm/
    *  discard state). */
   drafts?: Draft[];
+  /** Assistant-only: Unit 31 chain-of-thought steps. Empty when the
+   *  model went straight to tools + answer. Rendered as a collapsible
+   *  chip under the bubble. */
+  reasoningSteps?: ReasoningStep[];
 };
 
 /**
@@ -105,6 +114,7 @@ export function AskSurface({
             answer: { text: string; sources: Source[]; isClarification: boolean };
             toolCalls: Array<{ tool: string; rowCount: number; resultOk: boolean }>;
             drafts?: Draft[];
+            reasoningSteps?: ReasoningStep[];
             stub: boolean;
           };
         };
@@ -119,6 +129,7 @@ export function AskSurface({
             isClarification: a.isClarification,
             stub: body.data.stub,
             drafts: body.data.drafts,
+            reasoningSteps: body.data.reasoningSteps ?? [],
           },
         ]);
         // Defer scroll so the new message is in the DOM.
@@ -140,6 +151,8 @@ export function AskSurface({
             message={m}
             patientId={patientId}
             noteId={noteId}
+            onRedirect={(pivot) => send(pivot)}
+            disabled={pending}
           />
         ))}
         {pending && (
@@ -192,12 +205,40 @@ function MessageBubble({
   message,
   patientId,
   noteId,
+  onRedirect,
+  disabled,
 }: {
   message: ChatMessage;
   patientId: string;
   noteId: string;
+  /** Unit 31 — Redirect button delegates back to the parent's send()
+   *  so audit + history pipeline doesn't fork. The clinician's pivot
+   *  enters the conversation as a normal user message. */
+  onRedirect: (pivot: string) => void;
+  disabled: boolean;
 }) {
   const isUser = message.role === 'user';
+  const [redirectDraft, setRedirectDraft] = useState<string | null>(null);
+  // Hide Redirect on error messages (no assistant content), the user's
+  // own messages, and clarifications (the clinician should answer
+  // those directly, not pivot — clarification IS the pivot point).
+  const canRedirect =
+    !isUser && !message.isClarification && !message.stub && message.content.length > 0;
+
+  function openRedirect() {
+    setRedirectDraft(REDIRECT_PREFIX);
+  }
+  function cancelRedirect() {
+    setRedirectDraft(null);
+  }
+  function submitRedirect() {
+    const text = redirectDraft ?? '';
+    // Guard: clinician must add SOMETHING past the prefix.
+    if (text.trim() === REDIRECT_PREFIX.trim()) return;
+    onRedirect(text);
+    setRedirectDraft(null);
+  }
+
   return (
     <div className={cn('flex flex-col gap-2', isUser ? 'items-end' : 'items-start')}>
       <div className={cn('flex gap-2', isUser ? 'justify-end' : 'justify-start')}>
@@ -233,9 +274,83 @@ function MessageBubble({
               ))}
             </div>
           )}
+          {/* Unit 31 — reasoning chain rides under sources + tool count.
+              Collapsed by default; renders nothing when steps is empty. */}
+          {!isUser && message.reasoningSteps && message.reasoningSteps.length > 0 && (
+            <ReasoningChain steps={message.reasoningSteps} />
+          )}
+          {/* Unit 31 — Redirect entry point. Sits inside the bubble next
+              to source pills so the affordance is discoverable but not
+              loud. */}
+          {canRedirect && redirectDraft === null && (
+            <button
+              type="button"
+              onClick={openRedirect}
+              disabled={disabled}
+              className={cn(
+                'mt-2 inline-flex items-center gap-1 text-[10px] uppercase tracking-wide',
+                'text-muted-foreground hover:text-foreground hover:underline',
+                'disabled:cursor-not-allowed disabled:opacity-50',
+              )}
+            >
+              <CornerUpRight className="h-2.5 w-2.5" aria-hidden />
+              Redirect
+            </button>
+          )}
         </div>
         {isUser && <User className="h-3.5 w-3.5 mt-2 text-muted-foreground shrink-0" aria-hidden />}
       </div>
+      {/* Unit 31 — inline composer for the Redirect pivot. Scoped to
+          THIS message so multiple in-flight pivots don't collide. */}
+      {!isUser && redirectDraft !== null && (
+        <div className="w-full max-w-[95%] rounded-lg border border-border bg-card p-2 space-y-2">
+          <p className="text-[11px] text-muted-foreground italic flex items-center gap-1">
+            <CornerUpRight className="h-3 w-3" aria-hidden />
+            Redirect — your pivot becomes the next message.
+          </p>
+          <Textarea
+            value={redirectDraft}
+            onChange={(e) => setRedirectDraft(e.target.value)}
+            rows={2}
+            maxLength={2000}
+            disabled={disabled}
+            autoFocus
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                submitRedirect();
+              }
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                cancelRedirect();
+              }
+            }}
+          />
+          <div className="flex items-center justify-end gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={cancelRedirect}
+              disabled={disabled}
+              className="gap-1"
+            >
+              <X className="h-3 w-3" aria-hidden />
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={submitRedirect}
+              disabled={disabled || redirectDraft.trim() === REDIRECT_PREFIX.trim()}
+              className="gap-1"
+            >
+              <Send className="h-3 w-3" aria-hidden />
+              Send pivot
+            </Button>
+          </div>
+        </div>
+      )}
       {/* Unit 30 — drafts ride beneath the assistant bubble. Each card is
           self-contained (owns its own pending/confirmed/discarded state). */}
       {!isUser && message.drafts && message.drafts.length > 0 && (

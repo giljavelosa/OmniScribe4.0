@@ -1,13 +1,18 @@
 'use client';
 
 import { useCallback, useRef, useState, useTransition } from 'react';
-import { BookOpen, ExternalLink, Loader2, Send, User } from 'lucide-react';
+import { BookOpen, CornerUpRight, ExternalLink, Loader2, Send, User, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { StatusBanner } from '@/components/ui/status-banner';
 import { cn } from '@/lib/cn';
+import { ReasoningChain, type ReasoningStep } from './reasoning-chain';
+
+/** Unit 31 — same redirect prefix as AskSurface so the clinician sees
+ *  one consistent system framing across both chart + research modes. */
+const REDIRECT_PREFIX = 'Pivot from this answer: ';
 
 type SourceKind = 'note' | 'follow-up' | 'goal' | 'patient' | 'fhir' | 'literature';
 
@@ -24,6 +29,9 @@ type ChatMessage = {
   toolCalls?: number;
   isClarification?: boolean;
   stub?: boolean;
+  /** Unit 31 — chain-of-thought steps; rendered as a collapsible
+   *  chip under the bubble. Mirrors AskSurface. */
+  reasoningSteps?: ReasoningStep[];
 };
 
 /**
@@ -77,6 +85,7 @@ export function ResearchSurface() {
           data: {
             answer: { text: string; sources: Source[]; isClarification: boolean };
             toolCalls: Array<{ tool: string; rowCount: number; resultOk: boolean }>;
+            reasoningSteps?: ReasoningStep[];
             stub: boolean;
           };
         };
@@ -90,6 +99,7 @@ export function ResearchSurface() {
             toolCalls: body.data.toolCalls.length,
             isClarification: a.isClarification,
             stub: body.data.stub,
+            reasoningSteps: body.data.reasoningSteps ?? [],
           },
         ]);
         setTimeout(() => scrollAnchorRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
@@ -105,7 +115,12 @@ export function ResearchSurface() {
           <EmptyState onPick={(q) => send(q)} disabled={pending} />
         )}
         {messages.map((m, i) => (
-          <MessageBubble key={i} message={m} />
+          <MessageBubble
+            key={i}
+            message={m}
+            onRedirect={(pivot) => send(pivot)}
+            disabled={pending}
+          />
         ))}
         {pending && (
           <div className="flex items-start gap-2 text-sm text-muted-foreground">
@@ -153,50 +168,146 @@ export function ResearchSurface() {
   );
 }
 
-function MessageBubble({ message }: { message: ChatMessage }) {
+function MessageBubble({
+  message,
+  onRedirect,
+  disabled,
+}: {
+  message: ChatMessage;
+  /** Unit 31 — same contract as AskSurface: pivot becomes the next
+   *  user message via the surface's send() so audit pipeline doesn't fork. */
+  onRedirect: (pivot: string) => void;
+  disabled: boolean;
+}) {
   const isUser = message.role === 'user';
+  const [redirectDraft, setRedirectDraft] = useState<string | null>(null);
+  const canRedirect =
+    !isUser && !message.isClarification && !message.stub && message.content.length > 0;
+
+  function openRedirect() {
+    setRedirectDraft(REDIRECT_PREFIX);
+  }
+  function cancelRedirect() {
+    setRedirectDraft(null);
+  }
+  function submitRedirect() {
+    const text = redirectDraft ?? '';
+    if (text.trim() === REDIRECT_PREFIX.trim()) return;
+    onRedirect(text);
+    setRedirectDraft(null);
+  }
+
   return (
-    <div className={cn('flex gap-2', isUser ? 'justify-end' : 'justify-start')}>
-      {!isUser && (
-        <BookOpen
-          className="h-3.5 w-3.5 mt-2 text-[var(--status-warning-fg)] shrink-0"
-          aria-hidden
-        />
-      )}
-      <div
-        className={cn(
-          'rounded-lg px-3 py-2 max-w-[80%] text-sm',
-          isUser
-            ? 'bg-[var(--status-info-bg)] text-foreground'
-            : // Research-tier background distinguishes evidence from chart data.
-              'bg-[var(--status-warning-bg)] text-foreground',
+    <div className={cn('flex flex-col gap-2', isUser ? 'items-end' : 'items-start')}>
+      <div className={cn('flex gap-2', isUser ? 'justify-end' : 'justify-start')}>
+        {!isUser && (
+          <BookOpen
+            className="h-3.5 w-3.5 mt-2 text-[var(--status-warning-fg)] shrink-0"
+            aria-hidden
+          />
         )}
-      >
-        <p className="whitespace-pre-wrap">{message.content}</p>
-        {message.stub && (
-          <p className="mt-1 text-[10px] uppercase tracking-wide text-[var(--status-warning-fg)]">
-            Stub mode
-          </p>
-        )}
-        {message.isClarification && !isUser && !message.stub && (
-          <p className="mt-1 text-[10px] uppercase tracking-wide text-muted-foreground">
-            Clarification question
-          </p>
-        )}
-        {message.toolCalls && message.toolCalls > 0 && (
-          <p className="mt-1 text-[11px] text-muted-foreground italic">
-            Searched {message.toolCalls} corpus query{message.toolCalls === 1 ? '' : 's'}.
-          </p>
-        )}
-        {message.sources && message.sources.length > 0 && (
-          <div className="mt-2 flex flex-wrap gap-1">
-            {message.sources.map((s, i) => (
-              <SourceChip key={`${s.kind}-${s.id}-${i}`} source={s} />
-            ))}
-          </div>
-        )}
+        <div
+          className={cn(
+            'rounded-lg px-3 py-2 max-w-[80%] text-sm',
+            isUser
+              ? 'bg-[var(--status-info-bg)] text-foreground'
+              : // Research-tier background distinguishes evidence from chart data.
+                'bg-[var(--status-warning-bg)] text-foreground',
+          )}
+        >
+          <p className="whitespace-pre-wrap">{message.content}</p>
+          {message.stub && (
+            <p className="mt-1 text-[10px] uppercase tracking-wide text-[var(--status-warning-fg)]">
+              Stub mode
+            </p>
+          )}
+          {message.isClarification && !isUser && !message.stub && (
+            <p className="mt-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+              Clarification question
+            </p>
+          )}
+          {message.toolCalls && message.toolCalls > 0 && (
+            <p className="mt-1 text-[11px] text-muted-foreground italic">
+              Searched {message.toolCalls} corpus query{message.toolCalls === 1 ? '' : 's'}.
+            </p>
+          )}
+          {message.sources && message.sources.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1">
+              {message.sources.map((s, i) => (
+                <SourceChip key={`${s.kind}-${s.id}-${i}`} source={s} />
+              ))}
+            </div>
+          )}
+          {!isUser && message.reasoningSteps && message.reasoningSteps.length > 0 && (
+            <ReasoningChain steps={message.reasoningSteps} />
+          )}
+          {canRedirect && redirectDraft === null && (
+            <button
+              type="button"
+              onClick={openRedirect}
+              disabled={disabled}
+              className={cn(
+                'mt-2 inline-flex items-center gap-1 text-[10px] uppercase tracking-wide',
+                'text-muted-foreground hover:text-foreground hover:underline',
+                'disabled:cursor-not-allowed disabled:opacity-50',
+              )}
+            >
+              <CornerUpRight className="h-2.5 w-2.5" aria-hidden />
+              Redirect
+            </button>
+          )}
+        </div>
+        {isUser && <User className="h-3.5 w-3.5 mt-2 text-muted-foreground shrink-0" aria-hidden />}
       </div>
-      {isUser && <User className="h-3.5 w-3.5 mt-2 text-muted-foreground shrink-0" aria-hidden />}
+      {!isUser && redirectDraft !== null && (
+        <div className="w-full max-w-[95%] rounded-lg border border-border bg-card p-2 space-y-2">
+          <p className="text-[11px] text-muted-foreground italic flex items-center gap-1">
+            <CornerUpRight className="h-3 w-3" aria-hidden />
+            Redirect — your pivot becomes the next message.
+          </p>
+          <Textarea
+            value={redirectDraft}
+            onChange={(e) => setRedirectDraft(e.target.value)}
+            rows={2}
+            maxLength={2000}
+            disabled={disabled}
+            autoFocus
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                submitRedirect();
+              }
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                cancelRedirect();
+              }
+            }}
+          />
+          <div className="flex items-center justify-end gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={cancelRedirect}
+              disabled={disabled}
+              className="gap-1"
+            >
+              <X className="h-3 w-3" aria-hidden />
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={submitRedirect}
+              disabled={disabled || redirectDraft.trim() === REDIRECT_PREFIX.trim()}
+              className="gap-1"
+            >
+              <Send className="h-3 w-3" aria-hidden />
+              Send pivot
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
