@@ -459,7 +459,7 @@ function CloseDialog({
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
-  function confirm() {
+  function confirmClose() {
     setError(null);
     startTransition(async () => {
       const res = await fetch(`/api/episodes/${episodeId}/close`, {
@@ -509,7 +509,7 @@ function CloseDialog({
             // dialog instead of disappearing with it.
             onClick={(e) => {
               e.preventDefault();
-              confirm();
+              confirmClose();
             }}
             disabled={pending}
             className="bg-destructive text-white hover:bg-destructive/90"
@@ -539,7 +539,7 @@ function ReopenDialog({
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
-  function confirm() {
+  function confirmReopen() {
     setError(null);
     if (reason.trim().length < 10) {
       setError('Reason required (≥10 chars).');
@@ -590,7 +590,7 @@ function ReopenDialog({
           <AlertDialogAction
             onClick={(e) => {
               e.preventDefault();
-              confirm();
+              confirmReopen();
             }}
             disabled={pending}
           >
