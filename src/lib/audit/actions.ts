@@ -108,6 +108,18 @@ export type AuditAction =
   // raises rows in the card for the first time. itemCount = number of
   // rows currently raised at first-fire moment.
   | 'COPILOT_CARD_RAISED'
+  // ---- Unit 27: Ask mode v1 — agent loop ----
+  // Server-side audit from /api/copilot/ask:
+  //   COPILOT_ASK_QUERY — per incoming question. Metadata: question
+  //     LENGTH only (PHI-fenced; the question text may carry PHI so we
+  //     never log it).
+  //   COPILOT_TOOL_CALL — per tool invocation in the agent loop.
+  //     Metadata: tool name + result row count.
+  //   COPILOT_ASK_ANSWERED — per finalized response. Metadata: source
+  //     count + iteration count + stub flag.
+  | 'COPILOT_ASK_QUERY'
+  | 'COPILOT_TOOL_CALL'
+  | 'COPILOT_ASK_ANSWERED'
   // ---- Unit 08: Admin & Compliance Ready ----
   | 'SITE_CREATED'
   | 'SITE_UPDATED'

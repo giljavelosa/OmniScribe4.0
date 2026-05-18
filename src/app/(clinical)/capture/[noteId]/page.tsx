@@ -143,7 +143,7 @@ export default async function CapturePage({ params }: { params: Promise<{ noteId
         hasPriorSignedNote={hasPriorSignedNote}
         fhirContext={fhirContext}
       />
-      <CopilotShell surface="capture" noteId={note.id} />
+      <CopilotShell surface="capture" noteId={note.id} patientId={note.patient.id} />
     </CaptureStateProvider>
   );
 }

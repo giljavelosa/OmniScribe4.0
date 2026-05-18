@@ -4,8 +4,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Sparkles } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { cn } from '@/lib/cn';
+import { AskSurface } from './ask-surface';
 
 export type CopilotSurface = 'prepare' | 'capture' | 'review';
 
@@ -28,7 +29,18 @@ export type CopilotSurface = 'prepare' | 'capture' | 'review';
  * row (COPILOT_BEACON_OPENED / _CLOSED) with { surface, noteId }. PHI-free
  * by the API contract (route only accepts the fenced shape).
  */
-export function CopilotShell({ surface, noteId }: { surface: CopilotSurface; noteId: string }) {
+export function CopilotShell({
+  surface,
+  noteId,
+  patientId,
+}: {
+  surface: CopilotSurface;
+  noteId: string;
+  /** Unit 27 — required by AskSurface so the agent can scope tools. The
+   *  three call sites (prepare/capture/review) already have the patient
+   *  in scope via the Note lookup. */
+  patientId: string;
+}) {
   const [open, setOpen] = useState(false);
   const lastOpenStateRef = useRef(false);
 
@@ -68,27 +80,15 @@ export function CopilotShell({ surface, noteId }: { surface: CopilotSurface; not
       </Button>
 
       <Sheet open={open} onOpenChange={setOpen}>
-        <SheetContent side="right" className="sm:max-w-md">
-          <SheetHeader>
+        <SheetContent side="right" className="sm:max-w-md p-0 flex flex-col">
+          <SheetHeader className="border-b border-border px-4 py-3">
             <SheetTitle className="flex items-center gap-2">
               <Sparkles className="size-4" aria-hidden="true" />
               Co-Pilot
             </SheetTitle>
-            <SheetDescription>
-              Watch mode is on — relevant context surfaces on the page automatically. Ask mode
-              (free-form questions, grounded in attested sources) arrives in a later unit.
-            </SheetDescription>
           </SheetHeader>
-
-          <div className="mt-6 space-y-3 px-4 pb-4 text-sm">
-            <p className="text-muted-foreground">
-              For now, see the Watch cards on this screen for open follow-ups and the plan
-              prior clinicians flagged for today. Every fact links back to its source note.
-            </p>
-            <p className="text-xs text-muted-foreground italic">
-              The agent loop, FHIR-backed cards, and Ask sheet land in later waves. Every
-              capability ships strictly source-grounded — no inferred recommendations.
-            </p>
+          <div className="flex-1 min-h-0">
+            <AskSurface patientId={patientId} noteId={noteId} />
           </div>
         </SheetContent>
       </Sheet>

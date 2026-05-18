@@ -104,7 +104,7 @@ export default async function ReviewPage({ params }: { params: Promise<{ noteId:
         }}
         copilotFollowUps={copilotFollowUps}
       />
-      <CopilotShell surface="review" noteId={note.id} />
+      <CopilotShell surface="review" noteId={note.id} patientId={note.patientId} />
     </>
   );
 }

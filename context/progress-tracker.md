@@ -4,11 +4,11 @@
 
 ## Current Phase
 
-- **Wave 5 Watch v2 shipped — Unit 26.** PR #27 (branch `feat/unit-26-watch-live-triggers`, stacked on `feat/unit-25-watch-fhir-cards`). The Unit 25 FHIR Watch cards now REACT to live transcript on /capture — when a clinician says "metformin" or "diabetes", the matching card raises (left-border accent + "Mentioned just now" subhead). Pure substring/token matcher, no LLM. Sticky-per-session raise state; one COPILOT_CARD_RAISED audit per cardType per session. /prepare stays on the static bundle (no streaming transcript there).
+- **Wave 5 Ask mode v1 shipped — Unit 27.** PR #28 (branch `feat/unit-27-ask-mode-agent`, stacked on `feat/unit-26-watch-live-triggers`). CopilotShell's placeholder Sheet graduates to a multi-turn chat surface backed by a prompt-engineered agent loop with 4 read-only lookup tools (lookupSignedNote, lookupFollowUp, lookupEpisodeGoals, lookupPatientDemographics). Per-session in-memory history (cleared on Sheet close per spec). Source-grounded — empty sources flagged as clarification questions, not answers. 3-action audit chain (QUERY → TOOL_CALL × N → ANSWERED) with PHI-fenced metadata throughout. Stub-mode safe.
 
 ## Current Goal
 
-- Await user confirmation before starting Unit 27 — Wave 5 Ask mode v1. CopilotShell's placeholder Sheet graduates to a multi-turn agent loop with tool calls; tools = `lookupSignedNote`, `lookupFollowUp`, `lookupEpisodeGoals`, `lookupPatientDemographics`; mandatory source pills; chat history per-session. Per Prompt B's stop-between-units contract.
+- Await user confirmation before starting Unit 28 — Wave 5 Ask mode v2 (FHIR tools). Extends the Ask agent's tool set with `lookupFhirCondition`, `lookupFhirMedication`, `lookupFhirObservation`, `lookupFhirAllergy`, `lookupFhirCarePlan` reading from Unit 21's FhirCachedResource. Rate-limit handling. Per Prompt B's stop-between-units contract.
 
 ## Completed
 
@@ -363,6 +363,17 @@
   - Capture layouts (Desktop + Mobile) swap `FhirWatchCards` → `FhirWatchCardsLive`. /prepare stays on the static bundle (no streaming transcript; CaptureStateProvider isn't above it).
   - 234 tests pass (was 218); build/lint/typecheck clean.
 
+- **2026-05-17 — Unit 27: Ask mode v1 — agent loop** (PR #28 — `feat(unit-27): ask mode v1 agent loop`).
+  - Spec at `context/specs/27-ask-mode-v1.md`. Wave 5 Phase 53.
+  - 3 new AuditAction values: `COPILOT_ASK_QUERY` (metadata: question LENGTH not text; PHI-fenced), `COPILOT_TOOL_CALL` (tool name + row count, not args), `COPILOT_ASK_ANSWERED` (source count + iterations + stub flag).
+  - Locked decisions: prompt-engineered JSON action loop (NOT native Bedrock Converse tool-use — simpler given the current `LLMService.generate` shape; native swap is future polish); max 4 iterations bounded; per-session in-memory history (DB persistence is Wave 6); sources mandatory on definitive answers, empty sources allowed for clarification questions; stub-mode canned response so UI is exercisable.
+  - `src/services/copilot/tools.ts` — 4 read-only lookup tools dispatched via `runTool(name, args, ctx)`. Per-tool Zod arg schema parses unknown JSON from the model. assertOrgScoped at every patient/note/episode boundary (hallucinated cross-org id → tool error → model sees on next turn). `lookupSignedNote` inline-filters status IN (SIGNED, TRANSFERRED) — Rule 20 at the tool, not just the caller.
+  - `src/services/copilot/agent.ts` — `runAgent(input, ctx, llm)` multi-turn loop. ASK_SYSTEM_PROMPT locks 3 absolute rules + strict JSON contract. Parse-error recovery (one retry per iteration). Max-iteration ceiling forces an answer with a "tool budget exhausted" hint. Source filtering drops malformed entries. 7 vitest cases via scriptedLlm: direct answer / clarification / single tool → answer / parse retry / max iterations / stub envelope / invalid sources drop.
+  - `POST /api/copilot/ask` — NOTE_REVIEW-gated. Resolves note + patient up-front for org-scoping (fails closed before LLM tokens spent on wrong-org). Looks up episodeId for the agent. Writes the 3-action audit chain.
+  - `src/components/copilot/ask-surface.tsx` — chat UI inside the CopilotShell Sheet. Per-session state. Send via ⏎ (⇧⏎ newline). Per-message render: stub chip, clarification label, tool-call inline count, source pills per kind (note → /review link; follow-up/goal/patient → text chip). Empty state with 3 example questions seeded as taps.
+  - `CopilotShell` rewritten: SheetDescription removed (took vertical space the chat needs); Sheet content is now AskSurface. `patientId` prop required on the 3 mount sites (prepare/review/capture — all had it in scope from the Note lookup).
+  - 241 tests pass (was 234); build/lint/typecheck clean. 7 new agent tests.
+
 ## In Progress
 
 None.
@@ -371,7 +382,7 @@ None.
 
 In priority order:
 
-1. **Unit 27 — Wave 5 Ask mode v1: agent loop** ([`context/specs/00-build-plan.md`](specs/00-build-plan.md) Wave 5). CopilotShell's placeholder Sheet graduates to a multi-turn agent loop with tool calls. Tools = `lookupSignedNote`, `lookupFollowUp`, `lookupEpisodeGoals`, `lookupPatientDemographics`. Mandatory source pills on every answer. Chat history per-session.
+1. **Unit 28 — Wave 5 Ask mode v2: FHIR tools** ([`context/specs/00-build-plan.md`](specs/00-build-plan.md) Wave 5). Extends the agent's tool registry with 5 new FHIR-backed lookups: `lookupFhirCondition`, `lookupFhirMedication`, `lookupFhirObservation`, `lookupFhirAllergy`, `lookupFhirCarePlan`. Reads `FhirCachedResource` against `'verified'` PatientFhirIdentity (Rule 20 still holds). Rate-limit handling per tool category.
 
 Deferred polish (non-blocking; land in priority order):
 - Wave 3.5 — Daily SDK swap for patient audio track; TitaNet voice-ID on post-call review; schedule-list "Start telehealth" CTA.
@@ -568,6 +579,16 @@ These need user/PM decision before the depending unit can ship. Quote the source
 - **2026-05-17 — Copy-to-clipboard fires SECTION_COPIED_TO_CLIPBOARD via the copilot-event endpoint with itemCount = char count.** PHI-free at the audit layer (content never leaves the client beyond the clipboard write). The cap raise (1000 → 100_000) accommodates real section sizes; the prior cap was sized for "items in a list" not "characters in a section."
 - **2026-05-17 — Accordion animation polish ships data-state + transition-duration classes only — no CSS keyframes.** The simplest cross-browser solution that works inside Tailwind v4 without custom @keyframes. Future polish (CSS-only height animation for collapse/expand) can hook the data-state attribute when the design asks for it.
 - **2026-05-17 — Wave 2 COMPLETE.** Units 10–14 close the clinical-surface trust gaps. /review now has: SSE reconnect indicator (10), section regenerate with diff (10), failure-recovery banner (10), per-section observability (10), inline goal progression on the patient panel (11), snapshot strip + override-wins on /patients/[id] (12), templates authoring with version history (13), and AI compliance flags with severity-grouped review (14). The clinical surfaces are no longer "works" — they're "trusted daily."
+
+### Unit 27 (2026-05-17)
+
+- **2026-05-17 — Prompt-engineered tool-use, NOT native Bedrock Converse API.** Existing LLMService.generate takes (system, user) → text. Adding native tool-use means a new method + a non-trivial Bedrock SDK refactor (Converse messages, tool config, content blocks). For 4 read-only tools the prompt-engineered JSON contract works fine — strict JSON parsing + max-iteration ceiling bound the failure modes. Native swap lands when the second use case justifies the infra (e.g. action tools in Unit 30 with structured args).
+- **2026-05-17 — Max 4 iterations (3 tools + 1 forced answer).** Bounds runaway loops + token cost. Empirically 3 tools is enough for "look up two prior notes, look up active follow-ups, then answer." The 4th iteration's prompt includes "tool budget exhausted — your next response MUST be an answer" hint; the agent reliably complies in stub-mode tests.
+- **2026-05-17 — Empty sources = clarification, not answer.** The agent CAN respond with empty sources if it needs to ask the clinician something. The UI surfaces these distinctly ("Clarification question" label) so the clinician isn't confused into thinking it's an evidenced answer. Fail-closed: a non-clarification response with empty sources would render the same way (the clinician's eye sees no provenance pill), so the worst case still reads correctly.
+- **2026-05-17 — PHI fence at audit metadata, NOT at content storage.** The agent's text + tool args + tool results all carry potential PHI; they live in browser memory + (briefly) on the LLM provider. The AUDIT row, however, gets `questionLength` not the question itself; `tool name + row count` not the args or content; `sourceCount + iterations + stub flag` not the answer text. Audit log is queryable across orgs by platform staff; keeping it content-free preserves the org-scoping promise.
+- **2026-05-17 — Per-session in-memory history, not DB-backed.** Spec defers ChatSession persistence to Wave 6. Practical: clinicians don't usually want their mid-visit questions surfaced post-visit; clearing on Sheet close matches what they'd expect. If a clinician wants the answer to outlive the session, they paste it into the note — that's the right primitive.
+- **2026-05-17 — Org-scoping check before LLM tokens spent.** /api/copilot/ask resolves note + patient FIRST; if either doesn't match the session's orgId, return 404 before invoking runAgent. Spending Bedrock tokens on a wrong-org request would be a small leak (Sonnet might learn the patient's id-shape from training-set adjacency) AND a token-cost vector for a hostile insider.
+- **2026-05-17 — assertOrgScoped enforced AT every tool, not just at the route.** Belt-and-suspenders: the route checks the note + patient; each tool independently re-checks the org against the resource. Defense in depth so a future refactor that adds a new caller of runTool can't bypass the check.
 
 ### Unit 26 (2026-05-17)
 
