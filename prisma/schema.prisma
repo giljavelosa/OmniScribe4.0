@@ -94,29 +94,12 @@ model Organization {
   subscriptionPlan          SubscriptionPlan @default(STARTER)
   subscriptionOverrideNotes String? // ≤500 chars enforced at the route
 
-<<<<<<< HEAD
-=======
-<<<<<<< HEAD
-=======
->>>>>>> e759d2a (docs(unit-35): spec + LlmCallLog/OrgLlmCostDaily schema + LLM_BUDGET_UPDATED)
-  /// Unit 34 — Per-org audit retention in days. null = retain forever
-  /// (default for legacy/existing orgs); ≥30 triggers
-  /// `purgeAuditForOrg` to delete AuditLog rows older than N days
-  /// (PlatformAuditLog is governance-trail, retained forever).
-  /// Owner-settable via /api/owner/orgs/[id]/audit-retention; route
-  /// validates 30 ≤ N ≤ 3650 (10 years).
+  /// Unit 34 — Per-org audit retention in days. null = retain forever.
   auditRetentionDays Int?
 
-<<<<<<< HEAD
-=======
-  /// Unit 35 — Per-org monthly LLM budget in USD. null = no threshold
-  /// (warning never shown). Owner-only settable via
-  /// /api/owner/orgs/[id]/llm-budget. Decimal(10,2) supports up to
-  /// $99,999,999.99 per month.
+  /// Unit 35 — Per-org monthly LLM budget in USD. null = no threshold.
   monthlyLlmBudgetUsd Decimal? @db.Decimal(10, 2)
 
->>>>>>> b4181b6 (docs(unit-35): spec + LlmCallLog/OrgLlmCostDaily schema + LLM_BUDGET_UPDATED)
->>>>>>> e759d2a (docs(unit-35): spec + LlmCallLog/OrgLlmCostDaily schema + LLM_BUDGET_UPDATED)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
