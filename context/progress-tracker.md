@@ -4,11 +4,11 @@
 
 ## Current Phase
 
-- **Wave 3 COMPLETE — Unit 18 shipped.** PR #19 (branch `feat/unit-18-telehealth-polish`, stacked on `feat/unit-17-telehealth-clinician-room`). Hardens the rough edges Units 15–17 left for polish: clinicians get a pre-call diagnostic (mic + network RTT + browser compat) at `/telehealth/preflight/[scheduleId]` before they enter the room; the room shell now surfaces reconnect state inline + offers a manual retry after the pipeline's 3-attempt auto exhausts; page reload mid-call shows a "Resuming session" banner so the audio gap is honest; quality metrics (sample count + reconnect count + duration + transcript length) ride into the /end audit row so the auditor lens can see call quality post-hoc. Daily SDK swap + TitaNet voice-ID + "Start telehealth visit" CTA explicitly deferred — they're sized as their own units.
+- **Wave 4 opener — Unit 19 shipped.** PR #20 (branch `feat/unit-19-fhir-smart-auth`, stacked on `feat/unit-18-telehealth-polish`). SMART on FHIR auth foundations — the F1 gate per `references/fhir-integration-spec.md`. v1 is per-clinician, provider-launched, NextGen sandbox only. A clinician can launch from NextGen, complete OAuth2 with PKCE, and the resulting tokens are AES-256-GCM-encrypted in Postgres + refreshable. **Auth only — no resource fetching yet** (F3 / Unit 21 lands the sync worker).
 
 ## Current Goal
 
-- Await user confirmation before starting Wave 4 opener (FHIR / EHR integration — Unit 19, SMART OAuth2 auth foundations). Wave 3 closing puts telehealth at v1 parity with the in-person flow; Wave 4 begins the read-only EHR sync long pole. Per Prompt B's stop-between-units contract.
+- Await user confirmation before starting Unit 20 — Wave 4 F2 (Patient identity matching: bidirectional Patient ↔ FHIR Patient links, identity confirmation UI, audit on every link/unlink). Per Prompt B's stop-between-units contract.
 
 ## Completed
 
@@ -253,6 +253,25 @@
   - `POST /api/admin/telehealth/sessions/[id]/end` extended to accept optional `qualityMetrics` (Zod: all fields `int >= 0` so PHI can't be smuggled). Persists on `TelehealthSession.qualityMetrics` + spreads into TELEHEALTH_SESSION_ENDED audit metadata.
   - 152 tests pass (was 144); build/lint/typecheck clean. New tests: 7 preflight (compat + RTT), 1 pipeline quality metrics. 1 new client surface + 1 new API + 1 schema migration ship.
 
+- **2026-05-17 — Unit 19: FHIR / SMART OAuth2 auth foundations (Wave 4 / F1)** (PR #20 — `feat(unit-19): fhir smart oauth2 auth foundations`).
+  - Spec at `context/specs/19-fhir-smart-auth.md`. Wave 4 opener. v1 is per-clinician, provider-launched, NextGen sandbox only. **Auth only — no resource fetching yet.**
+  - 5 new AuditAction values: FHIR_LAUNCH_INITIATED, FHIR_AUTH_GRANTED, FHIR_AUTH_FAILED, FHIR_TOKEN_REFRESHED, FHIR_DISCONNECTED. All PHI-free.
+  - Schema: 4 new tables.
+    - `FhirIdentity` — per-clinician, per-EHR SMART token + identity binding. Tokens AES-256-GCM-encrypted at rest. Unique on `(clinicianOrgUserId, ehrSystem)`. Active in F1.
+    - `PatientFhirIdentity` — bidirectional patient ↔ EHR mapping. matchConfidence: `'verified' | 'high' | 'manual'`. Schema ships now so the launch flow can persist a partial row when the EHR returns patient context; CRUD lands in F2 (Unit 20).
+    - `FhirCachedResource` — per `(patient, ehrSystem, resourceType, resourceId)` tuple. Sensitivity level propagated from source per 42 CFR Part 2. Schema only in F1; sync worker is F3 (Unit 21).
+    - `FhirLaunchState` — short-lived (10 min) row carrying SMART launch context between `/api/fhir/launch` and `/api/fhir/callback`. codeVerifier never leaves the server.
+  - `src/lib/fhir/token-crypto.ts` — AES-256-GCM envelope `v1:<base64(iv)>:<base64(ct)>:<base64(tag)>`. Version prefix lets a future key rotation recognize stale ciphertexts. 8 vitest cases cover round-trip, IV randomness, tamper detection, wrong-key rejection, malformed envelope, wrong-length key, missing env var, empty-input rejection.
+  - `src/services/fhir/smart-client.ts` — `resolveSmartConfig` (1h per-process cache; stub-mode synthesizes a fake config), `generatePkcePair` (base64url(random32) verifier + S256 challenge), `generateStateToken` (32-byte opaque random), `exchangeAuthCode`, `refreshAccessToken`. Stub-mode synthesizes plausible tokens (matches Soniox / Bedrock / S3 / Daily.co stub pattern) so the full handshake exercises end-to-end without a real NextGen sandbox.
+  - `GET /api/fhir/launch` — provider-launched entry. NextAuth-gated. Writes a FhirLaunchState row keyed by the state token + redirects to the EHR's authorization endpoint with PKCE challenge + 12 required scopes (launch + launch/patient + 10 patient/*.read + offline_access). Stub-mode short-circuits straight to the callback with a synthetic code.
+  - `GET /api/fhir/callback` — OAuth redirect target. State token IS the auth (no NextAuth gate). Looks up launch row, exchanges code, encrypts both tokens, upserts FhirIdentity, deletes launch state, redirects to /admin/integrations/fhir?connected=<ehrSystem>. Failures redirect to ?error=<reason> + audit with internal reason.
+  - `POST /api/admin/integrations/fhir/[id]/disconnect` — admin OR owning clinician can wipe a FhirIdentity. Hard-deletes the row (tokens unrecoverable, the right disposal for OAuth credentials).
+  - `POST /api/admin/integrations/fhir/[id]/refresh` — manual token refresh (dev / debugging hook; F3 sync worker auto-refreshes proactively).
+  - `/admin/integrations/fhir` page (server, admin-only). Stub-mode launcher card + active connections list with per-row Refresh + Disconnect (AlertDialog, rule 22). Surfaces ?connected / ?error query params as success/danger banners. React 19 purity fix: nowMs flows from the server page into the row prop.
+  - Admin nav grows: Users · Sites · Seats · Templates · Audit · **Integrations** · Org settings.
+  - `.env.example` documents Daily.co (was missing — Units 15–18 added the var without updating the example file) + FHIR client / secret / redirect URI + FHIR_TOKEN_ENCRYPTION_KEY with a LOCAL DEV ONLY placeholder (plaintext spells out the warning).
+  - 160 tests pass (was 152); build/lint/typecheck clean. 5 new APIs + 1 new admin surface + 4 new schema tables ship.
+
 ## In Progress
 
 None.
@@ -261,7 +280,7 @@ None.
 
 In priority order:
 
-1. **Unit 19 — Wave 4 opener: SMART OAuth2 auth foundations** ([`context/specs/00-build-plan.md`](specs/00-build-plan.md) Wave 4). SMART on FHIR OAuth2 flow; encrypted token storage; refresh handling; NextGen sandbox config; per-clinician vs per-org launch model (open question 5). v1 is read-only, provider-launched. Foundation for Units 20–24 (patient identity matching → resource sync → brief FHIR enrichment → provenance UI → multi-EHR adapter).
+1. **Unit 20 — Wave 4 F2: Patient identity matching** ([`references/fhir-integration-spec.md`](../references/fhir-integration-spec.md) F2). Bidirectional Patient ↔ FHIR Patient links; identity confirmation UI (clinician confirms before linking); audit on every link/unlink. Builds directly on the FhirIdentity + PatientFhirIdentity schemas + the `launchPatientFhirId` hint Unit 19 persists. Foundation for F3 (resource sync) which can't fetch resources until the patient identity is known.
 
 Wave 3.5 (deferred polish, can land alongside Wave 4):
 - Daily.co SDK swap for the patient audio track (one-line change in the room shell + token-mint endpoint).
@@ -286,7 +305,7 @@ These need user/PM decision before the depending unit can ship. Quote the source
 
 4. ~~**Telehealth provider**~~ — RESOLVED in Unit 15 (Daily.co confirmed; stub-mode wrapper ships in `src/services/telehealth/daily.ts` matching the Soniox/Bedrock/S3/Stripe/Resend pattern; real-mode SDK call throws an explicit gap error until DAILY_API_KEY is set and the integration is finished — better than silent failure or fake data in v1).
 
-5. **FHIR SMART launch model** — provider-launched per-clinician or per-org for v1? Affects token storage shape + consent UX. Decide before Wave 4 (Unit 19).
+5. ~~**FHIR SMART launch model**~~ — RESOLVED in Unit 19 (per-clinician + provider-launched; per-org service accounts + standalone launch are v2 per `references/fhir-integration-spec.md` §5). Token storage shape: `FhirIdentity` unique on `(clinicianOrgUserId, ehrSystem)`; each clinician auths separately. Consent UX is implicit — the clinician's NextGen authentication IS the consent.
 
 6. ~~**Default note style preference**~~ — RESOLVED in Unit 05 (Note.noteStyle defaults to HYBRID per the schema; preset templates do not pin a style so the per-note default applies).
 
@@ -448,6 +467,18 @@ These need user/PM decision before the depending unit can ship. Quote the source
 - **2026-05-17 — Copy-to-clipboard fires SECTION_COPIED_TO_CLIPBOARD via the copilot-event endpoint with itemCount = char count.** PHI-free at the audit layer (content never leaves the client beyond the clipboard write). The cap raise (1000 → 100_000) accommodates real section sizes; the prior cap was sized for "items in a list" not "characters in a section."
 - **2026-05-17 — Accordion animation polish ships data-state + transition-duration classes only — no CSS keyframes.** The simplest cross-browser solution that works inside Tailwind v4 without custom @keyframes. Future polish (CSS-only height animation for collapse/expand) can hook the data-state attribute when the design asks for it.
 - **2026-05-17 — Wave 2 COMPLETE.** Units 10–14 close the clinical-surface trust gaps. /review now has: SSE reconnect indicator (10), section regenerate with diff (10), failure-recovery banner (10), per-section observability (10), inline goal progression on the patient panel (11), snapshot strip + override-wins on /patients/[id] (12), templates authoring with version history (13), and AI compliance flags with severity-grouped review (14). The clinical surfaces are no longer "works" — they're "trusted daily."
+
+### Unit 19 (2026-05-17)
+
+- **2026-05-17 — Per-clinician identity scope (not per-org service accounts).** Carried from `references/fhir-integration-spec.md` §13. Per-org service accounts are easier operationally (one admin authorizes for everyone) but harder for the auditor lens — every FHIR resource fetch must be attributable to a specific clinician for HIPAA + 42 CFR Part 2 minimum-necessary analysis. Per-clinician keeps that attribution native and matches NextGen's launch model. v2 conversation if customers ask.
+- **2026-05-17 — Provider-launched only in v1; standalone launch is v2.** The clinician opens a patient chart in NextGen → clicks OmniScribe → NextGen redirects with `iss=<fhirBaseUrl>&launch=<launchToken>`. We never initiate the OAuth ourselves. Rationale: the launch token from NextGen embeds patient context (which we use as a Unit 20 matching hint) + means the clinician's NextGen authentication IS the consent — no extra "Connect to EHR" workflow inside OmniScribe. Standalone launch is useful post-visit / telehealth and warrants its own unit.
+- **2026-05-17 — AES-256-GCM with versioned envelope (`v1:iv:ct:tag`).** Tokens are encrypted before insert into `FhirIdentity.accessTokenEnc` + `refreshTokenEnc`. The `v1` prefix lets a future key rotation recognize stale ciphertexts + re-encrypt; the IV (12 bytes, NIST SP 800-38D for GCM) is random per-encrypt; the auth tag is separated from the ciphertext so the envelope shape is constant per-byte. Rejecting tampered ciphertext via the auth tag is critical — a database compromise that flipped bytes in the token columns would otherwise silently produce wrong-but-valid-looking tokens.
+- **2026-05-17 — PKCE (S256) on every launch.** Even though we'll have a client secret in real-mode (NextGen is a confidential client), PKCE blocks the auth code interception attack — a man-in-the-middle who captures the redirect can't exchange the code without the verifier (which never leaves our server). The verifier is base64url(random32); challenge is base64url(sha256(verifier)).
+- **2026-05-17 — Stub-mode short-circuits the launch straight to the callback.** When `FHIR_NEXTGEN_CLIENT_ID` is unset, `/api/fhir/launch` skips the EHR authorize redirect entirely and bounces straight to `/api/fhir/callback?code=stub-code-...&state=...`. The callback then synthesizes plausible tokens via the stub client. Matches the Soniox / Bedrock / S3 / Daily.co pattern — the full handshake is exercisable in dev without a real EHR sandbox.
+- **2026-05-17 — Callback has no NextAuth gate; state token IS the auth.** The redirect lands on the user's browser (which has their NextAuth cookie) but the callback handler does not require it — the SMART state token (32-byte opaque random, 10-min TTL) plus the OAuth code provide sufficient identity binding back to the clinicianOrgUserId we stored at launch. Adding a session check would mostly add complexity for no security gain (state validation already covers replay + CSRF via the 10-min TTL + single-use lookup).
+- **2026-05-17 — Tokens encrypted-at-rest even in stub mode.** The encryption path is the same in stub and real mode — `FHIR_TOKEN_ENCRYPTION_KEY` is required in both. Reasoning: end-to-end encryption coverage in dev means the prod path is exercised every time the test suite runs, not just in production. The default key in `.env.example` is clearly labeled "LOCAL DEV ONLY" (the plaintext spells out the warning).
+- **2026-05-17 — Hard-delete on disconnect (not soft-delete).** OAuth credentials are not retained for audit; the audit row is the audit trail. Hard-deleting the FhirIdentity row makes the encrypted tokens unrecoverable, which is the right disposal semantics for credentials — different from PHI rows where retention matters.
+- **2026-05-17 — Refresh route is a dev/debugging hook, not the production refresh path.** F3 (Unit 21) ships the resource sync worker, which will refresh tokens proactively before fetching. The manual refresh endpoint exists so dev can verify the refresh roundtrip end-to-end without waiting for token expiry (and so admins have an emergency lever if a refresh fails). Both paths share `refreshAccessToken()` in `smart-client.ts`.
 
 ### Unit 18 (2026-05-17)
 
