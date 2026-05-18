@@ -14,11 +14,15 @@ import {
  * refreshAllOrgRollups iterates across orgs cleanly.
  */
 
-const prisma = new PrismaClient();
+// Skipped in CI (no Postgres). Run locally via `npm test` with DATABASE_URL set.
+const hasDb = !!process.env.DATABASE_URL;
+const describeMaybe = hasDb ? describe : describe.skip;
+const prisma = hasDb ? new PrismaClient() : (null as unknown as PrismaClient);
 
 const ORG_ID = 'test-org-polish-rollup-refresh';
 
 beforeAll(async () => {
+  if (!hasDb) return;
   await prisma.organization.upsert({
     where: { id: ORG_ID },
     update: {},
@@ -40,6 +44,7 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
+  if (!hasDb) return;
   await prisma.orgUsageDaily.deleteMany({ where: { orgId: ORG_ID } });
   await prisma.orgLlmCostDaily.deleteMany({ where: { orgId: ORG_ID } });
   await prisma.auditLog.deleteMany({ where: { orgId: ORG_ID } });
@@ -47,7 +52,7 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
-describe('refreshOrgRollups', () => {
+describeMaybe('refreshOrgRollups', () => {
   it('returns one result per rollup type', async () => {
     const results = await refreshOrgRollups(ORG_ID);
     expect(results).toHaveLength(2);
@@ -101,7 +106,7 @@ describe('refreshOrgRollups', () => {
   });
 });
 
-describe('refreshAllOrgRollups', () => {
+describeMaybe('refreshAllOrgRollups', () => {
   it('processes the test org + returns aggregate counts', async () => {
     const result = await refreshAllOrgRollups();
     expect(result.orgsProcessed).toBeGreaterThanOrEqual(1);
