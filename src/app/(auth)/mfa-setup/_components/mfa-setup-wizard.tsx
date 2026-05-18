@@ -75,7 +75,10 @@ export function MfaSetupWizard() {
   async function finish() {
     await update({ mfaEnabled: true, mfaVerified: true });
     setStage('done');
-    router.push('/home');
+    // Multi-site enrollment — the /onboarding-sites page short-circuits
+    // straight to /home for org-wide-admins and anyone already enrolled,
+    // so unconditional push here keeps the redirect logic in one place.
+    router.push('/onboarding-sites');
     router.refresh();
   }
 

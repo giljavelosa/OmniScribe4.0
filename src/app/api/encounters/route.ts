@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { prisma } from '@/lib/prisma';
 import { requireFeatureAccess } from '@/lib/authz/server';
+import { canActAtSite, getClinicianSiteIds } from '@/lib/authz/site-scope';
 import { startVisit } from '@/lib/encounters/start';
 
 export const runtime = 'nodejs';
@@ -42,10 +43,37 @@ export async function POST(req: Request) {
   });
   if (!patient) return NextResponse.json({ error: { code: 'patient_not_found' } }, { status: 404 });
 
-  const siteId = data.siteId ?? patient.siteId;
+  // Multi-site enrollment guard. For clinicians (and SITE_ADMIN / VIEWER) we
+  // resolve the caller's site scope before picking the siteId. ORG_ADMIN+ get
+  // scope 'all' implicitly and bypass below. If the caller has exactly one
+  // enrolled site and no explicit siteId/patient.siteId hint, we auto-fall
+  // back to that single enrollment — same UX the episode-picker uses for
+  // single-episode patients.
+  const siteScope = await getClinicianSiteIds(
+    authorizationUser.orgUserId,
+    authorizationUser.orgId,
+  );
+
+  let siteId = data.siteId ?? patient.siteId;
+  if (!siteId && siteScope.scope === 'enrolled' && siteScope.siteIds.length === 1) {
+    siteId = siteScope.siteIds[0]!;
+  }
   if (!siteId) {
     return NextResponse.json(
       { error: { code: 'site_required', message: 'Patient has no default site; provide siteId.' } },
+      { status: 400 },
+    );
+  }
+
+  if (!canActAtSite(siteScope, siteId)) {
+    return NextResponse.json(
+      {
+        error: {
+          code: 'site_not_enrolled',
+          message:
+            'You are not enrolled at this site. Ask your admin to add you on the Team members page.',
+        },
+      },
       { status: 400 },
     );
   }

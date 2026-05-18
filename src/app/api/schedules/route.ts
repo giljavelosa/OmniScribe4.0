@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { prisma } from '@/lib/prisma';
 import { requireFeatureAccess } from '@/lib/authz/server';
+import { canActAtSite, getClinicianSiteIds } from '@/lib/authz/site-scope';
 import { writeAuditLog } from '@/lib/audit/log';
 import { VisitType } from '@prisma/client';
 
@@ -66,6 +67,27 @@ export async function POST(req: Request) {
     where: { id: data.patientId, orgId: authorizationUser.orgId, isDeleted: false },
   });
   if (!patient) return NextResponse.json({ error: { code: 'patient_not_found' } }, { status: 404 });
+
+  // Multi-site enrollment guard. Org-wide roles bypass; clinicians + site
+  // admins must be enrolled at the target site. We check the caller's own
+  // enrollment — booking another clinician at a site they're not enrolled at
+  // is a separate concern (admins routinely do that during onboarding).
+  const siteScope = await getClinicianSiteIds(
+    authorizationUser.orgUserId,
+    authorizationUser.orgId,
+  );
+  if (!canActAtSite(siteScope, data.siteId)) {
+    return NextResponse.json(
+      {
+        error: {
+          code: 'site_not_enrolled',
+          message:
+            'You are not enrolled at this site. Ask your admin to add you on the Team members page.',
+        },
+      },
+      { status: 400 },
+    );
+  }
 
   const schedule = await prisma.schedule.create({
     data: {

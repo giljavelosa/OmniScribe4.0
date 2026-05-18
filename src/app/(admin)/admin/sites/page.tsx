@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation';
 
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+import { getClinicianSiteIds } from '@/lib/authz/site-scope';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { CreateSiteSheet } from './_components/create-site-sheet';
@@ -14,10 +15,20 @@ export const metadata: Metadata = { title: 'Sites' };
 
 export default async function AdminSitesPage() {
   const session = await auth();
-  if (!session?.user?.orgId) redirect('/home');
+  if (!session?.user?.orgId || !session.user.orgUserId) redirect('/home');
+
+  // SITE_ADMIN scope — show only the sites the caller is enrolled at.
+  // ORG_ADMIN+ get scope 'all' and see every site in the org.
+  const siteScope = await getClinicianSiteIds(
+    session.user.orgUserId,
+    session.user.orgId,
+  );
 
   const sites = await prisma.site.findMany({
-    where: { orgId: session.user.orgId },
+    where: {
+      orgId: session.user.orgId,
+      ...(siteScope.scope === 'enrolled' ? { id: { in: siteScope.siteIds } } : {}),
+    },
     orderBy: [{ isArchived: 'asc' }, { name: 'asc' }],
     include: { _count: { select: { rooms: true } } },
   });

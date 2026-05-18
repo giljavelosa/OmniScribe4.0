@@ -13,6 +13,7 @@ import {
 
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+import { getClinicianSiteIds } from '@/lib/authz/site-scope';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { SchedulingCard } from '@/components/clinical/scheduling-card';
@@ -22,6 +23,8 @@ const ADMIN_ROLES: OrgRole[] = ['SUPER_ADMIN', 'ORG_ADMIN', 'SITE_ADMIN'];
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Home' };
+
+type HomeSearchParams = Promise<{ siteId?: string }>;
 
 /**
  * /home — clinician dashboard.
@@ -40,11 +43,35 @@ export const metadata: Metadata = { title: 'Home' };
  * surface). Follow-ups link to the patient page where the follow-up
  * surface lives.
  */
-export default async function HomePage() {
+export default async function HomePage({
+  searchParams,
+}: {
+  searchParams: HomeSearchParams;
+}) {
   const session = await auth();
   if (!session?.user?.orgId || !session.user.orgUserId) return null;
   const orgId = session.user.orgId;
   const clinicianOrgUserId = session.user.orgUserId;
+  const { siteId: selectedSiteParam } = await searchParams;
+
+  // Multi-site enrollment — surface a "My sites" pill row above the schedule
+  // when the clinician has 2+ enrolled sites. Single-enrollment users skip
+  // the row (one pill is just noise). Org-wide-admins (scope 'all') get all
+  // sites in the row and can filter just like clinicians.
+  const siteScope = await getClinicianSiteIds(clinicianOrgUserId, orgId);
+  const mySites =
+    siteScope.siteIds.length > 0
+      ? await prisma.site.findMany({
+          where: { id: { in: siteScope.siteIds }, isArchived: false },
+          select: { id: true, name: true },
+          orderBy: { name: 'asc' },
+        })
+      : [];
+  const showSitePillRow = mySites.length >= 2;
+  const selectedSiteId =
+    selectedSiteParam && mySites.some((s) => s.id === selectedSiteParam)
+      ? selectedSiteParam
+      : null;
 
   const dayStart = new Date();
   dayStart.setHours(0, 0, 0, 0);
@@ -57,6 +84,7 @@ export default async function HomePage() {
         orgId,
         clinicianOrgUserId,
         scheduledStart: { gte: dayStart, lt: dayEnd },
+        ...(selectedSiteId ? { siteId: selectedSiteId } : {}),
       },
       orderBy: { scheduledStart: 'asc' },
       include: {
@@ -207,6 +235,37 @@ export default async function HomePage() {
           <CardTitle className="text-md">Schedule</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
+          {showSitePillRow && (
+            <div className="flex flex-wrap items-center gap-2" role="tablist" aria-label="Filter schedule by site">
+              <Link
+                href="/home"
+                role="tab"
+                aria-selected={selectedSiteId === null}
+                className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs transition-colors min-h-[var(--touch-min)] ${
+                  selectedSiteId === null
+                    ? 'border-primary bg-primary/10 text-primary'
+                    : 'border-border text-muted-foreground hover:bg-muted/40'
+                }`}
+              >
+                All my sites
+              </Link>
+              {mySites.map((site) => (
+                <Link
+                  key={site.id}
+                  href={`/home?siteId=${encodeURIComponent(site.id)}`}
+                  role="tab"
+                  aria-selected={selectedSiteId === site.id}
+                  className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs transition-colors min-h-[var(--touch-min)] ${
+                    selectedSiteId === site.id
+                      ? 'border-primary bg-primary/10 text-primary'
+                      : 'border-border text-muted-foreground hover:bg-muted/40'
+                  }`}
+                >
+                  {site.name}
+                </Link>
+              ))}
+            </div>
+          )}
           {schedules.length === 0 ? (
             <p className="text-sm text-muted-foreground">No visits scheduled for today.</p>
           ) : (

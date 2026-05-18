@@ -327,4 +327,21 @@ export type AuditAction =
   | 'EXTERNAL_CONTEXT_ADDED'
   | 'EXTERNAL_CONTEXT_VIEWED'
   | 'EXTERNAL_CONTEXT_TRANSCRIPTION_COMPLETED'
-  | 'EXTERNAL_CONTEXT_TRANSCRIPTION_FAILED';
+  | 'EXTERNAL_CONTEXT_TRANSCRIPTION_FAILED'
+  // ---- Multi-site clinician enrollment ----
+  // Spec: context/specs/clinician-site-enrollment.md
+  //
+  // CLINICIAN_SITES_UPDATED fires when an admin replaces a clinician's
+  // site enrollment via POST /api/admin/users/[id]/sites. Metadata:
+  // before (siteId[]), after (siteId[]), primary (siteId | null). PHI-
+  // free — just structural identifiers.
+  //
+  // SCHEDULE_SITE_MISMATCH_WARNED reserved for the warn-and-proceed flow
+  // (UI surfaces the warning, server still records the event so
+  // compliance can review the rate of cross-coverage scheduling). Not
+  // yet emitted by any route in v1 since the spec opted for hard 400 on
+  // POST /api/encounters / schedules — but the action is reserved here
+  // so the per-org policy toggle (warn vs block) doesn't require a
+  // second migration.
+  | 'CLINICIAN_SITES_UPDATED'
+  | 'SCHEDULE_SITE_MISMATCH_WARNED';
