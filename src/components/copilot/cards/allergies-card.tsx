@@ -4,8 +4,9 @@ import { AlertTriangle, ShieldAlert } from 'lucide-react';
 
 import { EhrSourcePill } from '@/components/brief/ehr-source-pill';
 import { StatusBadge } from '@/components/ui/status-badge';
+import { cn } from '@/lib/cn';
 import type { ExternalEhrContext } from '@/lib/fhir/project-ehr-context';
-import { FhirCardShell } from './fhir-card-shell';
+import { FhirCardShell, RAISED_ROW_CLASSES, countRaisedRows } from './fhir-card-shell';
 import type { CopilotSurface } from '../copilot-shell';
 
 /**
@@ -20,13 +21,16 @@ export function AllergiesCard({
   surface,
   noteId,
   nowMs,
+  raisedFhirIds,
 }: {
   context: ExternalEhrContext;
   surface: CopilotSurface;
   noteId: string;
   nowMs: number;
+  raisedFhirIds?: Set<string>;
 }) {
   const rows = context.allergies;
+  const raisedCount = countRaisedRows(rows.map((r) => r.provenance.fhirResourceId), raisedFhirIds);
 
   return (
     <FhirCardShell
@@ -35,6 +39,7 @@ export function AllergiesCard({
       surface={surface}
       noteId={noteId}
       itemCount={rows.length}
+      raisedCount={raisedCount}
     >
       {rows.length === 0 ? (
         <p className="text-sm text-muted-foreground italic">No allergies on file in EHR.</p>
@@ -42,10 +47,11 @@ export function AllergiesCard({
         <ul className="space-y-2 text-sm">
           {rows.map((a) => {
             const isHigh = a.criticality === 'high';
+            const isRaised = raisedFhirIds?.has(a.provenance.fhirResourceId) ?? false;
             return (
               <li
                 key={a.provenance.fhirResourceId}
-                className="flex items-start justify-between gap-3"
+                className={cn('flex items-start justify-between gap-3', isRaised && RAISED_ROW_CLASSES)}
               >
                 <div className="min-w-0 flex items-start gap-2">
                   {isHigh ? (
