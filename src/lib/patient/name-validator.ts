@@ -26,19 +26,22 @@ export function validatePersonName(input: string): NameValidationResult {
   if (typeof input !== 'string') {
     return { ok: false, reason: 'name must be a string' };
   }
+  // Check DISALLOWED against the raw input — trim() strips \t, \n, \v, \f, \r
+  // (all in the 0x00-0x1f range we want to reject) before the check otherwise
+  // sees them, letting control-char-prefixed names through.
+  if (DISALLOWED.test(input)) {
+    return {
+      ok: false,
+      reason:
+        'name contains disallowed characters (backslash, brackets, control chars)',
+    };
+  }
   const trimmed = input.trim();
   if (trimmed.length === 0) {
     return { ok: false, reason: 'name cannot be empty' };
   }
   if (trimmed.length > 100) {
     return { ok: false, reason: 'name too long (max 100 chars)' };
-  }
-  if (DISALLOWED.test(trimmed)) {
-    return {
-      ok: false,
-      reason:
-        'name contains disallowed characters (backslash, brackets, control chars)',
-    };
   }
   return { ok: true };
 }
