@@ -20,7 +20,10 @@ import { MAX_FHIR_ROWS_PER_SESSION, runTool } from '@/services/copilot/tools';
  * Cleans up its own fixtures regardless of pass/fail.
  */
 
-const prisma = new PrismaClient();
+// Skipped in CI (no Postgres). Run locally via `npm test` with DATABASE_URL set.
+const hasDb = !!process.env.DATABASE_URL;
+const describeMaybe = hasDb ? describe : describe.skip;
+const prisma = hasDb ? new PrismaClient() : (null as unknown as PrismaClient);
 
 const ORG_ID = 'test-org-unit-28-fhir-tools';
 const VERIFIED_PATIENT_ID = 'test-pat-unit-28-verified';
@@ -28,6 +31,7 @@ const UNVERIFIED_PATIENT_ID = 'test-pat-unit-28-unverified';
 const LINK_ID = 'test-link-unit-28';
 
 beforeAll(async () => {
+  if (!hasDb) return;
   await prisma.organization.upsert({
     where: { id: ORG_ID },
     update: {},
@@ -127,6 +131,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  if (!hasDb) return;
   await prisma.fhirCachedResource.deleteMany({
     where: { patientId: { in: [VERIFIED_PATIENT_ID, UNVERIFIED_PATIENT_ID] } },
   });
@@ -159,7 +164,7 @@ function makeConditionResource(id: string, clinicalStatus: string) {
   };
 }
 
-describe('lookupFhirCondition', () => {
+describeMaybe('lookupFhirCondition', () => {
   it('returns active conditions for a verified patient (drops stale + non-active)', async () => {
     const ctx = { orgId: ORG_ID, fhirRowsConsumed: { count: 0 } };
     const result = await runTool('lookupFhirCondition', { patientId: VERIFIED_PATIENT_ID }, ctx);
@@ -221,7 +226,7 @@ describe('lookupFhirCondition', () => {
   });
 });
 
-describe('lookupFhirAllergy + lookupFhirCarePlan (empty cache paths)', () => {
+describeMaybe('lookupFhirAllergy + lookupFhirCarePlan (empty cache paths)', () => {
   it('returns empty allergies + empty carePlans without erroring', async () => {
     const ctx1 = { orgId: ORG_ID, fhirRowsConsumed: { count: 0 } };
     const ctx2 = { orgId: ORG_ID, fhirRowsConsumed: { count: 0 } };
