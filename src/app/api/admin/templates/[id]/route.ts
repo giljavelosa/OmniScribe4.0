@@ -63,6 +63,14 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: { code: 'forbidden' } }, { status: 403 });
   }
   if (template.orgId) assertOrgScoped(template.orgId, authorizationUser.orgId);
+  // PERSONAL templates are visible only to the creator — enforce here so
+  // GET-by-id can't bypass the list endpoint's PERSONAL filter.
+  if (
+    template.visibility === 'PERSONAL' &&
+    template.createdByOrgUserId !== authorizationUser.orgUserId
+  ) {
+    return NextResponse.json({ error: { code: 'forbidden' } }, { status: 403 });
+  }
 
   return NextResponse.json({ data: template });
 }
@@ -98,6 +106,12 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     );
   }
   assertOrgScoped(before.orgId, authorizationUser.orgId);
+  if (
+    before.visibility === 'PERSONAL' &&
+    before.createdByOrgUserId !== authorizationUser.orgUserId
+  ) {
+    return NextResponse.json({ error: { code: 'forbidden' } }, { status: 403 });
+  }
 
   // sectionSchema change bumps version.
   const sectionSchemaChanged =

@@ -19,6 +19,9 @@ export default async function AdminTemplatesPage() {
 
   const templates = await prisma.noteTemplate.findMany({
     where: {
+      // Match the API endpoint contract — archived templates must not appear
+      // in the SSR list so "archive → confirm it disappears" actually works.
+      isArchived: false,
       OR: [
         { isPreset: true, orgId: null },
         {

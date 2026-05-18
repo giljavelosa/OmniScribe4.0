@@ -113,7 +113,15 @@ export function CloneTemplateButton({
           </div>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={commit} disabled={pending || !name.trim()}>
+            <AlertDialogAction
+              // Suppress Radix auto-close so a failing /clone POST surfaces
+              // its error in the still-open dialog.
+              onClick={(e) => {
+                e.preventDefault();
+                commit();
+              }}
+              disabled={pending || !name.trim()}
+            >
               {pending ? 'Cloning…' : 'Clone + open'}
             </AlertDialogAction>
           </AlertDialogFooter>

@@ -38,9 +38,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const source = await prisma.noteTemplate.findUnique({ where: { id } });
   if (!source) return NextResponse.json({ error: { code: 'not_found' } }, { status: 404 });
 
-  // Source must be visible to this org (preset OR same-org).
+  // Source must be visible to this org (preset OR same-org); PERSONAL
+  // sources are visible only to their creator.
   const visible = (source.isPreset && source.orgId === null) || source.orgId === authorizationUser.orgId;
   if (!visible) return NextResponse.json({ error: { code: 'forbidden' } }, { status: 403 });
+  if (
+    source.visibility === 'PERSONAL' &&
+    source.createdByOrgUserId !== authorizationUser.orgUserId
+  ) {
+    return NextResponse.json({ error: { code: 'forbidden' } }, { status: 403 });
+  }
 
   const clone = await prisma.noteTemplate.create({
     data: {

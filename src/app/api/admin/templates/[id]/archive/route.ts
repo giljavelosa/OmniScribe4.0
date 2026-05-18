@@ -43,6 +43,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     );
   }
   assertOrgScoped(template.orgId, authorizationUser.orgId);
+  if (
+    template.visibility === 'PERSONAL' &&
+    template.createdByOrgUserId !== authorizationUser.orgUserId
+  ) {
+    return NextResponse.json({ error: { code: 'forbidden' } }, { status: 403 });
+  }
 
   const archiving = parsed.data.action === 'archive';
   if (archiving === template.isArchived) {
