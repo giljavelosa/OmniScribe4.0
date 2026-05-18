@@ -168,4 +168,10 @@ export type AuditAction =
   | 'TELEHEALTH_SESSION_STARTED'
   | 'TELEHEALTH_SESSION_ENDED'
   | 'TELEHEALTH_ROOM_CREATED'
-  | 'TELEHEALTH_ROOM_DESTROYED';
+  | 'TELEHEALTH_ROOM_DESTROYED'
+  // ---- Unit 16: Telehealth audio integration ----
+  // Logged by the Unit 17 room surface when the audio pipeline drains its
+  // 30 s reconnect buffer after a WebSocket reopen. The pipeline library
+  // itself has no DB writer; the surface emits on its behalf so the
+  // auditor lens can see connectivity blips per session.
+  | 'TELEHEALTH_AUDIO_RECONNECTED';

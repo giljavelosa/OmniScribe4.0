@@ -4,11 +4,11 @@
 
 ## Current Phase
 
-- **Wave 3 opener — Unit 15 shipped.** PR #16 (branch `feat/unit-15-telehealth-infra`). Wave 2 closed at PR #15. Unit 15 lands the telehealth session lifecycle (TelehealthSession model + magic-link auth + Daily.co stub-mode + admin create/start/end APIs + patient verify/consent/status APIs + patient UI surfaces /v/[token] and /telehealth/waiting/[scheduleId]) — the foundation Units 16+17 build on. Video is NOT an artifact of record; the note is. The session row tracks lifecycle + audit, not the call recording.
+- **Wave 3 in flight — Unit 16 shipped.** PR #17 (branch `feat/unit-16-telehealth-audio`, stacked on `feat/unit-15-telehealth-infra`). Audio plumbing for the telehealth call: (a) starting a telehealth session now creates the Encounter + Note inside the same $transaction as the Daily.co room — reuses the existing `startVisit()` helper so the in-person + telehealth Note lifecycle stays identical; (b) browser-side `TelehealthAudioPipeline` multiplexes two MediaStreamTracks (clinician local + patient remote) into a single Soniox WebSocket so diarization Just Works on Soniox's side; (c) `ReconnectBuffer` 30 s ring buffer so transient WiFi blips don't lose audio.
 
 ## Current Goal
 
-- Await user confirmation before starting Unit 16 — telehealth session orchestration on the clinician side (scheduling integration, "start telehealth" button on /patients + the schedule screen, ops-side session list / monitoring), per Prompt B's stop-between-units contract.
+- Await user confirmation before starting Unit 17 — the clinician-facing `/telehealth/room/[scheduleId]` surface that wires Daily.co into the audio pipeline + integrates the existing capture controls + live note panel. Per Prompt B's stop-between-units contract.
 
 ## Completed
 
@@ -200,6 +200,22 @@
   - Patient UI: `(patient)/` route group with branded shell matching auth/onboarding. `/v/[token]` — server gate (404/expired/already-used) + DOB form client; redirects authenticated refreshers straight to the waiting room. `/telehealth/waiting/[scheduleId]` — server validates cookie↔scheduleId pairing; status-driven UI (VERIFIED → consent form → CONSENT_CAPTURED waiting state → ACTIVE "Join call" CTA). Polling stops on terminal states. Robots noindex on both surfaces (magic-token URLs must not get cached by crawlers).
   - 122 tests pass; build clean; 5 new admin APIs + 5 new patient APIs + 2 new patient surfaces ship.
 
+- **2026-05-17 — Unit 16: Telehealth audio integration** (PR #17 — `feat(unit-16): telehealth audio integration`).
+  - Spec at `context/specs/16-telehealth-audio-integration.md`. Wave 3 Phase 1.
+  - 1 new AuditAction value: TELEHEALTH_AUDIO_RECONNECTED (emitted by the Unit 17 surface on behalf of the pipeline lib when the ReconnectBuffer drains after a WS reopen).
+  - Schema: `TelehealthSession.noteId String? @unique` + back-relation on Note (1:1). Null until the clinician starts the call. Migration adds column + unique index + FK with SET NULL on delete.
+  - `POST /api/admin/telehealth/sessions/[id]/start` rewrite:
+    - Wave 3 contract enforcement: only CONSENT_CAPTURED is now a valid prerequisite (Unit 15 permitted VERIFIED too, before the consent endpoint shipped). No audio path opens without explicit patient consent.
+    - Inside a `$transaction`: invoke shared `startVisit()` helper (same one `/api/schedules/[id]/start` uses) → creates Encounter + Note at PREPARING, flips Schedule → IN_PROGRESS, writes ENCOUNTER_CREATED audit. Then updates the session: status=ACTIVE, startedAt, roomName/URL/expiresAt, **noteId**.
+    - Daily.co room creation happens OUTSIDE the tx — if the tx fails, the orphan room expires naturally (expiresAt is set); the alternative ordering would risk orphan Notes which are harder to clean.
+    - Idempotent: second POST after success returns the existing noteId + roomUrl unchanged with no new audit rows.
+    - TELEHEALTH_SESSION_STARTED audit metadata now includes noteId + encounterId so the auditor lens can join session → artifact in one hop.
+  - `src/lib/telehealth/reconnect-buffer.ts` — rolling 30 s ring buffer of Int16 PCM chunks. Chunk-grained eviction (sample-level would buy nothing at much higher bookkeeping cost). Handles the edge case where a single chunk is larger than the entire window (keep it — dropping would defeat the purpose). 7 vitest cases.
+  - `src/lib/telehealth/audio-pipeline.ts` — `TelehealthAudioPipeline` class. Takes two MediaStreamTracks + a noteId; multiplexes into a single Soniox WS via two AudioWorkletNode instances (one per source). Soniox handles diarization on the merged stream. Reuses the existing /api/notes/[id]/realtime-key endpoint unchanged.
+  - Audio-wiring abstraction (`AudioWiring` interface + default `createBrowserAudioWiring()`): lets tests inject a fake that pumps synthetic Int16 samples without needing a real AudioContext (happy-dom doesn't have one). 9 vitest cases cover the orchestration: key fetch shape, config-first WS contract, sample pumping, reconnect+drain, transcript callback parsing, stub mode, stop() teardown, double-start guard, fetch-failure surfacing.
+  - Reconnect logic: on unexpected WS close, schedule reconnect after 500 ms; drain ReconnectBuffer to the new socket so the resumed Soniox session sees continuous audio. Three attempts before giving up; onReconnected callback fires on success so the Unit 17 surface can audit via TELEHEALTH_AUDIO_RECONNECTED.
+  - 138 tests pass (was 122); build/lint/typecheck clean; no new APIs (reuses /api/notes/[id]/realtime-key); 1 schema migration ships.
+
 ## In Progress
 
 None.
@@ -208,7 +224,7 @@ None.
 
 In priority order:
 
-1. **Unit 16 — Telehealth session orchestration (clinician side)** — "Start telehealth" button on the schedule + patient surfaces, admin/clinician session list, mid-visit lifecycle controls (cancel, force-end), integration with the existing capture flow so a telehealth visit naturally flows into transcription. Builds directly on Unit 15's session model + APIs.
+1. **Unit 17 — Telehealth capture-flow integration (clinician room surface)** — `/telehealth/room/[scheduleId]`: Daily.co video iframe + capture controls + live note panel + brief side panel; wires Unit 16's `TelehealthAudioPipeline` to the Daily.co `participants.<id>.tracks.audio.persistentTrack`; end-call handoff to `/review`. Reuses `(clinical)` surface components (TranscriptWorkspace, LiveNotePanel) so the in-person + telehealth clinician experiences stay aligned.
 8. **Unit 07 — Encounter Copilot Watch v0** ([`context/specs/07-encounter-copilot-watch-v0.md`](specs/07-encounter-copilot-watch-v0.md)) — beacon + open-follow-ups + plan-for-today cards.
 9. **Unit 08 — Admin & Compliance Ready** ([`context/specs/08-admin-and-compliance-ready.md`](specs/08-admin-and-compliance-ready.md)) — Sites + Rooms CRUD, admin-initiated MFA reset + password reset, customer self-onboarding wizard, BAA admin UI.
 
@@ -390,6 +406,16 @@ These need user/PM decision before the depending unit can ship. Quote the source
 - **2026-05-17 — Copy-to-clipboard fires SECTION_COPIED_TO_CLIPBOARD via the copilot-event endpoint with itemCount = char count.** PHI-free at the audit layer (content never leaves the client beyond the clipboard write). The cap raise (1000 → 100_000) accommodates real section sizes; the prior cap was sized for "items in a list" not "characters in a section."
 - **2026-05-17 — Accordion animation polish ships data-state + transition-duration classes only — no CSS keyframes.** The simplest cross-browser solution that works inside Tailwind v4 without custom @keyframes. Future polish (CSS-only height animation for collapse/expand) can hook the data-state attribute when the design asks for it.
 - **2026-05-17 — Wave 2 COMPLETE.** Units 10–14 close the clinical-surface trust gaps. /review now has: SSE reconnect indicator (10), section regenerate with diff (10), failure-recovery banner (10), per-section observability (10), inline goal progression on the patient panel (11), snapshot strip + override-wins on /patients/[id] (12), templates authoring with version history (13), and AI compliance flags with severity-grouped review (14). The clinical surfaces are no longer "works" — they're "trusted daily."
+
+### Unit 16 (2026-05-17)
+
+- **2026-05-17 — Two WS streams to one Soniox socket, not a mixed mono signal.** Mixing the clinician + patient sources to mono in JS land sounds simpler but loses Soniox's ability to diarize from per-source variance. Two streams to one WS cost 2× bandwidth (~64 KB/s total — still trivial) and produce noticeably better speaker labels. The pcm-worklet from Unit 03 is reused unchanged — two instances run in the same AudioContext.
+- **2026-05-17 — Reuse `/api/notes/[id]/realtime-key`; no telehealth-specific ephemeral-key endpoint.** The existing endpoint already auth-gates by clinician ownership + checks the note's status is capture-ready. As soon as `TelehealthSession.noteId` is set on session start, the telehealth flow authenticates exactly the way an in-person visit does. Adding a telehealth-specific endpoint would duplicate the gating logic for zero benefit.
+- **2026-05-17 — Note creation happens INSIDE the same `$transaction` as the session flip to ACTIVE; Daily.co room creation happens OUTSIDE the tx.** If the tx fails after the room is created, the orphan room expires naturally (expiresAt is set). The alternative ordering (note inside tx then room) risks orphan Notes which are harder to clean — they have S3 ties, audit history, an Encounter. Rooms are disposable.
+- **2026-05-17 — Wave 3 contract: only CONSENT_CAPTURED can transition to ACTIVE.** Unit 15 permitted VERIFIED-or-CONSENT_CAPTURED for permissiveness before the consent endpoint shipped. Now consent IS the prerequisite — no audio path opens without explicit patient consent. This is a behavior tightening, not a regression, and the audit trail makes it visible: the failed-not_ready response is logged when an admin tries to start a session that hasn't captured consent.
+- **2026-05-17 — Audio-wiring abstraction (`AudioWiring` interface) is the test seam, not constructor-time function injection.** A small protocol (init / wireSource / teardown) keeps the Web Audio API entirely behind the boundary so happy-dom tests can mock it without setting up a faux AudioContext. The default `createBrowserAudioWiring()` is built lazily inside the constructor's default — importing the pipeline file in a test environment doesn't crash on missing AudioContext.
+- **2026-05-17 — ReconnectBuffer evicts at chunk grain, not sample grain.** Worklet chunks come in at ~50 ms (800 samples @ 16 kHz). Sample-grained eviction would buy at most one worklet tick of precision at the cost of much more bookkeeping. The edge case where a single chunk is larger than the entire window is handled explicitly: keep it (dropping would defeat the purpose, and the pipeline's chunk size is bounded by the worklet tick anyway).
+- **2026-05-17 — Pipeline emits `onReconnected`; audit happens at the Unit 17 surface.** The pipeline is in `/lib` and has no DB writer (kept framework-agnostic for potential reuse in the in-visit copilot). The room surface receives the callback and calls `writeAuditLog({ action: 'TELEHEALTH_AUDIO_RECONNECTED', ... })`. Clean layering — the auditor lens still sees connectivity blips per session.
 
 ### Unit 15 (2026-05-17)
 
