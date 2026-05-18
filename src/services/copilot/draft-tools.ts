@@ -224,6 +224,8 @@ export async function runDraftPatientMessage(
     jsonMode: true,
     model: 'haiku',
     maxTokens: DRAFT_SUB_LLM_MAX_TOKENS,
+    // Unit 35 — cost rollup metering.
+    meter: { orgId: ctx.orgId, surface: 'copilot.draft.patientMessage' },
   });
   const stub = !!result.stub;
   const parsed = stub ? stubPatientMessage() : parseModelDraftJson(result.text);
@@ -270,6 +272,8 @@ export async function runProposeFollowUpCadence(
     jsonMode: true,
     model: 'haiku',
     maxTokens: DRAFT_SUB_LLM_MAX_TOKENS,
+    // Unit 35 — cost rollup metering.
+    meter: { orgId: ctx.orgId, surface: 'copilot.draft.followupCadence' },
   });
   const stub = !!result.stub;
   const parsed = stub ? stubFollowupCadence() : parseModelDraftJson(result.text);
@@ -328,6 +332,8 @@ export async function runSuggestReferralLetterContent(
     jsonMode: true,
     model: 'haiku',
     maxTokens: DRAFT_SUB_LLM_MAX_TOKENS,
+    // Unit 35 — cost rollup metering.
+    meter: { orgId: ctx.orgId, surface: 'copilot.draft.referralLetter' },
   });
   const stub = !!result.stub;
   const parsed = stub

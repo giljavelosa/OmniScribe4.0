@@ -193,7 +193,16 @@ export async function handle(job: Job<AiGenerationJob>) {
       const result = await llm.generate(
         master.system,
         buildSectionPrompt(master.user, section, promptInput.noteStyle),
-        { phi: true, temperature: 0, jsonMode: true, requestId },
+        {
+          phi: true,
+          temperature: 0,
+          jsonMode: true,
+          requestId,
+          // Unit 35 — cost rollup metering. Surface includes section id
+          // so the per-surface breakdown can attribute spend to a
+          // specific section (most expensive: assessment + plan).
+          meter: { orgId, noteId, surface: `worker.note-generation.${section.id}` },
+        },
       );
       const content = extractContent(result.text, section.id);
       await mergeSectionIntoDraft(noteId, section.id, content);
@@ -292,7 +301,14 @@ async function regenerateOne(
     const result = await llm.generate(
       master.system,
       buildSectionPrompt(master.user, section, ctx.promptInput.noteStyle),
-      { phi: true, temperature: 0, jsonMode: true, requestId },
+      {
+        phi: true,
+        temperature: 0,
+        jsonMode: true,
+        requestId,
+        // Unit 35 — cost rollup metering on section regen.
+        meter: { orgId, noteId, surface: `worker.section-regen.${sectionId}` },
+      },
     );
     const content = extractContent(result.text, sectionId);
     await mergeSectionIntoDraft(noteId, sectionId, content);

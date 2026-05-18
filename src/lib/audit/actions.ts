@@ -283,4 +283,6 @@ export type AuditAction =
   | 'OPS_AUDIT_EXPORTED'
   // ---- Unit 34: Audit log enrichment depth ----
   | 'AUDIT_RETENTION_UPDATED'
-  | 'AUDIT_PURGE_RUN';
+  | 'AUDIT_PURGE_RUN'
+  // ---- Unit 35: Per-org LLM cost rollup ----
+  | 'LLM_BUDGET_UPDATED';

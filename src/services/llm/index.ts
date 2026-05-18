@@ -15,6 +15,7 @@
 
 import { BedrockService } from './bedrock';
 import { assertProviderAllowedForPHI } from './phi-guard';
+import { writeLlmCallLog } from '@/lib/llm/cost-log';
 import type {
   GenerateChunk,
   GenerateResult,
@@ -54,10 +55,29 @@ export function getLLMService(): LLMService {
   return {
     async generate(sys, user, opts): Promise<GenerateResult> {
       if (opts?.phi) assertProviderAllowedForPHI(activeProvider);
-      return base.generate(sys, user, opts);
+      const result = await base.generate(sys, user, opts);
+      // Unit 35 — write per-call accounting when the caller passed a
+      // meter. Fail-loud (Rule 8): if the write throws, the request
+      // fails. Callers without meter context (test stubs) skip the
+      // write entirely; rollup undercounts those calls.
+      if (opts?.meter) {
+        await writeLlmCallLog({
+          orgId: opts.meter.orgId,
+          noteId: opts.meter.noteId,
+          surface: opts.meter.surface,
+          model: result.model,
+          tokensIn: result.tokensIn,
+          tokensOut: result.tokensOut,
+          latencyMs: result.latencyMs,
+          stub: !!result.stub,
+        });
+      }
+      return result;
     },
     async *generateStream(sys, user, opts): AsyncIterable<GenerateChunk> {
       if (opts?.phi) assertProviderAllowedForPHI(activeProvider);
+      // generateStream is metered at the caller layer when needed —
+      // the stream's final token tally lives in the caller's accumulator.
       yield* base.generateStream(sys, user, opts);
     },
   };

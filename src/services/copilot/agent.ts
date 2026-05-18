@@ -279,6 +279,13 @@ export async function runAgent(
       jsonMode: true,
       model: 'sonnet',
       maxTokens: 800,
+      // Unit 35 — cost rollup metering. Surface tag distinguishes
+      // chart vs research mode so the owner can see the split.
+      meter: {
+        orgId: ctx.orgId,
+        noteId: input.noteId || undefined,
+        surface: mode === 'research' ? 'copilot.research' : 'copilot.ask',
+      },
     });
     stub = !!result.stub;
     if (stub) {
