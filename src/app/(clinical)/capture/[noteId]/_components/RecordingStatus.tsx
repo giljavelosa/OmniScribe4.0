@@ -67,15 +67,12 @@ function useElapsedMs(startedAt: number | null) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (startedAt == null) return;
-    // Reset now to current time on each startedAt change to avoid the
-    // initial-render lag producing a negative elapsed value before the first tick.
-    setNow(Date.now());
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, [startedAt]);
   if (startedAt == null) return 0;
-  // Clamp to zero — a future startedAt (clock skew / re-render race) must not
-  // produce negative output that formats as "-1:-30".
+  // Clamp to zero — a stale `now` from mount time vs. a fresh `startedAt`
+  // (or any clock skew) must not format as "-1:-30" before the first tick.
   return Math.max(0, now - startedAt);
 }
 
