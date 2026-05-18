@@ -4,11 +4,11 @@
 
 ## Current Phase
 
-- **Wave 4 / F4 shipped — Unit 22.** PR #23 (branch `feat/unit-22-fhir-brief-enrichment`, stacked on `feat/unit-21-fhir-resource-sync`). Extends Unit 06's BriefBuilderInput with an optional `<external_ehr_context>` block sourced from Unit 21's cache. The Sonnet brief generator now sees the patient's EHR conditions / medications / allergies / recent labs alongside prior signed notes, with per-field provenance baked into the schema so F5 (Unit 23) can render "from <ehrSystem>" pills. Conflict rule baked into the system prompt: notes remain the PRIMARY source; EHR is SECONDARY; prefer the most recent attested source when they disagree. Stub-mode mirrors the cache into `ehrEnrichment` so F5's render path is exercisable without a real Bedrock call.
+- **Wave 4 / F5 shipped — Unit 23.** PR #24 (branch `feat/unit-23-fhir-provenance-ui`, stacked on `feat/unit-22-fhir-brief-enrichment`). Surfaces Unit 22's ehrEnrichment in the BriefCard with per-field provenance pills (ehrSystem + relative-time + staleness chip), a drawer that exposes raw FHIR JSON for auditor inspection, and a FHIR_RESOURCE_VIEWED audit row per drawer open. Schema split: LLM emits fhirResourceId, the worker hydrates with fetchedAt from the cache before storing on NoteBrief.content so the pill's staleness chip renders zero-RPC. 5 of 6 F-phases complete (only F6 multi-EHR adapter remaining).
 
 ## Current Goal
 
-- Await user confirmation before starting Unit 23 — Wave 4 F5 (Provenance UI on the brief). Surface per-field source pills in the BriefCard (Unit 06's component): note-sourced fields get the existing "from Note 2025-09-04" pill; EHR-sourced fields get a new "from NextGen, fetched 3h ago" pill; staleness chips (>7d warning, >30d stale) on the EHR pills; a drawer that shows the raw FHIR resource on click. Per Prompt B's stop-between-units contract.
+- Await user confirmation before starting Unit 24 — Wave 4 F6 (Multi-EHR adapter abstraction). Generalizes the NextGen adapter to support Epic + Cerner per-org via a vendor-config table; per-org EHR config; multi-EHR org support (deferred to later if low demand per `references/fhir-integration-spec.md` §13). Closes Wave 4. Per Prompt B's stop-between-units contract.
 
 ## Completed
 
@@ -313,6 +313,23 @@
   - `src/workers/note-brief/handler.ts` — calls `loadExternalEhrContext` before generating; passes through `BuildBriefPromptInput.externalEhrContext`. `BRIEF_GENERATED` audit metadata gains `hasEhrContext` (boolean) + `ehrResourceCount` (int aggregate) for the auditor lens.
   - 195 tests pass (was 185); build/lint/typecheck clean. 10 new tests: projection rules + provenance attachment + empty-shape vs null contract.
 
+- **2026-05-17 — Unit 23: FHIR / Provenance UI (Wave 4 / F5)** (PR #24 — `feat(unit-23): fhir provenance ui`).
+  - Spec at `context/specs/23-fhir-provenance-ui.md`. Wave 4 F5.
+  - 1 new AuditAction: `FHIR_RESOURCE_VIEWED` (fired by the drawer's by-fhir-id lookup endpoint on every successful resolve). PHI-free.
+  - Schema split for ehrEnrichment:
+    - `BriefLLMOutputSchema.ehrEnrichment` (Unit 22) — LLM emits fhirResourceId only
+    - `PriorContextBriefContentSchema.ehrEnrichment` (NEW, hydrated) — `.omit` the LLM shape + `.extend` with `HydratedBriefEhrEnrichmentSchema` (each entry adds `fetchedAt`). Two shapes can't be confused at the type level.
+  - `src/lib/notes/hydrate-ehr-enrichment.ts` — pure helper. Looks up each LLM-output fhirResourceId in the projected externalEhrContext (O(1) per entry via by-id Map); drops hallucinated ids; suppresses the whole block when every entry was dropped. 6 vitest cases (happy path, hallucination drop, full-hallucination suppression, undefined inputs, empty-category omission).
+  - `src/workers/note-brief/handler.ts` — splits LLM-output ehrEnrichment off briefResult.brief, calls hydrateEhrEnrichment, attaches hydrated shape to briefContent only when non-empty. Stub-mode and real-mode flows route through the same hydration.
+  - `src/lib/fhir/staleness.ts` extended: `FHIR_VERY_STALE_AFTER_MS` (30d) + `stalenessTier(fetchedAt, now)` returning 'fresh' | 'stale' | 'very_stale'. 4 new tests lock the tier transitions.
+  - `GET /api/fhir/cached-resources/by-fhir-id?ehrSystem=&resourceType=&fhirResourceId=` — drawer's lookup-by-natural-key endpoint. NOTE_REVIEW-gated; row's patient.orgId asserts org scoping. Returns `{ raw, simplified, fetchedAt, sensitivityLevel, ... }`. Writes FHIR_RESOURCE_VIEWED audit.
+  - 3 new components in `src/components/brief/`:
+    - `EhrSourcePill` — small inline pill (matches SourcePill's visual): "from <ehrSystem> · <relative time>" + optional stale/very-stale chip; opens drawer on click.
+    - `ProvenanceDrawer` — Dialog. Fetches the cache row on open. Renders header chips (id + fetched timestamp + optional "Restricted source" 42 CFR Part 2 chip), the simplified shape, and a collapsible raw FHIR JSON section for auditor inspection.
+    - `EhrEnrichmentBlock` — section that renders the 4 categories as subsections; collapsible (defaultExpanded=false) so the note-sourced content stays primary visual weight; header shows "From EHR · nextgen" with a Plug icon.
+  - BriefCard wires EhrEnrichmentBlock between Watch and the Footer. Note-sourced SourcePills elsewhere in the brief are unchanged.
+  - 205 tests pass (was 195); build/lint/typecheck clean. 10 new tests: 6 hydration + 4 staleness tier transitions.
+
 ## In Progress
 
 None.
@@ -321,7 +338,7 @@ None.
 
 In priority order:
 
-1. **Unit 23 — Wave 4 F5: Provenance UI on the brief** ([`references/fhir-integration-spec.md`](../references/fhir-integration-spec.md) F5). Surface per-field source pills in the BriefCard (Unit 06's component): note-sourced fields get the existing "from Note 2025-09-04" pill; EHR-sourced fields (the new `ehrEnrichment` block from Unit 22) get a "from NextGen, fetched 3h ago" pill; staleness chips (>7d warning, >30d stale) on EHR pills; a drawer that shows the raw FHIR resource on click. Reads the existing `FhirCachedResource.resource: { raw, simplified }` shape so no new server lookups.
+1. **Unit 24 — Wave 4 F6: Multi-EHR adapter abstraction** ([`references/fhir-integration-spec.md`](../references/fhir-integration-spec.md) F6). Generalizes the NextGen-specific paths into a vendor-config-driven adapter pattern: Epic + Cerner support, per-org EHR config table, multi-EHR org support (or explicit deferral if low demand). Closes Wave 4 — the read-only EHR integration is feature-complete at that point.
 
 Wave 4.5 (deferred polish, can land alongside Wave 5):
 - Background BullMQ staleness sweeper for FhirCachedResource (currently on-demand only).
@@ -514,6 +531,16 @@ These need user/PM decision before the depending unit can ship. Quote the source
 - **2026-05-17 — Copy-to-clipboard fires SECTION_COPIED_TO_CLIPBOARD via the copilot-event endpoint with itemCount = char count.** PHI-free at the audit layer (content never leaves the client beyond the clipboard write). The cap raise (1000 → 100_000) accommodates real section sizes; the prior cap was sized for "items in a list" not "characters in a section."
 - **2026-05-17 — Accordion animation polish ships data-state + transition-duration classes only — no CSS keyframes.** The simplest cross-browser solution that works inside Tailwind v4 without custom @keyframes. Future polish (CSS-only height animation for collapse/expand) can hook the data-state attribute when the design asks for it.
 - **2026-05-17 — Wave 2 COMPLETE.** Units 10–14 close the clinical-surface trust gaps. /review now has: SSE reconnect indicator (10), section regenerate with diff (10), failure-recovery banner (10), per-section observability (10), inline goal progression on the patient panel (11), snapshot strip + override-wins on /patients/[id] (12), templates authoring with version history (13), and AI compliance flags with severity-grouped review (14). The clinical surfaces are no longer "works" — they're "trusted daily."
+
+### Unit 23 (2026-05-17)
+
+- **2026-05-17 — Schema split: LLM emits fhirResourceId; worker hydrates with fetchedAt before storing.** Reason: timestamps aren't LLM-generated content; the brief should reflect the cache state AT GENERATION TIME (frozen snapshot, not live). The `.omit` + `.extend` on PriorContextBriefContentSchema makes the two shapes incompatible at the type level so a hydrated brief can't be confused with an unhydrated one.
+- **2026-05-17 — Hallucinated-id guard in hydrateEhrEnrichment.** If the LLM emits an `ehrEnrichment` entry whose fhirResourceId doesn't match the projected externalEhrContext, drop the entry silently. The drop is defensive (the system prompt warns against invention); rendering an unprovenanced source would be worse than rendering one less item. Full-block hallucination (every entry dropped) suppresses the whole block — better than an empty "From EHR" section that confuses the clinician.
+- **2026-05-17 — Lookup by natural key (ehrSystem + resourceType + fhirResourceId), not by internal cache row id.** The brief carries the EHR-side natural key; sending the internal id would require an extra resolve step at brief render time. The endpoint pattern (`/by-fhir-id`) names the lookup mode explicitly so future endpoints (`/by-id`) can land cleanly.
+- **2026-05-17 — FHIR_RESOURCE_VIEWED audit fires once per drawer open, not on hover or render.** Each pill renders without an audit row; the audit is gated by the actual data access (drawer fetches the cache row). Otherwise rendering a brief with 8 EHR items would write 8 audit rows the clinician never read.
+- **2026-05-17 — Three staleness tiers (fresh / stale / very_stale) live in `lib/fhir/staleness.ts`.** Tier constants colocated with `isStale` so future surfaces have one place to look. The 30-day "very_stale" cut is F5-specific (no other constant in the codebase aligns); the 7-day "stale" cut matches Unit 21's projection threshold so the brief never shows stale-flagged data the projection should have filtered. They diverge only when the brief was generated against a then-fresh cache that has since aged past 7 days — exactly the case the F5 chip surfaces.
+- **2026-05-17 — Drawer is read-only.** Sync-now lives on the EhrLinkPanel; the drawer's job is inspect, not refresh. Combining them would risk the clinician accidentally re-fetching while trying to read; single-purpose UI keeps both actions deliberate.
+- **2026-05-17 — Raw FHIR JSON in the drawer is collapsed by default.** The simplified shape (what the brief used) is what the clinician usually wants; the raw payload matters only for auditors. Collapsing keeps the drawer short for the common case + makes the "Show" toggle visible audit trail of a deliberate inspection.
 
 ### Unit 22 (2026-05-17)
 
