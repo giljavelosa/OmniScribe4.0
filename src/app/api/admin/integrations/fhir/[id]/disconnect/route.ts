@@ -20,20 +20,24 @@ export const runtime = 'nodejs';
  * semantics for OAuth credentials.
  */
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const guard = await requireFeatureAccess('TEAM_MEMBERS_MANAGE');
-  // Fallback: owning clinician can self-disconnect even without admin perms.
-  const session = await (await import('@/lib/auth')).auth();
-  if ('error' in guard && !session?.user?.orgUserId) return guard.error;
+  // Self-disconnect path uses NOTE_REVIEW (broadly granted) as a stand-in
+  // feature key so we still go through requireFeatureAccess's MFA + active-user
+  // re-check + DB-fresh role read. The actual ownership/admin authorization
+  // is done below.
+  const guard = await requireFeatureAccess('NOTE_REVIEW');
+  if ('error' in guard) return guard.error;
+  const { user, authorizationUser } = guard;
 
   const { id } = await params;
   const identity = await prisma.fhirIdentity.findUnique({ where: { id } });
   if (!identity) return NextResponse.json({ error: { code: 'not_found' } }, { status: 404 });
+  assertOrgScoped(identity.orgId, authorizationUser.orgId);
 
-  if ('error' in guard) {
-    // Not an admin — only the owning clinician may disconnect.
-    if (identity.clinicianOrgUserId !== session?.user?.orgUserId) return guard.error;
-  } else {
-    assertOrgScoped(identity.orgId, guard.authorizationUser.orgId);
+  // Authorization: org admin (TEAM_MEMBERS_MANAGE) OR the owning clinician.
+  const isAdmin = ['SUPER_ADMIN', 'ORG_ADMIN', 'SITE_ADMIN'].includes(authorizationUser.role);
+  const isOwner = identity.clinicianOrgUserId === authorizationUser.orgUserId;
+  if (!isAdmin && !isOwner) {
+    return NextResponse.json({ error: { code: 'forbidden' } }, { status: 403 });
   }
 
   const body = (await req.json().catch(() => ({}))) as { reason?: unknown };
@@ -43,7 +47,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   await prisma.fhirIdentity.delete({ where: { id } });
 
   await writeAuditLog({
-    userId: session?.user?.id,
+    userId: user.id,
     orgId: identity.orgId,
     action: 'FHIR_DISCONNECTED',
     resourceType: 'FhirIdentity',
