@@ -1,3 +1,5 @@
+import { extractMrn, type VendorMetadata } from './vendor-registry';
+
 /**
  * Per-resource FHIR → simplified adapters — Unit 21.
  *
@@ -137,12 +139,47 @@ export function adaptResource(resource: FhirResource): Simplified | null {
   }
 }
 
+/**
+ * Vendor-aware dispatch — Unit 24 / F6. Most adapters are vendor-blind
+ * (FHIR R4 standards), but Patient.mrn extraction varies by vendor
+ * (NextGen 'MR' code; Epic + Cerner use system OIDs). Sync orchestrators
+ * that know the EHR system call this entry point; pure-FHIR callers (e.g.
+ * a test fixture rendering) keep using `adaptResource`.
+ */
+export function adaptResourceWithVendor(
+  resource: FhirResource,
+  vendor?: VendorMetadata,
+): Simplified | null {
+  if (resource.resourceType !== 'Patient' || !vendor) {
+    return adaptResource(resource);
+  }
+  const name = (resource.name as Array<{ family?: string; given?: string[] }> | undefined)?.[0];
+  return {
+    given: name?.given ?? [],
+    family: name?.family ?? '',
+    birthDate: (resource.birthDate as string | undefined) ?? null,
+    gender: (resource.gender as string | undefined) ?? null,
+    mrn: extractMrn(
+      resource.identifier as Array<{
+        system?: string;
+        value?: string;
+        type?: { coding?: Array<{ code?: string }> };
+      }> | undefined,
+      vendor,
+    ),
+  };
+}
+
 // =====================================================================
 // Per-resource adapters
 // =====================================================================
 
 function adaptPatient(r: FhirResource): SimplifiedPatient {
   const name = (r.name as Array<{ family?: string; given?: string[] }> | undefined)?.[0];
+  // Default MRN extraction (vendor-blind; matches FHIR R4 'MR' type-code).
+  // Vendor-aware extraction is exposed via the standalone extractMrn helper
+  // in vendor-registry — callers that know the EHR system pass through
+  // adaptResourceWithVendor() instead.
   const mrn = (r.identifier as Array<{
     value?: string;
     type?: { coding?: Array<{ code?: string }> };

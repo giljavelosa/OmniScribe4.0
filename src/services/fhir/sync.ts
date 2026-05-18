@@ -2,8 +2,9 @@ import { Prisma } from '@prisma/client';
 
 import { prisma } from '@/lib/prisma';
 import { writeAuditLog } from '@/lib/audit/log';
-import { adaptResource, extractSensitivityLevel, FHIR_RESOURCE_TYPES, type FhirResourceType } from '@/services/fhir/adapters';
+import { adaptResourceWithVendor, extractSensitivityLevel, FHIR_RESOURCE_TYPES, type FhirResourceType } from '@/services/fhir/adapters';
 import { fetchResourceBundle, type FetcherIdentity } from '@/services/fhir/resource-fetcher';
+import { getVendor } from '@/services/fhir/vendor-registry';
 
 /**
  * Sync orchestrator — Unit 21 (Wave 4 / F3).
@@ -153,10 +154,11 @@ async function fetchAndCacheResourceType(args: {
   });
   const entries = bundle.entry ?? [];
   let cached = 0;
+  const vendor = getVendor(args.ehrSystem);
   for (const entry of entries) {
     const resource = entry.resource;
     if (!resource?.id || resource.resourceType !== args.resourceType) continue;
-    const simplified = adaptResource(resource);
+    const simplified = adaptResourceWithVendor(resource, vendor);
     if (!simplified) continue;
     await prisma.fhirCachedResource.upsert({
       where: {
