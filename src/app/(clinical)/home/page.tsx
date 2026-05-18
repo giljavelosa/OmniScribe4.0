@@ -1,6 +1,15 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { FileEdit, Sparkles, Stethoscope } from 'lucide-react';
+import type { OrgRole } from '@prisma/client';
+import {
+  FileEdit,
+  FileText,
+  ShieldCheck,
+  Sparkles,
+  Stethoscope,
+  UserPlus,
+  Wrench,
+} from 'lucide-react';
 
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
@@ -8,6 +17,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { SchedulingCard } from '@/components/clinical/scheduling-card';
 import { HomeSearchForm } from './_components/home-search-form';
+
+const ADMIN_ROLES: OrgRole[] = ['SUPER_ADMIN', 'ORG_ADMIN', 'SITE_ADMIN'];
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Home' };
@@ -90,6 +101,12 @@ export default async function HomePage() {
     }),
   ]);
 
+  const role = session.user.role;
+  const platformRole = session.user.platformRole;
+  const isAdmin = role && ADMIN_ROLES.includes(role);
+  const isOwner = platformRole === 'PLATFORM_OWNER';
+  const isOps = platformRole === 'PLATFORM_OPS' || isOwner;
+
   return (
     <div className="mx-auto max-w-5xl px-4 py-6 space-y-6">
       <div className="flex flex-col gap-1">
@@ -99,6 +116,69 @@ export default async function HomePage() {
           {session.user.email}
         </p>
       </div>
+
+      {/* Quick Actions — direct links to the most-used surfaces.
+          Role-gated: admin/owner/ops only render their group when the
+          user has the matching role. */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-md">Quick actions</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+            <QuickActionLink
+              href="/patients"
+              Icon={Stethoscope}
+              label="All patients"
+              hint="Search, filter, manage"
+            />
+            <QuickActionLink
+              href="/patients"
+              Icon={UserPlus}
+              label="Create patient"
+              hint="Open patient list"
+            />
+            {isAdmin && (
+              <>
+                <QuickActionLink
+                  href="/admin/templates"
+                  Icon={FileText}
+                  label="Templates"
+                  hint="Note templates"
+                />
+                <QuickActionLink
+                  href="/admin/users"
+                  Icon={ShieldCheck}
+                  label="Team members"
+                  hint="Invite, manage, audit"
+                />
+                <QuickActionLink
+                  href="/admin/audit"
+                  Icon={FileEdit}
+                  label="Audit log"
+                  hint="Per-org events"
+                />
+              </>
+            )}
+            {isOwner && (
+              <QuickActionLink
+                href="/owner/orgs"
+                Icon={Sparkles}
+                label="Owner console"
+                hint="Orgs, BAA, billing"
+              />
+            )}
+            {isOps && (
+              <QuickActionLink
+                href="/ops"
+                Icon={Wrench}
+                label="Ops dashboard"
+                hint="Platform health"
+              />
+            )}
+          </div>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>
@@ -226,5 +306,30 @@ export default async function HomePage() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+function QuickActionLink({
+  href,
+  Icon,
+  label,
+  hint,
+}: {
+  href: string;
+  Icon: typeof Stethoscope;
+  label: string;
+  hint: string;
+}) {
+  return (
+    <Link
+      href={href}
+      className="flex flex-col gap-1 rounded-md border border-border bg-card p-3 hover:bg-muted/40 hover:border-foreground/30 transition-colors min-h-[var(--touch-min)]"
+    >
+      <div className="flex items-center gap-2 text-sm font-medium">
+        <Icon className="h-3.5 w-3.5 text-primary" aria-hidden />
+        {label}
+      </div>
+      <p className="text-[11px] text-muted-foreground">{hint}</p>
+    </Link>
   );
 }
