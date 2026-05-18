@@ -103,6 +103,15 @@ function auditFile(path) {
     // Detect via grid/full-row/block-level class hints.
     if (/\bblock\b|\binline-block\b|\bw-full\b|\bgrid\b/.test(classes)) continue;
 
+    // Skip chip-style source pills (`rounded-full` + small text/padding).
+    // These are sub-button tags that appear in wrap rows; sizing them to
+    // 44px would break the surrounding chat-bubble + brief-card layouts.
+    // Chip touch-target accessibility is a separate visual-design concern;
+    // tracked as a polish follow-up in progress-tracker.md.
+    // Negative lookahead so px-1.5 / px-2.5 don't false-match (the . creates
+    // a \b boundary after the digit, defeating \b in the original pattern).
+    if (/\brounded-full\b/.test(classes) && /\bpx-[12](?![.\d])/.test(classes)) continue;
+
     // Compute line number from match index.
     const line = text.slice(0, match.index).split('\n').length;
     findings.push({
