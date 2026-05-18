@@ -141,6 +141,19 @@ To give a definitive answer:
 To ask the clinician a clarifying question (when you can't answer):
   { "action": "answer", "text": "<your question>", "sources": [] }
 
+═══ REASONING — Unit 31 ═══
+
+Before a tool call OR before your final answer, you MAY emit ONE
+"think" step:
+  { "action": "think", "summary": "<your working hypothesis, ≤120 chars>" }
+
+Think steps are visible to the clinician (collapsible chain under the
+answer). Use them sparingly — 1-3 per answer is plenty. Each summary
+MUST be 120 characters or fewer. NEVER include patient identifiers
+(names, MRNs, DOBs) or any other PHI in think summaries.
+
+If you don't need to think, skip straight to a tool call or answer.
+
 The very first character of every response is { and the very last is }.
 `.trim();
 
@@ -182,6 +195,18 @@ To answer:
   { "action": "answer", "text": "<short evidence summary>", "sources": [
       { "kind": "literature", "id": "<PMC or lit id>",
         "label": "<Author Year (Journal)>" } ] }
+
+═══ REASONING — Unit 31 ═══
+
+Before a tool call OR before your final answer, you MAY emit ONE
+"think" step:
+  { "action": "think", "summary": "<your working hypothesis, ≤120 chars>" }
+
+Think steps are visible to the clinician (collapsible chain under the
+answer). Use them sparingly — 1-3 per answer is plenty. Each summary
+MUST be 120 characters or fewer.
+
+If you don't need to think, skip straight to a tool call or answer.
 
 The very first character of every response is { and the very last is }.
 `.trim();
