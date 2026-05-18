@@ -8,7 +8,9 @@ import { PriorContextPanel } from './PriorContextPanel';
 import { LiveNotePanel } from './LiveNotePanel';
 import { RecordingControls } from './RecordingControls';
 import { PlanForTodayCard } from '@/components/copilot/cards/plan-for-today-card';
+import { FhirWatchCards } from '@/components/copilot/cards/fhir-watch-cards';
 import type { PriorContextBriefContent } from '@/types/brief';
+import type { ExternalEhrContext } from '@/lib/fhir/project-ehr-context';
 
 type LiveFollowUp = {
   id: string;
@@ -27,6 +29,10 @@ type Props = {
   patientId: string;
   nowMs: number;
   hasPriorSignedNote: boolean;
+  /** Unit 25 / Watch v1 — projected FHIR cache for the FhirWatchCards
+   *  bundle. Null when patient has no verified PatientFhirIdentity or
+   *  the cache is empty / fully stale; bundle renders nothing then. */
+  fhirContext: ExternalEhrContext | null;
 };
 
 /**
@@ -45,6 +51,7 @@ export function DesktopCaptureLayout({
   patientId,
   nowMs,
   hasPriorSignedNote,
+  fhirContext,
 }: Props) {
   return (
     <div className="hidden lg:flex flex-col h-[calc(100vh-3.25rem)]">
@@ -85,6 +92,12 @@ export function DesktopCaptureLayout({
               noteId={noteId}
             />
           )}
+          <FhirWatchCards
+            context={fhirContext}
+            surface="capture"
+            noteId={noteId}
+            nowMs={nowMs}
+          />
           <LiveNotePanel />
         </aside>
       </div>
