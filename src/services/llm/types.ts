@@ -23,6 +23,21 @@ export interface GenerateOptions {
   jsonMode?: boolean;
   /** Correlation id surfaced in inferenceLog for traceability. */
   requestId?: string;
+  /**
+   * Unit 35 — when present, the LLM service writes one `LlmCallLog`
+   * row after the call returns. OPTIONAL: callers without org context
+   * (test stubs, ad-hoc scripts) omit it + their calls aren't logged.
+   * Fail-safe: missing meter = rollup undercounts; never throws.
+   *
+   * `surface` is a caller-supplied dotted tag (`copilot.ask`,
+   * `worker.brief`, `copilot.draft.patientMessage`) so the rollup
+   * can group by call origin.
+   */
+  meter?: {
+    orgId: string;
+    noteId?: string;
+    surface: string;
+  };
 }
 
 export interface GenerateResult {

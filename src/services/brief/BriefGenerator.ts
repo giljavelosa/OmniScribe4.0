@@ -39,7 +39,16 @@ export type BriefGenerationResult = {
 export class BriefGenerator {
   constructor(private readonly llm: LLMService = getLLMService()) {}
 
-  async generate(input: BuildBriefPromptInput): Promise<BriefGenerationResult> {
+  /**
+   * @param meter Unit 35 — optional cost-rollup metering. The worker
+   *   that owns the brief job passes `{ orgId, noteId }`; ad-hoc
+   *   callers (tests) can omit it (no log row written; rollup
+   *   undercounts).
+   */
+  async generate(
+    input: BuildBriefPromptInput,
+    meter?: { orgId: string; noteId?: string },
+  ): Promise<BriefGenerationResult> {
     const user = buildBriefUserMessage(input);
     let lastValidationError: string | null = null;
 
@@ -54,6 +63,7 @@ export class BriefGenerator {
         jsonMode: true,
         model: 'sonnet',
         maxTokens: 1500,
+        ...(meter ? { meter: { ...meter, surface: 'worker.brief.sonnet' } } : {}),
       });
       const parseAttempt = parseBriefOutput(result.text, input);
       if (parseAttempt.ok) {
@@ -75,6 +85,7 @@ export class BriefGenerator {
       jsonMode: true,
       model: 'haiku',
       maxTokens: 1500,
+      ...(meter ? { meter: { ...meter, surface: 'worker.brief.haiku' } } : {}),
     });
     const parseAttempt = parseBriefOutput(result.text, input);
     if (!parseAttempt.ok) {

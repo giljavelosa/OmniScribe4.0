@@ -147,7 +147,8 @@ export async function handle(job: Job<NoteBriefJob>) {
   let briefResult;
   try {
     const generator = new BriefGenerator();
-    briefResult = await generator.generate(briefInput);
+    // Unit 35 — cost rollup metering. orgId + noteId are both in scope.
+    briefResult = await generator.generate(briefInput, { orgId, noteId });
   } catch (err) {
     const errorClass = err instanceof Error ? err.name : 'Unknown';
     await writeAuditLog({
