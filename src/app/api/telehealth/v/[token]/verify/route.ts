@@ -39,22 +39,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
   });
 
   // Generic failure helper so every reject looks identical from the wire.
+  // Audit writes must NOT be swallowed (rule 8); let any failure propagate to
+  // the caller's 500 so ops sees enumeration-attempt visibility loss instead
+  // of a silent gap in the audit trail.
   async function fail(reason: string, sessionId: string | null) {
     if (sessionId) {
-      await prisma.telehealthSession
-        .findUnique({ where: { id: sessionId } })
-        .then((s) =>
-          s
-            ? writeAuditLog({
-                orgId: s.orgId,
-                action: 'TELEHEALTH_MAGIC_LINK_FAILED',
-                resourceType: 'TelehealthSession',
-                resourceId: s.id,
-                metadata: { reason, scheduleId: s.scheduleId },
-              })
-            : Promise.resolve(),
-        )
-        .catch(() => {});
+      const s = await prisma.telehealthSession.findUnique({ where: { id: sessionId } });
+      if (s) {
+        await writeAuditLog({
+          orgId: s.orgId,
+          action: 'TELEHEALTH_MAGIC_LINK_FAILED',
+          resourceType: 'TelehealthSession',
+          resourceId: s.id,
+          metadata: { reason, scheduleId: s.scheduleId },
+        });
+      }
     }
     return NextResponse.json({ error: { code: 'invalid' } }, { status: 401 });
   }

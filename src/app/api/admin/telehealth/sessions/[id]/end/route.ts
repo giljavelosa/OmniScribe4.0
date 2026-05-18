@@ -43,22 +43,27 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     );
   }
 
-  // Destroy the Daily.co room if one was provisioned. Best-effort —
-  // a destroy failure doesn't block the status flip.
+  // Destroy the Daily.co room if one was provisioned. The destroy itself is
+  // best-effort, but the audit write must NOT be inside the catch (rule 8) —
+  // a missing TELEHEALTH_ROOM_DESTROYED is itself an ops concern.
+  let roomDestroyed = false;
   if (session.roomName) {
     try {
       await destroyRoom({ roomName: session.roomName });
-      await writeAuditLog({
-        userId: user.id,
-        orgId: authorizationUser.orgId,
-        action: 'TELEHEALTH_ROOM_DESTROYED',
-        resourceType: 'TelehealthSession',
-        resourceId: id,
-        metadata: { roomName: session.roomName },
-      });
+      roomDestroyed = true;
     } catch (e) {
       console.warn('[telehealth/sessions/end] destroyRoom failed:', e);
     }
+  }
+  if (roomDestroyed) {
+    await writeAuditLog({
+      userId: user.id,
+      orgId: authorizationUser.orgId,
+      action: 'TELEHEALTH_ROOM_DESTROYED',
+      resourceType: 'TelehealthSession',
+      resourceId: id,
+      metadata: { roomName: session.roomName },
+    });
   }
 
   const updated = await prisma.telehealthSession.update({

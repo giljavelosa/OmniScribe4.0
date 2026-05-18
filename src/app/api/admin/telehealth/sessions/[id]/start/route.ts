@@ -30,12 +30,15 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       { status: 409 },
     );
   }
-  if (session.status !== 'CONSENT_CAPTURED' && session.status !== 'VERIFIED') {
+  if (session.status !== 'CONSENT_CAPTURED') {
+    // CONSENT_CAPTURED is the only acceptable prerequisite — the state
+    // machine is SCHEDULED → VERIFIED → CONSENT_CAPTURED → ACTIVE, and
+    // VERIFIED alone means the patient hasn't consented yet (HIPAA gate).
     return NextResponse.json(
       {
         error: {
           code: 'not_ready',
-          message: `Session must be VERIFIED or CONSENT_CAPTURED before start (current: ${session.status}).`,
+          message: `Session must be CONSENT_CAPTURED before start (current: ${session.status}).`,
         },
       },
       { status: 409 },
