@@ -44,7 +44,7 @@ const patchSchema = z
  * without false positives on hypothetical reopen flows).
  */
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const guard = await requireFeatureAccess('NOTE_EDIT');
+  const guard = await requireFeatureAccess('NOTE_EDIT', req);
   if ('error' in guard) return guard.error;
   const { user, authorizationUser } = guard;
 

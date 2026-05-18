@@ -37,7 +37,7 @@ const STATUSES_REQUIRING_DELTA: ReadonlySet<GoalStatus> = new Set([
  * when the trail row is created.
  */
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string; goalId: string }> }) {
-  const guard = await requireFeatureAccess('PATIENT_MANAGEMENT');
+  const guard = await requireFeatureAccess('PATIENT_MANAGEMENT', req);
   if ('error' in guard) return guard.error;
   const { user, authorizationUser } = guard;
 

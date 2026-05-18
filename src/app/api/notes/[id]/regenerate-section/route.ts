@@ -37,7 +37,7 @@ const bodySchema = z.object({
  *     SectionRegenerateConfirmDialog (spec §G) on this case.
  */
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const guard = await requireFeatureAccess('NOTE_EDIT');
+  const guard = await requireFeatureAccess('NOTE_EDIT', req);
   if ('error' in guard) return guard.error;
   const { user, authorizationUser, orgUser } = guard;
 

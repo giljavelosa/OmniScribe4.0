@@ -22,8 +22,8 @@ const EHR_SYSTEM = 'nextgen';
  * Returns the full SyncResult so the UI can show per-type counts +
  * any partial failures.
  */
-export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const guard = await requireFeatureAccess('NOTE_REVIEW');
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const guard = await requireFeatureAccess('NOTE_REVIEW', req);
   if ('error' in guard) return guard.error;
   const { user, authorizationUser } = guard;
 

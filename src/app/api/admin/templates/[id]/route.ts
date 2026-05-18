@@ -83,7 +83,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
  * by 1 — the row IS the latest version (clones preserve the prior).
  */
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const guard = await requireFeatureAccess('TEMPLATE_LIBRARY_MANAGE');
+  const guard = await requireFeatureAccess('TEMPLATE_LIBRARY_MANAGE', req);
   if ('error' in guard) return guard.error;
   const { user, authorizationUser } = guard;
 

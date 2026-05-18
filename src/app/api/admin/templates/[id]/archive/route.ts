@@ -20,7 +20,7 @@ const bodySchema = z.object({
  * the row stays so historical notes still resolve their template.
  */
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const guard = await requireFeatureAccess('TEMPLATE_LIBRARY_MANAGE');
+  const guard = await requireFeatureAccess('TEMPLATE_LIBRARY_MANAGE', req);
   if ('error' in guard) return guard.error;
   const { user, authorizationUser } = guard;
 

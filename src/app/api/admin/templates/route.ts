@@ -91,7 +91,7 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const guard = await requireFeatureAccess('TEMPLATE_LIBRARY_MANAGE');
+  const guard = await requireFeatureAccess('TEMPLATE_LIBRARY_MANAGE', req);
   if ('error' in guard) return guard.error;
   const { user, authorizationUser } = guard;
 

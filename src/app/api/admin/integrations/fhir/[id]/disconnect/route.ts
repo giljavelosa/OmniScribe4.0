@@ -22,9 +22,9 @@ export const runtime = 'nodejs';
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   // Self-disconnect path uses NOTE_REVIEW (broadly granted) as a stand-in
   // feature key so we still go through requireFeatureAccess's MFA + active-user
-  // re-check + DB-fresh role read. The actual ownership/admin authorization
-  // is done below.
-  const guard = await requireFeatureAccess('NOTE_REVIEW');
+  // re-check + DB-fresh role read + impersonation read-only gate. The actual
+  // ownership/admin authorization is done below.
+  const guard = await requireFeatureAccess('NOTE_REVIEW', req);
   if ('error' in guard) return guard.error;
   const { user, authorizationUser } = guard;
 

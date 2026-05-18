@@ -20,7 +20,7 @@ const patchSchema = z
   .refine((v) => Object.keys(v).length > 0, { message: 'no_fields' });
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const guard = await requireFeatureAccess('VISITS_CREATE');
+  const guard = await requireFeatureAccess('VISITS_CREATE', req);
   if ('error' in guard) return guard.error;
   const { user, authorizationUser } = guard;
 
