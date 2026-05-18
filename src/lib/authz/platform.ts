@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import type { Session } from 'next-auth';
+import type { PlatformRole } from '@prisma/client';
 import { auth } from '@/lib/auth';
 
 export type RequirePlatformOwnerOk = { user: Session['user'] };
@@ -17,4 +18,41 @@ export async function requirePlatformOwner(): Promise<RequirePlatformOwnerResult
     return { error: NextResponse.json({ error: { code: 'mfa_required' } }, { status: 403 }) };
   }
   return { user: session.user };
+}
+
+/**
+ * Unit 33 — Allows PLATFORM_OWNER OR PLATFORM_OPS. Use for `/ops/*`
+ * surfaces (dashboard, queues, health, audit search). Owner remains
+ * the strict superset — owner-only surfaces (`/owner/*`) keep using
+ * `requirePlatformOwner` unchanged.
+ *
+ * MFA-required for either role. Returning the role on the result lets
+ * callers branch UI affordances (e.g. surface "Begin impersonation"
+ * only for OWNER).
+ */
+export type RequirePlatformStaffOk = {
+  user: Session['user'];
+  role: Extract<PlatformRole, 'PLATFORM_OWNER' | 'PLATFORM_OPS'>;
+};
+export type RequirePlatformStaffResult =
+  | RequirePlatformStaffOk
+  | { error: NextResponse };
+
+const STAFF_ROLES: PlatformRole[] = ['PLATFORM_OWNER', 'PLATFORM_OPS'];
+
+export async function requirePlatformStaff(): Promise<RequirePlatformStaffResult> {
+  const session = await auth();
+  if (!session?.user) {
+    return { error: NextResponse.json({ error: { code: 'unauthenticated' } }, { status: 401 }) };
+  }
+  if (!STAFF_ROLES.includes(session.user.platformRole)) {
+    return { error: NextResponse.json({ error: { code: 'forbidden' } }, { status: 403 }) };
+  }
+  if (!session.user.mfaEnabled) {
+    return { error: NextResponse.json({ error: { code: 'mfa_required' } }, { status: 403 }) };
+  }
+  return {
+    user: session.user,
+    role: session.user.platformRole as 'PLATFORM_OWNER' | 'PLATFORM_OPS',
+  };
 }
