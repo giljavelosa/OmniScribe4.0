@@ -85,6 +85,7 @@ export default async function ReviewPage({ params }: { params: Promise<{ noteId:
           division: note.division,
           noteStyle: note.noteStyle,
           patient: {
+            id: note.patient.id,
             firstName: note.patient.firstName,
             lastName: note.patient.lastName,
             mrn: note.patient.mrn,

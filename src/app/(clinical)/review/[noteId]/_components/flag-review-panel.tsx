@@ -54,6 +54,7 @@ export function FlagReviewPanel({ noteId, sections, isSigned }: Props) {
   const [loading, startLoading] = useTransition();
   const [analyzing, startAnalyzing] = useTransition();
   const [analyzeMessage, setAnalyzeMessage] = useState<string | null>(null);
+  const [isPolling, setIsPolling] = useState(false);
   const labelById = useMemo(
     () => Object.fromEntries(sections.map((s) => [s.id, s.label])),
     [sections],
@@ -87,9 +88,44 @@ export function FlagReviewPanel({ noteId, sections, isSigned }: Props) {
         setAnalyzeMessage(body?.error?.message ?? `Analyze failed (${res.status}).`);
         return;
       }
-      setAnalyzeMessage('Analysis enqueued — refreshing in a few seconds…');
-      // Poll once after a short delay to surface results without waiting on SSE.
-      setTimeout(load, 6000);
+      setAnalyzeMessage('Analyzing — checking for new flags every few seconds…');
+      setIsPolling(true);
+      // Bedrock per-section can take 10–30s on a multi-section note, so
+      // poll repeatedly until flags appear OR we hit max attempts. Clears
+      // the banner on each terminal state (results in, max retries hit, or
+      // error). SSE-based completion is the longer-term fix (see line 47).
+      const startCount = flags.length;
+      let attempts = 0;
+      const MAX_ATTEMPTS = 12; // ~36s of polling
+      const POLL_MS = 3000;
+      const tick = async () => {
+        attempts += 1;
+        try {
+          const r = await fetch(`/api/notes/${noteId}/flags`);
+          if (r.ok) {
+            const json = (await r.json()) as { data: Flag[] };
+            setFlags(json.data);
+            if (json.data.length !== startCount || attempts >= MAX_ATTEMPTS) {
+              setAnalyzeMessage(
+                json.data.length === startCount
+                  ? 'Analysis finished — no new flags surfaced.'
+                  : null,
+              );
+              setIsPolling(false);
+              return;
+            }
+          }
+        } catch {
+          // Transient fetch failure — keep polling.
+        }
+        if (attempts < MAX_ATTEMPTS) {
+          setTimeout(tick, POLL_MS);
+        } else {
+          setAnalyzeMessage('Analysis still running. Try again in a moment.');
+          setIsPolling(false);
+        }
+      };
+      setTimeout(tick, POLL_MS);
     });
   }
 
@@ -123,7 +159,16 @@ export function FlagReviewPanel({ noteId, sections, isSigned }: Props) {
       </CardHeader>
       <CardContent className="space-y-3">
         {error && <StatusBanner variant="danger">{error}</StatusBanner>}
-        {analyzeMessage && <StatusBanner variant="info">{analyzeMessage}</StatusBanner>}
+        {analyzeMessage && (
+          <StatusBanner variant="info">
+            <span className={isPolling ? 'inline-flex items-center gap-2' : ''}>
+              {isPolling && (
+                <Sparkles className="size-4 animate-pulse" aria-hidden="true" />
+              )}
+              <span className={isPolling ? 'animate-pulse' : ''}>{analyzeMessage}</span>
+            </span>
+          </StatusBanner>
+        )}
 
         <div className="grid grid-cols-3 gap-2">
           {SEVERITY_ORDER.map((sev) => (
@@ -148,7 +193,9 @@ export function FlagReviewPanel({ noteId, sections, isSigned }: Props) {
             {loading
               ? 'Loading flags…'
               : flags.length === 0
-                ? 'No flags yet — tap Analyze to scan the draft against the transcript.'
+                ? isSigned
+                  ? 'No flags were captured on this note before signing.'
+                  : 'No flags yet — tap Analyze to scan the draft against the transcript.'
                 : 'No open flags — everything has been resolved or dismissed.'}
           </p>
         ) : (

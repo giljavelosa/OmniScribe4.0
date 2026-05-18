@@ -166,6 +166,12 @@ export function SectionAccordion({
             {label}
             {isRequired && <span className="text-[var(--status-danger-fg)] ml-1">*</span>}
           </p>
+          {(status === 'generating' || regenPending) && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-[var(--status-info-bg)] px-2 py-0.5 text-xs text-[var(--status-info-fg)] animate-pulse">
+              <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+              Regenerating
+            </span>
+          )}
           {savedAt && <span className="text-xs text-muted-foreground">saved {savedAt}</span>}
         </div>
         <div className="flex items-center gap-1">
@@ -232,10 +238,23 @@ export function SectionAccordion({
                 size="sm"
                 disabled={regenPending || status === 'generating'}
                 onClick={() => regenerate(false)}
-                className="gap-1"
+                className={cn(
+                  'gap-1',
+                  (regenPending || status === 'generating') && 'animate-pulse',
+                )}
               >
-                <RotateCw className="h-3 w-3" aria-hidden />
-                {status === 'failed' ? 'Retry generate' : 'Regenerate'}
+                <RotateCw
+                  className={cn(
+                    'h-3 w-3',
+                    (regenPending || status === 'generating') && 'animate-spin',
+                  )}
+                  aria-hidden
+                />
+                {status === 'generating' || regenPending
+                  ? 'Regenerating — please wait…'
+                  : status === 'failed'
+                    ? 'Retry generate'
+                    : 'Regenerate'}
               </Button>
             </div>
           )}
