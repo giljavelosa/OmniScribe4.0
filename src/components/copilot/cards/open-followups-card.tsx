@@ -130,6 +130,11 @@ function FollowUpRow({
           const body = await res.json().catch(() => null);
           throw new Error(body?.error?.code ?? `http_${res.status}`);
         }
+        // Reset to idle BEFORE notifying the parent: MET/DROPPED rows get
+        // unmounted by the parent so this state change is a no-op for them,
+        // but CARRIED rows stay visible and would otherwise be stuck on
+        // "Saving…" alongside the new → Carried badge.
+        setMode({ kind: 'idle' });
         onClosed(item.id, payload.status);
       } catch (err) {
         setMode({ kind: 'error', message: err instanceof Error ? err.message : 'unknown' });
