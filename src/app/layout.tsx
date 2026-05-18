@@ -30,6 +30,14 @@ export const metadata: Metadata = {
   description: 'HIPAA-grade medical AI scribe with an integrated agentic clinical copilot.',
   applicationName: 'OmniScribe',
   formatDetection: { telephone: false },
+  // Unit 36 — PWA manifest reference. Static file at public/manifest.json;
+  // Next emits the proper <link rel="manifest"> tag.
+  manifest: '/manifest.json',
+  appleWebApp: {
+    capable: true,
+    title: 'OmniScribe',
+    statusBarStyle: 'default',
+  },
 };
 
 export const viewport: Viewport = {
