@@ -11,6 +11,11 @@ import type {
   SimplifiedMedicationStatement,
   SimplifiedObservation,
 } from '@/services/fhir/adapters';
+import {
+  runDraftPatientMessage,
+  runProposeFollowUpCadence,
+  runSuggestReferralLetterContent,
+} from './draft-tools';
 
 /**
  * Ask-mode tools — Unit 27.
@@ -124,6 +129,26 @@ const lookupFhirAllergyArgs = z.object({
 
 const lookupFhirCarePlanArgs = z.object({
   patientId: z.string().min(1).max(64),
+});
+
+// Unit 30 — draft tool arg schemas. All chart-mode; topic/specialty/
+// reason/basis are model-supplied free-text that gets piped into the
+// sub-LLM prompt.
+
+const draftPatientMessageArgs = z.object({
+  patientId: z.string().min(1).max(64),
+  topic: z.string().min(1).max(200),
+});
+
+const proposeFollowUpCadenceArgs = z.object({
+  patientId: z.string().min(1).max(64),
+  basis: z.string().min(1).max(200),
+});
+
+const suggestReferralLetterContentArgs = z.object({
+  patientId: z.string().min(1).max(64),
+  specialty: z.string().min(1).max(80),
+  reason: z.string().min(1).max(200),
 });
 
 // =====================================================================
@@ -453,6 +478,23 @@ export async function runTool(
         }));
         chargeFhirBudget(ctx, carePlans.length);
         return { ok: true, rowCount: carePlans.length, data: { carePlans } };
+      }
+
+      // ===== Unit 30 — Draft tools (chart-mode only) =================
+
+      case 'draftPatientMessage': {
+        const args = draftPatientMessageArgs.parse(argsRaw);
+        return runDraftPatientMessage(args, { orgId: ctx.orgId });
+      }
+
+      case 'proposeFollowUpCadence': {
+        const args = proposeFollowUpCadenceArgs.parse(argsRaw);
+        return runProposeFollowUpCadence(args, { orgId: ctx.orgId });
+      }
+
+      case 'suggestReferralLetterContent': {
+        const args = suggestReferralLetterContentArgs.parse(argsRaw);
+        return runSuggestReferralLetterContent(args, { orgId: ctx.orgId });
       }
 
       default:
