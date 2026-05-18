@@ -263,7 +263,9 @@ function renderNoteSectionsForBrief(finalJson: FinalJsonShape): string {
 }
 
 function escapeAttr(value: string): string {
-  return value.replace(/"/g, '&quot;').replace(/&/g, '&amp;');
+  // Escape ampersands FIRST so the &quot; introduced by the next pass isn't
+  // re-escaped into &amp;quot;.
+  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
 }
 
 // ---------------------------------------------------------------------------

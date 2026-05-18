@@ -64,9 +64,24 @@ export function SignFollowUpSweep({
    *  re-issues the sign POST with sweepAcknowledged: true. */
   onResolved: () => void;
 }) {
-  const [rows, setRows] = useState<RowState[]>(() =>
-    followUps.map((fu) => ({ followUp: fu, decision: { kind: 'open' } })),
-  );
+  // Sync rows to the followUps prop. Without this, the useState initializer
+  // only sees the initial-mount value (often []) and the modal would render
+  // empty even after SignClient loads the actual follow-ups, bypassing the
+  // sweep gate. Use the joined id list as a sync key so user decisions aren't
+  // clobbered on unrelated re-renders.
+  const followUpIdsKey = followUps.map((f) => f.id).join('|');
+  const [rowsState, setRowsState] = useState<{ key: string; rows: RowState[] }>(() => ({
+    key: followUpIdsKey,
+    rows: followUps.map((fu) => ({ followUp: fu, decision: { kind: 'open' } })),
+  }));
+  let rows = rowsState.rows;
+  if (rowsState.key !== followUpIdsKey) {
+    const byId = new Map(rowsState.rows.map((r) => [r.followUp.id, r]));
+    rows = followUps.map((fu) => byId.get(fu.id) ?? { followUp: fu, decision: { kind: 'open' } });
+    setRowsState({ key: followUpIdsKey, rows });
+  }
+  const setRows = (updater: (curr: RowState[]) => RowState[]) =>
+    setRowsState((s) => ({ ...s, rows: updater(s.rows) }));
   const [pending, startTransition] = useTransition();
   const [globalError, setGlobalError] = useState<string | null>(null);
   const [skipping, setSkipping] = useState(false);

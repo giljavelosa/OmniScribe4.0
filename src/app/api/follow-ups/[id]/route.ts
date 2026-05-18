@@ -72,6 +72,10 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
   const nowDate = new Date();
   const nextStatus = FollowUpStatus[parsed.data.status];
+  // CARRIED is NOT a terminal state — it re-surfaces on next visit. Only
+  // MET / DROPPED close the commitment; closedAt/closedByOrgUserId must stay
+  // null for CARRIED so the next visit's sweep + brief still see it alive.
+  const isTerminal = parsed.data.status === 'MET' || parsed.data.status === 'DROPPED';
   const updated = await prisma.followUp.update({
     where: { id },
     data: {
@@ -79,8 +83,8 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       closingNoteText: parsed.data.status === 'MET' ? parsed.data.closingNoteText! : null,
       dropReason: parsed.data.status === 'DROPPED' ? parsed.data.dropReason! : null,
       closingNoteId: parsed.data.closingNoteId ?? null,
-      closedAt: nowDate,
-      closedByOrgUserId: authorizationUser.orgUserId,
+      closedAt: isTerminal ? nowDate : null,
+      closedByOrgUserId: isTerminal ? authorizationUser.orgUserId : null,
     },
   });
 
@@ -101,14 +105,16 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     resourceId: id,
     metadata: auditMeta,
   });
-  await writeAuditLog({
-    userId: user.id,
-    orgId: authorizationUser.orgId,
-    action: 'FOLLOWUP_CLOSED',
-    resourceType: 'FollowUp',
-    resourceId: id,
-    metadata: auditMeta,
-  });
+  if (isTerminal) {
+    await writeAuditLog({
+      userId: user.id,
+      orgId: authorizationUser.orgId,
+      action: 'FOLLOWUP_CLOSED',
+      resourceType: 'FollowUp',
+      resourceId: id,
+      metadata: auditMeta,
+    });
+  }
 
   return NextResponse.json({ data: updated });
 }
