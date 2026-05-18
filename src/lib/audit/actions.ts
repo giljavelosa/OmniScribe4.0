@@ -292,4 +292,12 @@ export type AuditAction =
   | 'ORG_SELF_PROVISIONED'
   | 'USER_LOCKED'
   | 'USER_UNLOCKED'
-  | 'INVITE_EXPIRED_SWEPT';
+  | 'INVITE_EXPIRED_SWEPT'
+  // ---- Polish (post-Wave 6) ----
+  // ROLLUP_REFRESHED fires per-org per-rollup-type per cron run when
+  // the background CLI warms the OrgUsageDaily + OrgLlmCostDaily
+  // caches. Metadata: rollupType ('usage' | 'llm-cost') + windowDays
+  // + rowsComputed + durationMs. PHI-free (just counts). Lets the
+  // auditor see "did the daily refresh actually run for org X?" without
+  // hitting the cache table directly.
+  | 'ROLLUP_REFRESHED';

@@ -20,6 +20,7 @@
     "verify:providers": "node --env-file=.env --import=tsx scripts/verify-providers.ts",
     "touch-audit": "node scripts/touch-target-audit.mjs",
     "invite-sweep": "node scripts/invite-sweep.mjs",
+    "rollup-refresh": "node scripts/rollup-refresh.mjs",
     "postinstall": "node scripts/postinstall.mjs"
   },
   "prisma": {
