@@ -263,7 +263,11 @@ export function extractSensitivityLevel(resource: FhirResource): string | null {
     | undefined;
   const security = meta?.security ?? [];
   for (const s of security) {
-    if (s.code && /^(R|ETH|HIV|PSY|SDV|SUD|GDIS|TBOO|DEMO|N|PROD)$/.test(s.code)) {
+    // 'N' (Normal) is the default HL7 confidentiality and must NOT flag as
+    // restricted — populating it would mark virtually every resource as
+    // restricted. 'PROD' is a production-environment designation, not a
+    // 42 CFR Part 2 sensitivity code.
+    if (s.code && /^(R|ETH|HIV|PSY|SDV|SUD|GDIS|TBOO|DEMO)$/.test(s.code)) {
       return 'restricted';
     }
   }
