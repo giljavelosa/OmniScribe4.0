@@ -61,11 +61,12 @@ export function PreflightShell({ scheduleId }: { scheduleId: string }) {
         // for easy join). Acceptable compromise to avoid forking the audit
         // ingress for one new action.
         noteId: scheduleId,
-        itemCount: 0,
+        check,
+        // Bound to 120 chars at the route boundary; truncate defensively here
+        // so the POST never returns 400 for an oversized error string.
+        reason: reason.slice(0, 120),
       }),
     }).catch(() => {});
-    void check;
-    void reason;
   }, [scheduleId]);
 
   const teardownMic = useCallback(() => {

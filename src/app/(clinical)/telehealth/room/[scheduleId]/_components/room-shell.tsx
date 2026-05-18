@@ -110,8 +110,16 @@ export function TelehealthRoomShell({ noteId, scheduleId, sessionId, roomUrl, pa
    *  the initial mount effect and the manual "Retry connection" button
    *  that appears after the pipeline's 3-attempt auto reconnect gives up. */
   const startPipeline = useCallback(async (): Promise<void> => {
+    // Fold the soon-to-be-replaced pipeline's metrics into the accumulator
+    // so manual retries don't reset the cumulative quality numbers to zero.
+    const prev = pipelineRef.current;
+    if (prev) {
+      const m = prev.getQualityMetrics();
+      accumulatedMetricsRef.current.sampleChunksProcessed += m.sampleChunksProcessed;
+      accumulatedMetricsRef.current.reconnectCount += m.reconnectCount;
+    }
     // Stop + release whatever's lingering.
-    await pipelineRef.current?.stop();
+    await prev?.stop();
     pipelineRef.current = null;
     clinicianStreamRef.current?.getTracks().forEach((t) => t.stop());
     clinicianStreamRef.current = null;
@@ -127,6 +135,13 @@ export function TelehealthRoomShell({ noteId, scheduleId, sessionId, roomUrl, pa
         noiseSuppression: true,
       },
     });
+    // If the component unmounted while getUserMedia was pending, release the
+    // stream immediately — the cleanup function already ran and would otherwise
+    // leak the mic + WebSocket forever.
+    if (cancelledRef.current) {
+      stream.getTracks().forEach((t) => t.stop());
+      return;
+    }
     clinicianStreamRef.current = stream;
     const track = stream.getAudioTracks()[0];
     if (!track) throw new Error('Mic returned no audio track');
@@ -145,6 +160,14 @@ export function TelehealthRoomShell({ noteId, scheduleId, sessionId, roomUrl, pa
       clinicianTrack: track,
       patientTrack: null,
     });
+    if (cancelledRef.current) {
+      await pipeline.stop();
+      pipelineRef.current = null;
+      stream.getTracks().forEach((t) => t.stop());
+      clinicianStreamRef.current = null;
+      clinicianTrackRef.current = null;
+      return;
+    }
     startedAtMsRef.current ??= Date.now();
     setMuted(false);
     setStage('live');
@@ -161,11 +184,14 @@ export function TelehealthRoomShell({ noteId, scheduleId, sessionId, roomUrl, pa
     } catch {
       // sessionStorage may be unavailable in restricted contexts; silently skip.
     }
+    cancelledRef.current = false;
     void startPipeline().catch((e: unknown) => {
+      if (cancelledRef.current) return;
       setError(e instanceof Error ? e.message : String(e));
       setStage('error');
     });
     return () => {
+      cancelledRef.current = true;
       const pipeline = pipelineRef.current;
       const stream = clinicianStreamRef.current;
       pipelineRef.current = null;
