@@ -61,9 +61,9 @@ export function RowActions({ userId, email, isActive }: Props) {
       });
       if (!res.ok) {
         const body = await res.json().catch(() => null);
-        if (body?.error?.code === 'invalid_admin_mfa') setError('Your MFA code was rejected.');
+        if (body?.error?.code === 'invalid_admin_mfa') setError('Your authenticator code was rejected.');
         else if (body?.error?.code === 'reason_too_short') setError('Reason must be at least 10 characters.');
-        else setError('Could not reset MFA.');
+        else setError('Could not reset authenticator.');
         return;
       }
       close();
@@ -110,7 +110,7 @@ export function RowActions({ userId, email, isActive }: Props) {
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          <DropdownMenuItem onClick={() => setOpen('reset-mfa')}>Reset MFA</DropdownMenuItem>
+          <DropdownMenuItem onClick={() => setOpen('reset-mfa')}>Reset authenticator</DropdownMenuItem>
           <DropdownMenuItem onClick={() => setOpen('send-reset')}>Send password reset</DropdownMenuItem>
           <DropdownMenuSeparator />
           {isActive ? (
@@ -124,7 +124,7 @@ export function RowActions({ userId, email, isActive }: Props) {
       <AlertDialog open={open === 'reset-mfa'} onOpenChange={(o) => !o && close()}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Reset MFA for {email}?</AlertDialogTitle>
+            <AlertDialogTitle>Reset authenticator for {email}?</AlertDialogTitle>
             <AlertDialogDescription>
               They&apos;ll be required to re-enroll their authenticator on next sign-in. Their active
               sessions are invalidated immediately. This action is audited.
@@ -136,7 +136,7 @@ export function RowActions({ userId, email, isActive }: Props) {
               <Textarea id="reason" value={reason} onChange={(e) => setReason(e.target.value)} rows={3} disabled={pending} />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="adminToken">Your current MFA code</Label>
+              <Label htmlFor="adminToken">Your current authenticator code</Label>
               <Input id="adminToken" inputMode="numeric" value={adminToken} onChange={(e) => setAdminToken(e.target.value)} disabled={pending} />
             </div>
             {error && <StatusBanner variant="danger">{error}</StatusBanner>}
@@ -144,7 +144,7 @@ export function RowActions({ userId, email, isActive }: Props) {
           <AlertDialogFooter>
             <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={resetMfa} disabled={pending || reason.length < 10 || adminToken.length !== 6}>
-              {pending ? 'Resetting…' : 'Reset MFA'}
+              {pending ? 'Resetting…' : 'Reset authenticator'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

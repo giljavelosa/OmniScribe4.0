@@ -4,7 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { auth } from '@/lib/auth';
 import { MfaSetupWizard } from './_components/mfa-setup-wizard';
 
-export const metadata: Metadata = { title: 'Set up MFA' };
+export const metadata: Metadata = { title: 'Set up authenticator' };
 export const dynamic = 'force-dynamic';
 
 export default async function MfaSetupPage() {
@@ -18,9 +18,9 @@ export default async function MfaSetupPage() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Set up MFA</CardTitle>
+        <CardTitle>Set up authenticator</CardTitle>
         <CardDescription>
-          MFA is required for every OmniScribe account. Takes about a minute.
+          An authenticator is required for every OmniScribe account. Takes about a minute.
         </CardDescription>
       </CardHeader>
       <CardContent>

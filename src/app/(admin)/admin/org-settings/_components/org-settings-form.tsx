@@ -168,7 +168,7 @@ export function OrgSettingsForm({ initial }: Props) {
       <div className="rounded-md border border-border p-3 space-y-3">
         <div className="flex items-start justify-between gap-3">
           <div className="space-y-1">
-            <Label htmlFor="force-mfa">Force MFA at sign-in</Label>
+            <Label htmlFor="force-mfa">Require authenticator at sign-in</Label>
             <p className="text-xs text-muted-foreground">
               Already enforced by D2 (every user enrolls on first sign-in). Toggle here for
               future-proofing — if D2 is ever relaxed, this flag becomes the per-org gate.

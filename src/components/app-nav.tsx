@@ -74,7 +74,7 @@ export function AppNav({ email, role, platformRole, currentSection }: AppNavProp
   if (isAdmin) {
     consoleItems.push({
       href: '/admin/users',
-      label: 'Admin',
+      label: 'Administration',
       Icon: ShieldCheck,
       section: '/admin',
     });

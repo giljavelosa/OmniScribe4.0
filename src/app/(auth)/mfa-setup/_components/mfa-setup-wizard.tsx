@@ -29,14 +29,14 @@ export function MfaSetupWizard() {
     (async () => {
       const res = await fetch('/api/auth/mfa/setup/begin', { method: 'POST' });
       if (!res.ok) {
-        if (!cancelled) setError('Could not start MFA enrollment.');
+        if (!cancelled) setError('Could not start authenticator setup.');
         return;
       }
       const json = await res.json();
       const secret = json?.data?.secret as string | undefined;
       const uri = json?.data?.uri as string | undefined;
       if (!secret || !uri) {
-        if (!cancelled) setError('Malformed MFA setup response.');
+        if (!cancelled) setError('Malformed authenticator setup response.');
         return;
       }
       const dataUrl = await QRCode.toDataURL(uri, { margin: 1, width: 256 });
@@ -94,7 +94,7 @@ export function MfaSetupWizard() {
         </p>
         <div className="flex justify-center">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={qrDataUrl} alt="MFA QR code" className="rounded-md border border-border" />
+          <img src={qrDataUrl} alt="Authenticator QR code" className="rounded-md border border-border" />
         </div>
         <details className="text-xs text-muted-foreground">
           <summary className="cursor-pointer">Can&apos;t scan? Enter manually</summary>

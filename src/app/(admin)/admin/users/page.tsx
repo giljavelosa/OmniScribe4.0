@@ -39,7 +39,7 @@ export default async function AdminUsersPage() {
                 <th className="text-left px-4 py-2 font-medium">Email</th>
                 <th className="text-left px-4 py-2 font-medium">Role</th>
                 <th className="text-left px-4 py-2 font-medium">Division</th>
-                <th className="text-left px-4 py-2 font-medium">MFA</th>
+                <th className="text-left px-4 py-2 font-medium">Authenticator</th>
                 <th className="text-left px-4 py-2 font-medium">Status</th>
                 <th className="text-left px-4 py-2 font-medium">Seat</th>
                 <th className="px-4 py-2" />

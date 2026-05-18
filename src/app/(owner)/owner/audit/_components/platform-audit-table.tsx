@@ -112,11 +112,11 @@ export function PlatformAuditTable({
             <Input id="po-to" type="date" value={filter.to} onChange={(e) => setFilter({ ...filter, to: e.target.value })} disabled={loading} />
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">Org</Label>
+            <Label className="text-xs">Organization</Label>
             <Select value={filter.orgId || '__all__'} onValueChange={(v) => setFilter({ ...filter, orgId: v === '__all__' ? '' : v })}>
               <SelectTrigger disabled={loading}><SelectValue placeholder="(any)" /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="__all__">(any org)</SelectItem>
+                <SelectItem value="__all__">(any organization)</SelectItem>
                 {knownOrgs.map((o) => (
                   <SelectItem key={o.id} value={o.id}>{o.name}</SelectItem>
                 ))}
@@ -160,7 +160,7 @@ export function PlatformAuditTable({
             <thead>
               <tr className="border-b border-border bg-muted/30 text-[10px] uppercase tracking-wide text-muted-foreground">
                 <th className="text-left px-3 py-2 font-medium">When</th>
-                <th className="text-left px-3 py-2 font-medium">Org</th>
+                <th className="text-left px-3 py-2 font-medium">Organization</th>
                 <th className="text-left px-3 py-2 font-medium">Actor</th>
                 <th className="text-left px-3 py-2 font-medium">Action</th>
                 <th className="text-left px-3 py-2 font-medium">Resource</th>
