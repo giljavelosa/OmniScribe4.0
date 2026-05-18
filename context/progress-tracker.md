@@ -515,7 +515,7 @@ None.
 ## Next Up
 
 No more units. The 37-unit build plan is complete. Post-GA work lives outside this tracker:
-- Infra: CDK stacks for App Runner / ECS Fargate / RDS / ElastiCache / S3 / CloudFront / Secrets Manager
+- Infra: ~~CDK data plane (RDS Postgres 16 + ElastiCache Redis 7.1 + S3 audio bucket + Secrets Manager)~~ ✅ (PR #42 polish/cdk-infra-skeleton — `infra/` workspace with TS-based CDK v2 stack; per-env (`dev`/`staging`/`prod`) via context flag; deletion-protection + autoDeleteObjects driven by envName; placeholder secrets for Bedrock/Soniox/Resend); compute stack (App Runner vs ECS Fargate vs EKS), CloudFront + WAF, Bedrock IAM role, cross-region DR still TBD
 - Deployment automation: GitHub Actions → AWS pipeline
 - Monitoring: CloudWatch dashboards + alarms; per-org cost projections
 - Brand: 192/512 PWA icon PNGs; marketing surfaces beyond `/`

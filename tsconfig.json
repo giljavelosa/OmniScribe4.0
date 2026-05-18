@@ -46,6 +46,7 @@
     "src/generated/**",
     ".next",
     "dist",
-    "build"
+    "build",
+    "infra"
   ]
 }

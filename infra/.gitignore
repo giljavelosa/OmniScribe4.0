@@ -1,0 +1,15 @@
+# CDK
+cdk.out/
+*.d.ts
+*.js
+
+# Node
+node_modules/
+package-lock.json
+
+# IDE
+.idea/
+.vscode/
+
+# Mac
+.DS_Store
