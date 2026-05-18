@@ -4,11 +4,11 @@
 
 ## Current Phase
 
-- **Wave 2 — progressing.** Unit 13 shipped (PR #14 — branch `feat/unit-13-templates-editor-maturity`). Unit 12 shipped (PR #13). Unit 11 shipped (PR #12). Unit 10 shipped (PR #11). Wave 1 complete (PRs #6–#10). Wave 0 complete (PRs #1–#5). Wave 2 maturing the clinical surfaces: Unit 10 closed regenerate-flow trust gaps; Unit 11 filled in the Episode-of-Care lifecycle; Unit 12 redesigned `/patients/[id]`; Unit 13 ships the templates authoring surface (visibility UX, copy/clone with version history via clonedFromId chain, live section preview, sensitivityDefault picker, archive lifecycle).
+- **Wave 2 — COMPLETE.** Unit 14 shipped (PR #15 — branch `feat/unit-14-review-polish`). Unit 13 shipped (PR #14). Unit 12 shipped (PR #13). Unit 11 shipped (PR #12). Unit 10 shipped (PR #11). Wave 1 complete (PRs #6–#10). Wave 0 complete (PRs #1–#5). Wave 2 (Units 10–14) brings the clinical surfaces from "works" to "trusted daily": regenerate-flow trust gaps closed; Episode-of-Care lifecycle in; /patients/[id] redesigned with snapshot strip; templates authoring with version history; /review compliance-flag system (RED/BLUE/YELLOW/GREEN taxonomy) + per-section copy-to-clipboard for EHR-paste workflows.
 
 ## Current Goal
 
-- Await user confirmation before starting Unit 14 — Review screen polish (Wave 2's closing unit), per Prompt B's stop-between-units contract.
+- Await user confirmation before starting Unit 15 — Encounter copilot Watch v1 + first FHIR-backed card (Wave 3 opener), per Prompt B's stop-between-units contract.
 
 ## Completed
 
@@ -178,6 +178,17 @@
   - UI: `/admin/templates` two-section list (org's templates + read-only platform presets); CreateTemplateSheet seeds a single "Notes" section then routes to the editor; CloneTemplateButton (AlertDialog) on every row. `/admin/templates/[id]` two-column editor with header form + sections list (add / reorder / delete / required toggle / promptHint) + sticky LivePreview pane that renders the section list exactly as SectionAccordion would on /review. Archive AlertDialog at the bottom.
   - Admin nav grows: Users · Sites · Seats · Templates · Audit · Org settings.
 
+- **2026-05-17 — Unit 14: Review screen polish + AI compliance flags** (PR #15 — `feat(unit-14): review screen polish`).
+  - Spec at `context/specs/14-review-screen-polish.md`. Wave 2's closing unit.
+  - 5 new AuditAction values: FLAGS_ANALYZER_ENQUEUED, FLAGS_ANALYZED, FLAG_RESOLVED, FLAG_DISMISSED, SECTION_COPIED_TO_CLIPBOARD.
+  - Schema: new `ReviewFlagSeverity` enum (RED/BLUE/YELLOW/GREEN), `ReviewFlagStatus` enum (OPEN/RESOLVED/DISMISSED), and `ReviewFlag` model (per-section claim + rationale + evidence + suggestion + confidence + resolution fields). Cascades on Note delete. Three indexes: (noteId, status), (noteId, sectionId), (orgId, createdAt). Back-relation on Note.
+  - Flag analyzer: `src/lib/notes/build-flag-analyzer-prompt.ts` (3 absolute rules — only verifiable claims; severity taxonomy; every flag carries claim+rationale+evidence|null+suggestion?); `src/services/review/FlagAnalyzer.ts` (per-section Sonnet call, stub-mode safe); `src/workers/ai-generation/analyze-flags-handler.ts` (dispatch via existing ai-generation queue — rule 18; deletes prior OPEN flags for the (noteId, sectionId) on re-analyze; GREEN auto-resolves as AUTO_VERIFIED).
+  - APIs: `POST /api/notes/[id]/analyze-flags` (enqueue with requestId; refuses non-DRAFT/REVIEWING with 409), `GET /api/notes/[id]/flags` (full list ordered by status → severity → createdAt), `PATCH /api/notes/[id]/flags/[flagId]` (resolve/dismiss; 409 not_open for idempotency).
+  - UI: `<FlagReviewPanel>` above the section list. 3-column severity cards (RED/BLUE/YELLOW with OPEN counts) + GREEN auto-verified count below. Per-severity flag list with claim + rationale + evidence + suggestion + confidence chip + Accept-edit/Dismiss inline actions. Token colors throughout (rule 23). Read-only when isSigned.
+  - SectionAccordion polish: per-section Copy button in header (writes "Label\n====\nContent" to clipboard for EHR-paste; just-copied checkmark for 2s; fires SECTION_COPIED_TO_CLIPBOARD via the copilot-event allowlist with itemCount = char count). Chevron rotate gets 200ms duration class; outer container gets data-state attribute for future CSS keyframe hooks.
+  - copilot-event endpoint extended: SECTION_COPIED_TO_CLIPBOARD added to allowlist; itemCount cap raised from 1000 to 100_000 to accommodate section character counts.
+  - 113 tests pass; build clean; 3 new flag routes + analyzer worker dispatch ship.
+
 ## In Progress
 
 None.
@@ -186,7 +197,7 @@ None.
 
 In priority order:
 
-1. **Unit 14 — Review screen polish (Wave 2's closing unit)** — TipTap rich editor for sections (graduates from textarea), AI compliance-flag inline annotations on the review surface, status-changed audit at the review-screen sensitivity-tier-picker, sign-time co-sign workflow for sensitive overrides.
+1. **Unit 15 — Encounter copilot Watch v1 (Wave 3 opener)** — first FHIR-backed card, Watch panel layout polish, integration of brief snippets into in-visit surfaces, additional Watch cards (recent labs / med list / care gaps).
 8. **Unit 07 — Encounter Copilot Watch v0** ([`context/specs/07-encounter-copilot-watch-v0.md`](specs/07-encounter-copilot-watch-v0.md)) — beacon + open-follow-ups + plan-for-today cards.
 9. **Unit 08 — Admin & Compliance Ready** ([`context/specs/08-admin-and-compliance-ready.md`](specs/08-admin-and-compliance-ready.md)) — Sites + Rooms CRUD, admin-initiated MFA reset + password reset, customer self-onboarding wizard, BAA admin UI.
 
@@ -356,6 +367,18 @@ These need user/PM decision before the depending unit can ship. Quote the source
 - **2026-05-17 — LivePreview is text-only, not interactive.** The preview pane renders the section list with the same glyphs + required-asterisk that SectionAccordion uses on /review, but it's not editable + has no real content. Reasoning: making it interactive would either require duplicating SectionAccordion's state machine (complex) or mounting the real component with stub data (PHI-adjacent risk). Text-only preview is enough for the "see what the clinician will see" guarantee + keeps the editor surface simple.
 - **2026-05-17 — Section id uniqueness enforced at BOTH the API + client layer.** The Zod schema in the API blocks duplicate ids; the client-side SectionEditor's save handler also checks before POST. Two reasons: (a) the client check gives instant feedback (no 400 round trip); (b) the API check is the source of truth that prevents direct-API mistakes. Same belt-and-suspenders pattern used for the recert interval bounds (Unit 11).
 - **2026-05-17 — Cloning copies sectionSchema + promptHints but resets version to 1.** A clone is a NEW template, not a continuation of the source. The clonedFromId field preserves the lineage for audit + UI surfacing; the version counter starts fresh because clones diverge — a v3 clone is unrelated to whatever happens to the source's v5 next month. Mirrors git's branch semantics: the parent is recorded, but the commit history is independent.
+
+### Unit 14 (2026-05-17)
+
+- **2026-05-17 — Flag analyzer dispatches via the existing ai-generation queue with a new job type (rule 18 preserved).** No new BullMQ queue. The discriminator-on-data.type pattern mirrors how regenerate-section was added (Unit 05); the dispatch at the top of the existing handler delegates to `analyze-flags-handler.ts` BEFORE the heavy patient/episode load that generate-note/regenerate-section need. Clean separation; one queue, one worker fleet, one set of retry semantics.
+- **2026-05-17 — Per-section analysis, not whole-note.** Each section gets its own LLM call. Reasoning: (a) bounded context per call (large drafts + transcripts can blow Sonnet's input cap if concatenated); (b) section-level isolation — a parse failure on section A doesn't poison sibling sections; (c) the FlagReviewPanel surfaces flags per-section anyway, so the analyzer's per-section structure matches the surface.
+- **2026-05-17 — GREEN flags auto-resolve as AUTO_VERIFIED at insert time, never queued for review.** Spec called for "GREEN surfaces as resolved-count only." Inserting them with `status=RESOLVED + resolutionAction='AUTO_VERIFIED'` keeps the data model uniform (everything is a ReviewFlag) AND prevents accidental UI surfacing — the OPEN-flag filter excludes them automatically. The resolved count surfaces below the severity cards as positive trust signal ("N claims verified against transcript").
+- **2026-05-17 — Re-analyze deletes prior OPEN flags for the (noteId, sectionId).** Prevents stale OPEN flags from accumulating across multiple analyze runs. RESOLVED + DISMISSED rows preserved for audit. The trade-off: a clinician's mid-resolve work on an OPEN flag could be lost if they re-analyze before finishing — acceptable because re-analyze is an explicit user action and the dismiss/resolve flow is fast.
+- **2026-05-17 — Three RED-tier action verbs: Accept-edit / Dismiss-keep / Regenerate-section.** Mirrors the design mockup's verb set. Accept-edit means "I'll apply the suggestion manually in the section text"; Dismiss-keep means "I read the flag and stand by the current text"; Regenerate-section is reserved for a future enhancement (would re-run ai-generation for the section with flag context injected — not implemented in v1; the user clicks the existing Regenerate button on the section instead).
+- **2026-05-17 — Stub-mode Bedrock returns { flags: [] } not synthesized flags.** Unlike the brief generator (which synthesizes a minimal valid brief in stub mode), the flag analyzer returns no flags. Reasoning: synthesizing fake flags risks the clinician trusting them and approving / dismissing claims that aren't real. Empty stub-mode result is honest — the analyzer works end-to-end, just emits nothing without a real Bedrock account.
+- **2026-05-17 — Copy-to-clipboard fires SECTION_COPIED_TO_CLIPBOARD via the copilot-event endpoint with itemCount = char count.** PHI-free at the audit layer (content never leaves the client beyond the clipboard write). The cap raise (1000 → 100_000) accommodates real section sizes; the prior cap was sized for "items in a list" not "characters in a section."
+- **2026-05-17 — Accordion animation polish ships data-state + transition-duration classes only — no CSS keyframes.** The simplest cross-browser solution that works inside Tailwind v4 without custom @keyframes. Future polish (CSS-only height animation for collapse/expand) can hook the data-state attribute when the design asks for it.
+- **2026-05-17 — Wave 2 COMPLETE.** Units 10–14 close the clinical-surface trust gaps. /review now has: SSE reconnect indicator (10), section regenerate with diff (10), failure-recovery banner (10), per-section observability (10), inline goal progression on the patient panel (11), snapshot strip + override-wins on /patients/[id] (12), templates authoring with version history (13), and AI compliance flags with severity-grouped review (14). The clinical surfaces are no longer "works" — they're "trusted daily."
 
 ### Pre-existing (foundational, from spec)
 
