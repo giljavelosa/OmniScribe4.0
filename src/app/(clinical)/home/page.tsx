@@ -133,10 +133,13 @@ export default async function HomePage() {
               hint="Search, filter, manage"
             />
             <QuickActionLink
+              // Lands on the patient list — the "New patient" button is
+              // visible at the top of that page. Hint reflects the actual
+              // destination so the label + hint stop contradicting each other.
               href="/patients"
               Icon={UserPlus}
-              label="Create patient"
-              hint="Open patient list"
+              label="Add patient"
+              hint="Open list + tap New"
             />
             {isAdmin && (
               <>

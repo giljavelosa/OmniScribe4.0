@@ -1,4 +1,7 @@
+'use client';
+
 import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import type { OrgRole, PlatformRole } from '@prisma/client';
 import {
   LayoutDashboard,
@@ -52,6 +55,10 @@ type NavItem = {
 };
 
 export function AppNav({ email, role, platformRole, currentSection }: AppNavProps) {
+  // Derive the active section from the current pathname when the layout
+  // doesn't pass one explicitly — without this, no link ever highlights.
+  const pathname = usePathname();
+  const derivedSection = currentSection ?? deriveSection(pathname);
   const isAdmin = role && ADMIN_ROLES.includes(role);
   const isOwner = platformRole === 'PLATFORM_OWNER';
   const isOps = platformRole === 'PLATFORM_OPS' || isOwner;
@@ -95,7 +102,7 @@ export function AppNav({ email, role, platformRole, currentSection }: AppNavProp
       className="flex items-center gap-1 flex-wrap"
     >
       {clinicalItems.map((item) => (
-        <NavLink key={item.href} {...item} active={currentSection === item.section} />
+        <NavLink key={item.href} {...item} active={derivedSection === item.section} />
       ))}
       {consoleItems.length > 0 && (
         <>
@@ -106,7 +113,7 @@ export function AppNav({ email, role, platformRole, currentSection }: AppNavProp
             <NavLink
               key={item.href}
               {...item}
-              active={currentSection === item.section}
+              active={derivedSection === item.section}
             />
           ))}
         </>
@@ -116,6 +123,14 @@ export function AppNav({ email, role, platformRole, currentSection }: AppNavProp
       </span>
     </nav>
   );
+}
+
+/** Pull the top-level segment (e.g. '/admin', '/patients', '/home') from
+ *  the current pathname so the matching nav link highlights. */
+function deriveSection(pathname: string | null): string | undefined {
+  if (!pathname) return undefined;
+  const first = pathname.split('/').filter(Boolean)[0];
+  return first ? `/${first}` : undefined;
 }
 
 function NavLink({
