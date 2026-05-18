@@ -143,7 +143,7 @@ export async function POST(req: Request) {
     metadata: {
       subscriptionId: result.subscription.subscriptionId,
       status: result.subscription.status,
-      seatCount: newTotal,
+      seatCount: result.newTotal,
       tier: parsed.data.tier,
       stub: result.subscription.stub,
     },
