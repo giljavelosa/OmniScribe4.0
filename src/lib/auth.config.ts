@@ -6,6 +6,11 @@ import { prisma } from '@/lib/prisma';
 import { writeAuditLog } from '@/lib/audit/log';
 import { PlatformRole } from '@prisma/client';
 import { readActiveImpersonation, type ImpersonationContext } from '@/lib/impersonation';
+import {
+  evaluateLockState,
+  recordFailedAttempt,
+  recordSuccessfulAttempt,
+} from '@/lib/auth/lockout';
 
 const credentialsSchema = z.object({
   email: z.email().transform((s) => s.toLowerCase()),
@@ -56,8 +61,36 @@ export const authConfig = {
         });
         if (!user) return null;
 
+        // Unit 37 — account lockout. Refuse logins during the lock
+        // window REGARDLESS of password correctness so an attacker
+        // pinging the account doesn't see timing artifacts. The
+        // signed-in event below still fires on real success after
+        // expiry; the audit row distinguishes.
+        const lockState = evaluateLockState(user);
+        if (lockState.state === 'locked') {
+          await writeAuditLog({
+            userId: user.id,
+            action: 'USER_SIGNED_IN_FAILED',
+            metadata: {
+              reason: 'locked',
+              lockedUntil: lockState.lockedUntil.toISOString(),
+            },
+          });
+          return null;
+        }
+
         const valid = await bcrypt.compare(password, user.passwordHash);
-        if (!valid) return null;
+        if (!valid) {
+          // Unit 37 — increment failed-attempt counter; lock + audit
+          // USER_LOCKED if this attempt crosses the threshold. Always
+          // return null (no enumeration of valid vs locked).
+          await recordFailedAttempt(user.id);
+          return null;
+        }
+
+        // Successful auth — clear counter; emit USER_UNLOCKED if the
+        // user WAS locked (lockedUntil set but past).
+        await recordSuccessfulAttempt(user.id, user.lockedUntil);
 
         const orgUser = user.orgUsers[0] ?? null;
 
