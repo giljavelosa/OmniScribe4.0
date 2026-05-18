@@ -60,7 +60,26 @@ export default async function HomePage() {
       },
       orderBy: { scheduledStart: 'asc' },
       include: {
-        patient: { select: { id: true, firstName: true, lastName: true, mrn: true } },
+        patient: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            mrn: true,
+            // Active episodes for the start-visit picker so the
+            // SchedulingCard can open the dialog without a second fetch.
+            episodes: {
+              where: { status: { in: ['ACTIVE', 'RECERT_DUE'] } },
+              select: {
+                id: true,
+                diagnosis: true,
+                bodyPart: true,
+                division: true,
+                visitsCompleted: true,
+              },
+            },
+          },
+        },
         encounter: {
           select: {
             id: true,
@@ -205,6 +224,20 @@ export default async function HomePage() {
                   status: s.status,
                   hasEncounter: !!s.encounter,
                   encounterNoteId: s.encounter?.notes[0]?.id ?? null,
+                  scheduleEpisodeOfCareId: s.episodeOfCareId,
+                  activeEpisodes: s.patient.episodes.map((ep) => ({
+                    id: ep.id,
+                    diagnosis: ep.diagnosis,
+                    bodyPart: ep.bodyPart,
+                    division: ep.division,
+                    // Visit count + last-visit-at are extra DB hops per episode;
+                    // for the home-screen picker we ship visit-count only
+                    // (cheap, already on the episode row) and skip last-visit
+                    // to keep the home page fast. The dialog renders cleanly
+                    // with lastVisitAt=null.
+                    lastVisitAt: null,
+                    visitCount: ep.visitsCompleted,
+                  })),
                 }}
               />
             ))

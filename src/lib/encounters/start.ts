@@ -14,6 +14,28 @@ import { resolveDivisionForNote } from '@/lib/divisions/resolve';
 
 type Tx = Prisma.TransactionClient | PrismaClient;
 
+/**
+ * Where the episodeOfCareId decision came from. Audited inside
+ * ENCOUNTER_CREATED metadata so the auditor lens can quantify picker usage:
+ *   - 'picker'              — clinician chose from the multi-episode dialog
+ *   - 'auto-single'         — only one active episode existed; auto-linked
+ *                              (either inside startVisit when the caller
+ *                              didn't supply, or upstream when the picker
+ *                              short-circuited because length === 1)
+ *   - 'auto-none'           — no active episodes existed; no link
+ *   - 'manual-skip'         — clinician opened the picker and chose to skip
+ *   - 'inherited-schedule'  — schedule had episodeOfCareId pre-linked; the
+ *                              start-visit route passed it through
+ *   - 'unspecified'         — legacy caller; recorded so we can find them
+ */
+export type PickerSource =
+  | 'picker'
+  | 'auto-single'
+  | 'auto-none'
+  | 'manual-skip'
+  | 'inherited-schedule'
+  | 'unspecified';
+
 export type StartVisitArgs = {
   tx: Tx;
   orgId: string;
@@ -25,6 +47,7 @@ export type StartVisitArgs = {
   departmentId?: string | null;
   episodeOfCareId?: string | null;
   actingUserId: string;
+  pickerSource?: PickerSource;
 };
 
 export async function startVisit(args: StartVisitArgs) {
@@ -52,6 +75,9 @@ export async function startVisit(args: StartVisitArgs) {
   // We deliberately do NOT auto-link if multiple ACTIVE episodes exist —
   // multi-episode patients require explicit clinician choice.
   let episode: { id: string; division: typeof patient.division } | null = explicitEpisode;
+  // When startVisit auto-links because the caller didn't supply, mark the
+  // audit row so the picker-vs-fallback split stays observable.
+  let resolvedSource: PickerSource = args.pickerSource ?? 'unspecified';
   if (!episode && !args.episodeOfCareId) {
     const active = await args.tx.episodeOfCare.findMany({
       where: { patientId: args.patientId, status: 'ACTIVE' },
@@ -60,6 +86,9 @@ export async function startVisit(args: StartVisitArgs) {
     });
     if (active.length === 1) {
       episode = active[0]!;
+      if (resolvedSource === 'unspecified') resolvedSource = 'auto-single';
+    } else if (active.length === 0 && resolvedSource === 'unspecified') {
+      resolvedSource = 'auto-none';
     }
   }
 
@@ -114,7 +143,18 @@ export async function startVisit(args: StartVisitArgs) {
     action: 'ENCOUNTER_CREATED',
     resourceType: 'Encounter',
     resourceId: encounter.id,
-    metadata: { source: args.scheduleId ? 'schedule' : 'adhoc', division },
+    metadata: {
+      source: args.scheduleId ? 'schedule' : 'adhoc',
+      division,
+      hasEpisodeLink: !!encounterEpisodeId,
+      // Coerce explicit-link without picker context to 'picker' so the
+      // metadata is still readable; only the truly-legacy case stays
+      // 'unspecified'.
+      pickerSource:
+        resolvedSource === 'unspecified' && args.episodeOfCareId
+          ? 'picker'
+          : resolvedSource,
+    },
     tx: args.tx,
   });
 

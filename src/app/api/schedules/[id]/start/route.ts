@@ -1,12 +1,28 @@
 import { NextResponse } from 'next/server';
 import { Prisma } from '@prisma/client';
+import { z } from 'zod';
 
 import { prisma } from '@/lib/prisma';
 import { requireFeatureAccess } from '@/lib/authz/server';
 import { writeAuditLog } from '@/lib/audit/log';
-import { startVisit } from '@/lib/encounters/start';
+import { startVisit, type PickerSource } from '@/lib/encounters/start';
 
 export const runtime = 'nodejs';
+
+const bodySchema = z
+  .object({
+    /** Optional override — when the schedule has no pre-linked episode AND
+     * the patient has 2+ active episodes, the client picker asks the
+     * clinician to choose and POSTs the choice here. When omitted, the
+     * route falls back to schedule.episodeOfCareId (if present) or lets
+     * startVisit's auto-link behavior take over. */
+    episodeOfCareId: z.string().min(1).nullable().optional(),
+    /** Records where the episode choice originated. See PickerSource. */
+    pickerSource: z
+      .enum(['picker', 'auto-single', 'auto-none', 'manual-skip', 'inherited-schedule'])
+      .optional(),
+  })
+  .optional();
 
 /**
  * Transition a SCHEDULED schedule to IN_PROGRESS, create the Encounter, mint
@@ -19,10 +35,47 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const { user, authorizationUser } = guard;
 
   const { id } = await params;
+  // Body is optional — most start clicks have no body at all. We always try
+  // to parse so the route works whether the client sends JSON, an empty body,
+  // or no Content-Type header. Bad JSON → treated as no body. Bad SHAPE (the
+  // schema rejects) → 400.
+  let bodyParsed: { episodeOfCareId?: string | null; pickerSource?: PickerSource } = {};
+  const text = await req.text().catch(() => '');
+  if (text.length > 0) {
+    let raw: unknown;
+    try {
+      raw = JSON.parse(text);
+    } catch {
+      raw = undefined;
+    }
+    if (raw !== undefined) {
+      const parsed = bodySchema.safeParse(raw);
+      if (!parsed.success) {
+        return NextResponse.json({ error: { code: 'bad_request' } }, { status: 400 });
+      }
+      bodyParsed = parsed.data ?? {};
+    }
+  }
+
   const schedule = await prisma.schedule.findFirst({
     where: { id, orgId: authorizationUser.orgId },
   });
   if (!schedule) return NextResponse.json({ error: { code: 'not_found' } }, { status: 404 });
+
+  // Decide which episode the encounter should link to:
+  //   1. Explicit body param wins (clinician used the picker, or chose skip).
+  //   2. Else the schedule's pre-linked episode (set at scheduling time).
+  //   3. Else null — startVisit will auto-link if the patient has exactly 1
+  //      active episode.
+  let episodeOfCareIdToUse: string | undefined;
+  let pickerSource: PickerSource | undefined = bodyParsed.pickerSource;
+  if (Object.prototype.hasOwnProperty.call(bodyParsed, 'episodeOfCareId')) {
+    // Body explicitly set (including null = "skip").
+    episodeOfCareIdToUse = bodyParsed.episodeOfCareId ?? undefined;
+  } else if (schedule.episodeOfCareId) {
+    episodeOfCareIdToUse = schedule.episodeOfCareId;
+    pickerSource = pickerSource ?? 'inherited-schedule';
+  }
 
   // Run the idempotency check + visit creation in a single tx so two concurrent
   // requests cannot both pass the check and trip the Encounter.scheduleId unique
@@ -51,6 +104,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         roomId: schedule.roomId,
         scheduleId: schedule.id,
         actingUserId: user.id,
+        episodeOfCareId: episodeOfCareIdToUse,
+        pickerSource,
       });
       return { ...created, reused: false };
     });

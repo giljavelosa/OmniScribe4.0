@@ -5,6 +5,7 @@ import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { StatusBadge } from '@/components/ui/status-badge';
+import { StatusBanner } from '@/components/ui/status-banner';
 import { PatientIdentityHeader } from '@/components/patients/patient-identity-header';
 import { StartVisitButton } from './_components/start-visit-button';
 import { EpisodesPanel } from './_components/episodes-panel';
@@ -23,8 +24,16 @@ import type { FinalJsonShape } from '@/lib/notes/build-artifact-prompt';
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Patient' };
 
-export default async function PatientDetailPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function PatientDetailPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const { id } = await params;
+  const sp = await searchParams;
+  const episodeCreatedFlash = sp.episode_created === '1';
   const session = await auth();
   if (!session?.user?.orgId) return null;
 
@@ -118,6 +127,55 @@ export default async function PatientDetailPage({ params }: { params: Promise<{ 
       label: ep.bodyPart ? `${ep.diagnosis} (${ep.bodyPart})` : ep.diagnosis,
     }));
 
+  // Pull visit counts + last-visit-at per active episode so the start-visit
+  // picker can show "3 prior visits / last visit 12 days ago" without the
+  // client re-fetching. A signed note is the canonical "visit happened"
+  // anchor (mirrors VisitHistoryList). Simple single query → roll up
+  // in-memory (max 10s of episodes per patient — no real cost).
+  const activeEpsForStats = patient.episodes.filter(
+    (ep) => ep.status === 'ACTIVE' || ep.status === 'RECERT_DUE',
+  );
+  const orgId = session.user.orgId;
+  const activeEpisodesForPicker = await (async () => {
+    if (activeEpsForStats.length === 0) return [];
+    const epIds = activeEpsForStats.map((e) => e.id);
+    const signedNotes = await prisma.note.findMany({
+      where: {
+        patientId: patient.id,
+        orgId,
+        status: { in: ['SIGNED', 'TRANSFERRED'] },
+        encounter: { episodeOfCareId: { in: epIds } },
+      },
+      select: {
+        signedAt: true,
+        encounter: { select: { episodeOfCareId: true } },
+      },
+    });
+    const perEpisode = new Map<string, { count: number; lastVisitAt: Date | null }>();
+    for (const ep of activeEpsForStats) perEpisode.set(ep.id, { count: 0, lastVisitAt: null });
+    for (const n of signedNotes) {
+      const epId = n.encounter?.episodeOfCareId;
+      if (!epId) continue;
+      const acc = perEpisode.get(epId);
+      if (!acc) continue;
+      acc.count += 1;
+      if (n.signedAt && (!acc.lastVisitAt || n.signedAt > acc.lastVisitAt)) {
+        acc.lastVisitAt = n.signedAt;
+      }
+    }
+    return activeEpsForStats.map((ep) => {
+      const agg = perEpisode.get(ep.id) ?? { count: 0, lastVisitAt: null };
+      return {
+        id: ep.id,
+        diagnosis: ep.diagnosis,
+        bodyPart: ep.bodyPart,
+        division: ep.division,
+        lastVisitAt: agg.lastVisitAt?.toISOString() ?? null,
+        visitCount: agg.count,
+      };
+    });
+  })();
+
   const episodesForPanel = patient.episodes.map((ep) => ({
     id: ep.id,
     diagnosis: ep.diagnosis,
@@ -145,8 +203,14 @@ export default async function PatientDetailPage({ params }: { params: Promise<{ 
     <div className="mx-auto max-w-6xl px-4 py-6 space-y-6">
       <PatientIdentityHeader patient={patient} />
 
+      {episodeCreatedFlash && (
+        <StatusBanner variant="success">
+          Episode created — start visit again to link to it.
+        </StatusBanner>
+      )}
+
       <div className="flex justify-end">
-        <StartVisitButton patientId={patient.id} />
+        <StartVisitButton patientId={patient.id} activeEpisodes={activeEpisodesForPicker} />
       </div>
 
       {/* Snapshot strip — first visual after identity, full-width. */}
