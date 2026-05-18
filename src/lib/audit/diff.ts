@@ -59,3 +59,36 @@ export function changedFieldsForAudit<T extends Record<string, unknown>>(
 ): string[] {
   return Object.keys(diffForAudit(before, after, fields));
 }
+
+/**
+ * Unit 34 — single-field change shortcut.
+ *
+ * Returns a `{ field: { before, after } }` envelope suitable for nesting
+ * under `metadata.changes`. Use when the mutation only moves ONE field
+ * (status transitions, individual flag flips) so the audit metadata stays
+ * uniform with the `diffForAudit` output that other routes emit.
+ *
+ * Result is the inner map ONLY — the caller wraps it under `changes`:
+ *
+ *   metadata: {
+ *     changes: {
+ *       ...singleFieldChange('status', before.status, after.status),
+ *       ...singleFieldChange('recertDueAt', before.due, after.due),
+ *     },
+ *     otherMeta: ...,
+ *   }
+ *
+ * Skips the field entirely if before === after (deep-equal via
+ * JSON.stringify, same as diffForAudit), so the caller doesn't have to
+ * pre-check.
+ */
+export function singleFieldChange(
+  field: string,
+  before: unknown,
+  after: unknown,
+): Record<string, { before: unknown; after: unknown }> {
+  const beforeNorm = before instanceof Date ? before.toISOString() : before ?? null;
+  const afterNorm = after instanceof Date ? after.toISOString() : after ?? null;
+  if (JSON.stringify(beforeNorm) === JSON.stringify(afterNorm)) return {};
+  return { [field]: { before: beforeNorm, after: afterNorm } };
+}

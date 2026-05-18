@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireFeatureAccess } from '@/lib/authz/server';
 import { writeAuditLog } from '@/lib/audit/log';
+import { singleFieldChange } from '@/lib/audit/diff';
 import { assertOrgScoped } from '@/lib/phi-access';
 
 export const runtime = 'nodejs';
@@ -40,6 +41,10 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     data: { recertDueAt: nextDue, status: 'ACTIVE' },
   });
 
+  // Unit 34 — uniform `changes` shape so the audit table renderer can
+  // produce a readable before/after diff for any field that moved.
+  // Additional context fields (patientId, recertIntervalDays) ride
+  // alongside as plain metadata keys.
   await writeAuditLog({
     userId: user.id,
     orgId: authorizationUser.orgId,
@@ -47,10 +52,11 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     resourceType: 'EpisodeOfCare',
     resourceId: id,
     metadata: {
+      changes: {
+        ...singleFieldChange('status', episode.status, 'ACTIVE'),
+        ...singleFieldChange('recertDueAt', episode.recertDueAt, nextDue),
+      },
       patientId: episode.patientId,
-      previousStatus: episode.status,
-      previousDueAt: episode.recertDueAt?.toISOString() ?? null,
-      newDueAt: nextDue.toISOString(),
       recertIntervalDays: episode.recertIntervalDays,
     },
   });

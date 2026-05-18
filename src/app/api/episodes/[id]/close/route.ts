@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
 import { requireFeatureAccess } from '@/lib/authz/server';
 import { writeAuditLog } from '@/lib/audit/log';
+import { singleFieldChange } from '@/lib/audit/diff';
 import { assertOrgScoped } from '@/lib/phi-access';
 
 export const runtime = 'nodejs';
@@ -84,8 +85,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     resourceType: 'EpisodeOfCare',
     resourceId: id,
     metadata: {
+      // Unit 34 — uniform `changes` shape so the audit-table diff
+      // renderer surfaces the status transition consistently.
+      changes: {
+        ...singleFieldChange('status', episode.status, 'DISCHARGED'),
+      },
       patientId: episode.patientId,
-      previousStatus: episode.status,
       cascadedFollowupCount: result.cascadeCount,
       hasReason: !!parsed.data.reason,
     },
