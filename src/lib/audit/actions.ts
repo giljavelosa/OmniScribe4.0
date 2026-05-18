@@ -103,6 +103,11 @@ export type AuditAction =
   | 'COPILOT_CARD_DISMISSED'
   | 'COPILOT_BEACON_OPENED'
   | 'COPILOT_BEACON_CLOSED'
+  // ---- Unit 26: Watch v2 live trigger ----
+  // Fires once per cardType per capture session when a transcript mention
+  // raises rows in the card for the first time. itemCount = number of
+  // rows currently raised at first-fire moment.
+  | 'COPILOT_CARD_RAISED'
   // ---- Unit 08: Admin & Compliance Ready ----
   | 'SITE_CREATED'
   | 'SITE_UPDATED'
