@@ -19,8 +19,17 @@ const eslintConfig = [
     ],
   },
 
-  // Clinical + admin surfaces: no native confirm/alert (anti-regression rule 22)
-  // and no `text-[Npx]` (ui-context.md "no hardcoded type sizes in clinical/admin").
+  // Clinical + admin surfaces: no native confirm/alert (anti-regression rule 22).
+  // Covers bare `confirm(...)` / `alert(...)` AND `window.confirm(...)` /
+  // `globalThis.confirm(...)` (and the same for alert). A bare-identifier-only
+  // selector can be bypassed by prefixing with `window.`.
+  //
+  // NOTE: ui-context.md also forbids hardcoded type sizes like `text-[14px]` in
+  // clinical/admin surfaces, but that rule is NOT yet enforced here. Implementing
+  // it cleanly requires grandfathering existing intentional fine-print uses
+  // (`text-[10px]` / `text-[11px]` for metadata badges + table headers) — tracked
+  // as a follow-up. Do not add a `text-[Npx]` selector without that audit, or CI
+  // will block on pre-existing patterns.
   {
     files: ['src/app/(clinical)/**/*.{ts,tsx}', 'src/app/(admin)/**/*.{ts,tsx}'],
     rules: {
@@ -35,6 +44,18 @@ const eslintConfig = [
           selector: 'CallExpression[callee.name="alert"]',
           message:
             'No native alert() in clinical/admin surfaces — use <StatusBanner> or <AlertDialog>. (Anti-regression rule 22.)',
+        },
+        {
+          selector:
+            'CallExpression[callee.type="MemberExpression"][callee.object.name=/^(window|globalThis)$/][callee.property.name="confirm"]',
+          message:
+            'No window.confirm() / globalThis.confirm() in clinical/admin surfaces — use <AlertDialog>. (Anti-regression rule 22.)',
+        },
+        {
+          selector:
+            'CallExpression[callee.type="MemberExpression"][callee.object.name=/^(window|globalThis)$/][callee.property.name="alert"]',
+          message:
+            'No window.alert() / globalThis.alert() in clinical/admin surfaces — use <StatusBanner> or <AlertDialog>. (Anti-regression rule 22.)',
         },
       ],
     },
