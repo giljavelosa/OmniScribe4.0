@@ -36,6 +36,11 @@ enum OrgRole {
 
 enum PlatformRole {
   PLATFORM_OWNER
+  /// Unit 33 — operations engineer. Read-only operational visibility:
+  /// dashboards, health, queue depths, cross-org audit search. Cannot
+  /// provision orgs, edit BAA, change subscription, or impersonate.
+  /// Owner is a strict superset of OPS.
+  PLATFORM_OPS
   NONE
 }
 

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 
-import { requirePlatformOwner } from '@/lib/authz/platform';
+import { requirePlatformStaff } from '@/lib/authz/platform';
 import { writePlatformAuditLog } from '@/lib/audit/log';
 import { runAllHealthChecks } from '@/services/health/checks';
 
@@ -10,10 +10,15 @@ export const runtime = 'nodejs';
  * GET /api/owner/health — runs every provider/service check in parallel
  * with a 5s per-check timeout. Returns `{ checks: [...] }` PHI-free.
  *
- * Audited as PLATFORM_HEALTH_CHECKED with the counts of ok/stub/failed.
+ * Unit 33: gate migrated from requirePlatformOwner → requirePlatformStaff
+ * so PLATFORM_OPS can call the same endpoint. URL kept under /api/owner
+ * for backward compatibility (existing /owner/health page calls it);
+ * the new /ops/health UI calls the same endpoint. Audit action stays
+ * PLATFORM_HEALTH_CHECKED so the auditor sees one row type regardless
+ * of which role triggered the check.
  */
 export async function GET() {
-  const guard = await requirePlatformOwner();
+  const guard = await requirePlatformStaff();
   if ('error' in guard) return guard.error;
   const { user: actor } = guard;
 
