@@ -1,23 +1,32 @@
 import type { Metadata } from 'next';
+import { redirect } from 'next/navigation';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { auth } from '@/lib/auth';
+import { postSigninRedirect } from '@/lib/post-signin-redirect';
+import { LoginForm } from './_components/login-form';
 
 export const metadata: Metadata = { title: 'Sign in' };
+export const dynamic = 'force-dynamic';
 
-export default function LoginPage() {
+export default async function LoginPage() {
+  const session = await auth();
+  if (session?.user) {
+    redirect(
+      postSigninRedirect({
+        mfaEnabled: session.user.mfaEnabled,
+        mfaVerified: session.user.mfaVerified,
+      }),
+    );
+  }
+
   return (
     <Card>
       <CardHeader>
         <CardTitle>Sign in</CardTitle>
-        <CardDescription>
-          The real sign-in form lands in Unit 01 (Foundation Auth &amp; Tenancy).
-        </CardDescription>
+        <CardDescription>Use your OmniScribe credentials to continue.</CardDescription>
       </CardHeader>
       <CardContent>
-        <p className="text-sm text-muted-foreground">
-          This placeholder confirms that fonts, OKLCH tokens, layout groups, and shadcn primitives
-          are wired correctly. Once Unit 01 ships, this screen accepts email + password and routes
-          MFA-enabled users through <code>/mfa-challenge</code>.
-        </p>
+        <LoginForm />
       </CardContent>
     </Card>
   );
