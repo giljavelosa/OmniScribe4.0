@@ -66,6 +66,55 @@ export type FollowUpPreview = z.infer<typeof FollowUpPreviewSchema>;
  * generatorVersion + openFollowUps (we derive open follow-ups from the DB,
  * not the LLM) before writing to NoteBrief.
  */
+/**
+ * EHR-enrichment block (Unit 22 / F4). Optional — present only when the
+ * brief generator received an `<external_ehr_context>` block in its input.
+ * Each entry carries the fhirResourceId so F5's provenance UI can render
+ * "from <ehrSystem>, fetched at <ts>" pills without re-querying.
+ */
+export const BriefEhrEnrichmentSchema = z.object({
+  activeConditions: z
+    .array(
+      z.object({
+        display: z.string().min(1),
+        code: z.string().nullable(),
+        onsetDate: z.string().nullable(),
+        fhirResourceId: z.string().min(1),
+      }),
+    )
+    .optional(),
+  currentMedications: z
+    .array(
+      z.object({
+        display: z.string().min(1),
+        status: z.string().min(1),
+        fhirResourceId: z.string().min(1),
+      }),
+    )
+    .optional(),
+  allergies: z
+    .array(
+      z.object({
+        display: z.string().min(1),
+        criticality: z.string().nullable(),
+        fhirResourceId: z.string().min(1),
+      }),
+    )
+    .optional(),
+  recentObservations: z
+    .array(
+      z.object({
+        display: z.string().min(1),
+        value: z.string().min(1),
+        unit: z.string().nullable(),
+        effectiveDate: z.string().nullable(),
+        fhirResourceId: z.string().min(1),
+      }),
+    )
+    .optional(),
+});
+export type BriefEhrEnrichment = z.infer<typeof BriefEhrEnrichmentSchema>;
+
 export const BriefLLMOutputSchema = z.object({
   patientOneLine: z.string().nullable(),
   episodeContext: z
@@ -105,6 +154,7 @@ export const BriefLLMOutputSchema = z.object({
     redFlagsFromPriorNote: z.array(z.string()),
   }),
   sourceNoteIds: z.array(z.string().min(1)).min(1),
+  ehrEnrichment: BriefEhrEnrichmentSchema.optional(),
 });
 export type BriefLLMOutput = z.infer<typeof BriefLLMOutputSchema>;
 
