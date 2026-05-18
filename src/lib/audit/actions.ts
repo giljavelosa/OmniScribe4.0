@@ -207,4 +207,8 @@ export type AuditAction =
   // aggregates.
   | 'FHIR_SYNC_TRIGGERED'
   | 'FHIR_SYNC_COMPLETED'
-  | 'FHIR_RESOURCE_CACHED';
+  | 'FHIR_RESOURCE_CACHED'
+  // ---- Unit 23: FHIR / Provenance UI (Wave 4 / F5) ----
+  // Fired once per drawer-open from the BriefCard's EhrSourcePill.
+  // PHI-free — the resource id is an EHR-side identifier.
+  | 'FHIR_RESOURCE_VIEWED';
