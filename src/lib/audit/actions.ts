@@ -140,6 +140,13 @@ export type AuditAction =
   | 'COPILOT_DRAFT_PROPOSED'
   | 'COPILOT_DRAFT_CONFIRMED'
   | 'COPILOT_DRAFT_DISCARDED'
+  // ---- Unit 31: Clinical reasoning chains ----
+  // One row per "think" step the agent emitted between tool calls or
+  // before the final answer. Bounded by MAX_THINK_STEPS so volume is
+  // capped per ask. PHI-fenced: metadata is stepIndex + summaryLength
+  // — the summary itself is NEVER logged (the model is instructed to
+  // exclude PHI but the audit layer enforces it via metadata shape).
+  | 'COPILOT_REASONING_STEP'
   // ---- Unit 08: Admin & Compliance Ready ----
   | 'SITE_CREATED'
   | 'SITE_UPDATED'

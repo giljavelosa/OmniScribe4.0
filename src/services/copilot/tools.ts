@@ -11,6 +11,11 @@ import type {
   SimplifiedMedicationStatement,
   SimplifiedObservation,
 } from '@/services/fhir/adapters';
+import {
+  runDraftPatientMessage,
+  runProposeFollowUpCadence,
+  runSuggestReferralLetterContent,
+} from './draft-tools';
 
 /**
  * Ask-mode tools — Unit 27.
@@ -38,7 +43,13 @@ export type AskToolName =
   | 'lookupFhirMedication'
   | 'lookupFhirObservation'
   | 'lookupFhirAllergy'
-  | 'lookupFhirCarePlan';
+  | 'lookupFhirCarePlan'
+  // Unit 30 — Action tools (drafts). Chart-mode only; each runs a
+  // sub-LLM call to produce a draft the clinician reviews + accepts /
+  // edits / discards. NO autonomous effects.
+  | 'draftPatientMessage'
+  | 'proposeFollowUpCadence'
+  | 'suggestReferralLetterContent';
 
 export type AskSource = {
   /** 'fhir' added in Unit 28; 'literature' added in Unit 29 — kind
@@ -47,6 +58,28 @@ export type AskSource = {
   kind: 'note' | 'follow-up' | 'goal' | 'patient' | 'fhir' | 'literature';
   id: string;
   label: string;
+};
+
+/**
+ * Unit 30 — Draft type union. Produced by the 3 action tools; rides
+ * alongside the assistant message in the chat surface as a DraftCard
+ * with Accept / Edit / Discard. No autonomous side effects — confirm
+ * + discard are explicit clinician actions auditied separately from
+ * the agent's PROPOSED audit.
+ */
+export type DraftKind = 'patient-message' | 'followup-cadence' | 'referral-letter';
+
+export type Draft = {
+  /** Client-generated UUID-ish, stable across edits within a session. */
+  draftId: string;
+  kind: DraftKind;
+  /** Editable text — the clinician's final-version-after-edits is what
+   *  the confirm endpoint persists / copies. */
+  content: string;
+  /** Kind-specific structured fields the DraftCard renders alongside
+   *  the editable text. PHI-fenced at the audit layer (metadata never
+   *  includes meta contents). */
+  meta: Record<string, unknown>;
 };
 
 // =====================================================================
@@ -96,6 +129,26 @@ const lookupFhirAllergyArgs = z.object({
 
 const lookupFhirCarePlanArgs = z.object({
   patientId: z.string().min(1).max(64),
+});
+
+// Unit 30 — draft tool arg schemas. All chart-mode; topic/specialty/
+// reason/basis are model-supplied free-text that gets piped into the
+// sub-LLM prompt.
+
+const draftPatientMessageArgs = z.object({
+  patientId: z.string().min(1).max(64),
+  topic: z.string().min(1).max(200),
+});
+
+const proposeFollowUpCadenceArgs = z.object({
+  patientId: z.string().min(1).max(64),
+  basis: z.string().min(1).max(200),
+});
+
+const suggestReferralLetterContentArgs = z.object({
+  patientId: z.string().min(1).max(64),
+  specialty: z.string().min(1).max(80),
+  reason: z.string().min(1).max(200),
 });
 
 // =====================================================================
@@ -425,6 +478,23 @@ export async function runTool(
         }));
         chargeFhirBudget(ctx, carePlans.length);
         return { ok: true, rowCount: carePlans.length, data: { carePlans } };
+      }
+
+      // ===== Unit 30 — Draft tools (chart-mode only) =================
+
+      case 'draftPatientMessage': {
+        const args = draftPatientMessageArgs.parse(argsRaw);
+        return runDraftPatientMessage(args, { orgId: ctx.orgId });
+      }
+
+      case 'proposeFollowUpCadence': {
+        const args = proposeFollowUpCadenceArgs.parse(argsRaw);
+        return runProposeFollowUpCadence(args, { orgId: ctx.orgId });
+      }
+
+      case 'suggestReferralLetterContent': {
+        const args = suggestReferralLetterContentArgs.parse(argsRaw);
+        return runSuggestReferralLetterContent(args, { orgId: ctx.orgId });
       }
 
       default:

@@ -4,11 +4,11 @@
 
 ## Current Phase
 
-- **Wave 5 Research mode shipped — Unit 29.** PR #30 (branch `feat/unit-29-research-mode`, stacked on `feat/unit-28-ask-fhir-tools`). CopilotShell Sheet gains Chart / Research tabs. Each tab owns its own state + endpoint + tool set; switching preserves both conversations within a single Sheet-open session. Research mode is patient-agnostic (system prompt + endpoint both omit patientId); cross-mode tool calls return `wrong_mode_tool` (fail-closed against blended sources). 2 stub-mode research tools (`searchPMC`, `searchAttestedLiterature`); new `'literature'` source kind with PMC ids linking to ncbi.nlm.nih.gov.
+- **Wave 5 Action tools shipped — Unit 30.** PR #31 (branch `feat/unit-30-action-tools-drafts`, stacked on `feat/unit-29-research-mode`). Chart-mode agent gains 3 action tools that PRODUCE DRAFTS: `draftPatientMessage`, `proposeFollowUpCadence`, `suggestReferralLetterContent`. Each runs a focused Haiku sub-LLM call with a per-type system prompt. **NO autonomous effects** — drafts render as DraftCards beneath the assistant bubble with Accept / Edit / Discard buttons. Accept dispatches by kind (patient-message/letter → clipboard write; cadence → server-side FollowUp row creation). 3 new audit actions (PROPOSED, CONFIRMED, DISCARDED) split the agent's suggestion from the clinician's decision — auditor can quantify acceptance rate.
 
 ## Current Goal
 
-- Await user confirmation before starting Unit 30 — Wave 5 Action tools (drafts). Add `draftPatientMessage`, `proposeFollowUpCadence`, `suggestReferralLetterContent`. Always require explicit clinician initiation + confirmation; never autonomous; audit on draft + confirm separately. Per Prompt B's stop-between-units contract.
+- Await user confirmation before starting Unit 31 — Wave 5 Clinical reasoning chains (closes Wave 5). Multi-step agentic reasoning within Rule 20 + Rule 23 bounds; copilot shows chain of thought; clinician can pause/redirect; never makes a clinical recommendation in card form. Per Prompt B's stop-between-units contract.
 
 ## Completed
 
@@ -400,6 +400,20 @@
   - `CopilotShell` Sheet body wrapped in Tabs (Chart default + Research). Each tab preserves state independently within a single Sheet-open session.
   - 250 tests pass (was 247); build/lint/typecheck clean. 3 new agent tests cover: chart tool in research mode → wrong_mode_tool, research tool in chart mode → wrong_mode_tool, research tool in research mode → literature source in answer.
 
+- **2026-05-17 — Unit 30: Action tools — drafts** (PR #31 — `feat(unit-30): action tools drafts`).
+  - Spec at `context/specs/30-action-tools-drafts.md`. Wave 5 Phase 55.
+  - 3 new AuditAction values: `COPILOT_DRAFT_PROPOSED` (per agent tool call), `COPILOT_DRAFT_CONFIRMED` (clinician accept), `COPILOT_DRAFT_DISCARDED` (clinician reject). PHI-fenced — metadata is kind + contentLength + sideEffect + actionTaken + wasEdited; NEVER the draft text.
+  - Locked decisions: 3 chart-mode tools (`draftPatientMessage`, `proposeFollowUpCadence`, `suggestReferralLetterContent`); each runs a focused Haiku sub-LLM call with per-type system prompt (warm 6th-grade for patient message, short JSON cadence object, professional 3-paragraph letter); NO autonomous effects; clinician confirms via DraftCard with Accept / Edit / Discard; edit-before-confirm tracked via `wasEdited: boolean` audit metadata; side-effect dispatch by kind (message/letter → clipboard; cadence → FollowUp row creation).
+  - `src/services/copilot/draft-tools.ts` — 3 runner functions. `loadPatientContext` pulls demographics + most recent SIGNED note's Plan section (Rule 20 inline — drafts can't leak into the suggestion) + active episode goals. Sub-LLM call returns strict JSON; defensive parsing with `draft_parse_failed` fallback. Stub-mode synthesizes deterministic canned drafts per tool.
+  - `Draft` type union + `DRAFT_TOOL_NAMES` Set + `draftKindForTool` helper exported from `tools.ts`. 3 new tool name additions to `AskToolName`. Dispatcher routes via 3 new Zod arg schemas.
+  - `runAgent` extended with `drafts: Draft[]` on `AgentOutput`. Drafts accumulate in the loop as draft tools fire; all 3 return paths (stub, answer, max-iteration bail) carry through.
+  - `POST /api/copilot/ask` — response surfaces drafts. Writes one `COPILOT_DRAFT_PROPOSED` audit row per draft (draftId + kind + contentLength). `COPILOT_ASK_ANSWERED` metadata gains `draftCount`.
+  - `POST /api/copilot/draft-confirm` — NOTE_REVIEW-gated. Body: draftId + kind + content (final/edited) + wasEdited + sideEffect + optional patientId/noteId. sideEffect = 'followup-create' creates a FollowUp row via Prisma. Audit `COPILOT_DRAFT_CONFIRMED`.
+  - `POST /api/copilot/draft-discard` — NOTE_REVIEW-gated. Body: draftId + kind + optional reason. Audit `COPILOT_DRAFT_DISCARDED` with reasonLength only.
+  - `src/components/copilot/draft-card.tsx` — per-draft action card. Pending → confirmed | discarded | error state machine. Editable textarea with edit-flag tracking. Kind-specific meta line. Accept dispatch by sideEffect (clipboard write client-side then POST; or POST with patientId+noteId for followup-create). Terminal states gray out + show one-line confirmation.
+  - `AskSurface` — ChatMessage.drafts plumbed through. SourceKind union expanded to include 'fhir' + 'literature' (matches agent's full set). MessageBubble takes patientId + noteId props so DraftCards can supply them.
+  - 257 tests pass (was 250); build/lint/typecheck clean. 7 new draft-tool integration tests (real Postgres fixture + scriptedLlm covers happy path, stub mode, parse failure, patient_not_found, malformed intervals filter, referral receiver).
+
 ## In Progress
 
 None.
@@ -408,7 +422,7 @@ None.
 
 In priority order:
 
-1. **Unit 30 — Wave 5 Action tools (drafts)** ([`context/specs/00-build-plan.md`](specs/00-build-plan.md) Wave 5). Three draft-producing tools: `draftPatientMessage`, `proposeFollowUpCadence`, `suggestReferralLetterContent`. Always require explicit clinician initiation + confirmation; never autonomous. Audit on draft AND confirm separately so the auditor can see both the agent's suggestion and the clinician's accept/reject decision.
+1. **Unit 31 — Wave 5 closing: Clinical reasoning chains** ([`context/specs/00-build-plan.md`](specs/00-build-plan.md) Wave 5). Multi-step agentic reasoning within Rule 20 + Rule 23 bounds; copilot shows chain of thought; clinician can pause/redirect; never makes a clinical recommendation in card form. Closes Wave 5.
 
 Deferred polish (non-blocking; land in priority order):
 - Wave 3.5 — Daily SDK swap for patient audio track; TitaNet voice-ID on post-call review; schedule-list "Start telehealth" CTA.
@@ -605,6 +619,16 @@ These need user/PM decision before the depending unit can ship. Quote the source
 - **2026-05-17 — Copy-to-clipboard fires SECTION_COPIED_TO_CLIPBOARD via the copilot-event endpoint with itemCount = char count.** PHI-free at the audit layer (content never leaves the client beyond the clipboard write). The cap raise (1000 → 100_000) accommodates real section sizes; the prior cap was sized for "items in a list" not "characters in a section."
 - **2026-05-17 — Accordion animation polish ships data-state + transition-duration classes only — no CSS keyframes.** The simplest cross-browser solution that works inside Tailwind v4 without custom @keyframes. Future polish (CSS-only height animation for collapse/expand) can hook the data-state attribute when the design asks for it.
 - **2026-05-17 — Wave 2 COMPLETE.** Units 10–14 close the clinical-surface trust gaps. /review now has: SSE reconnect indicator (10), section regenerate with diff (10), failure-recovery banner (10), per-section observability (10), inline goal progression on the patient panel (11), snapshot strip + override-wins on /patients/[id] (12), templates authoring with version history (13), and AI compliance flags with severity-grouped review (14). The clinical surfaces are no longer "works" — they're "trusted daily."
+
+### Unit 30 (2026-05-17)
+
+- **2026-05-17 — Draft tools = sub-LLM call per type, NOT inline in the agent's main answer.** Could have made the model emit the draft in its `answer.text` + a `drafts` array. Decided against: separation of concerns. The agent decides WHEN to suggest a draft (chart-mode reasoning); the draft tool decides WHAT to write (per-type focused prompt with the right tone). Sub-LLM also gets a per-type system prompt (patient messages need warm 6th-grade reading level; referral letters need professional 3-paragraph structure) without crowding the agent's main system prompt with all three contracts.
+- **2026-05-17 — Rule 20 enforced INLINE in `loadPatientContext`.** Only SIGNED/TRANSFERRED notes feed into draft generation. A draft note's Plan section would never make it into a patient message even if the model hallucinates the noteId — the loader returns null. Belt-and-suspenders: the agent's chart-mode tool dispatch is already gated, but the draft tool's loader adds a second check.
+- **2026-05-17 — `wasEdited` boolean on COPILOT_DRAFT_CONFIRMED.** The auditor cares about a specific failure mode: model-drafted-and-clinician-rubber-stamped. `wasEdited` lets them quantify "how often does the clinician edit before accepting?" — high edit rate = trust calibrated; near-zero edit rate is a yellow flag (either the model is exceptional OR the clinician is over-trusting).
+- **2026-05-17 — Side-effect dispatch by KIND, not by client preference.** The client doesn't get to pick sideEffect: 'clipboard' for a cadence draft. The kind locks the side-effect (cadence → followup-create; message/letter → clipboard). Prevents the UI from accidentally creating FollowUp rows from a patient-message draft.
+- **2026-05-17 — PROPOSED + CONFIRMED/DISCARDED is TWO audit rows, not one with a state field.** Two rows means the auditor sees the agent's suggestion EVEN IF the clinician closes the Sheet without deciding (no CONFIRMED/DISCARDED row would fire). The "did the model suggest X but the clinician ignored it" pattern is observable. A single-row design with state-transitions would lose that signal.
+- **2026-05-17 — Drafts are per-runAgent-call ephemera, NOT persisted server-side.** The draft text lives in the chat surface (browser memory) until confirm/discard. No DraftRecord table. Reasoning: drafts are pre-decision; once decided, the relevant state is captured (clipboard write happened OR FollowUp row exists OR audit row recorded the discard). Persisting the draft itself would create a "what happens to abandoned drafts?" question we don't need to answer.
+- **2026-05-17 — Followup-cadence draft creates ONE FollowUp row per confirm.** The spec's `suggestedIntervals` shape can carry multiple intervals (e.g. "recheck in 30d, then 90d, then 180d"), but the server-side createFollowUp only ever creates one row per confirm. If a clinician wants three follow-ups, they confirm three times. Avoids the "did the clinician really mean to schedule 3 follow-ups in one click?" foot-gun.
 
 ### Unit 29 (2026-05-17)
 
