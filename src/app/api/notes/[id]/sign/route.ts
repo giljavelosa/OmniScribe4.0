@@ -117,10 +117,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     metadata: { context: 'sign-note' },
   });
 
-  // The transaction — THE ONLY place finalJson is written.
+  // The transaction — THE ONLY place finalJson is written. Mint `now` first
+  // and pass it into canonicalize so finalJson.signedAt == Note.signedAt
+  // (otherwise the two persisted artifacts of the same sign event differ).
   const draft = (note.draftJson as Record<string, { content: string; updatedAt: string }> | null) ?? {};
-  const finalCanonical = canonicalize(draft, sections);
   const now = new Date();
+  const finalCanonical = canonicalize(draft, sections, now);
 
   await prisma.$transaction(async (tx) => {
     await tx.note.update({
@@ -212,6 +214,7 @@ type FinalJson = {
 function canonicalize(
   draft: Record<string, { content: string; updatedAt: string }>,
   sections: NoteSectionDef[],
+  signedAt: Date,
 ): FinalJson {
   const finalSections: FinalSection[] = [];
   for (const s of sections) {
@@ -226,7 +229,7 @@ function canonicalize(
   }
   return {
     sections: finalSections,
-    signedAt: new Date().toISOString(),
+    signedAt: signedAt.toISOString(),
     schemaVersion: 1,
   };
 }
