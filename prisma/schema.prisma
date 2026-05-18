@@ -94,6 +94,11 @@ model Organization {
   subscriptionPlan          SubscriptionPlan @default(STARTER)
   subscriptionOverrideNotes String? // ≤500 chars enforced at the route
 
+<<<<<<< HEAD
+=======
+<<<<<<< HEAD
+=======
+>>>>>>> e759d2a (docs(unit-35): spec + LlmCallLog/OrgLlmCostDaily schema + LLM_BUDGET_UPDATED)
   /// Unit 34 — Per-org audit retention in days. null = retain forever
   /// (default for legacy/existing orgs); ≥30 triggers
   /// `purgeAuditForOrg` to delete AuditLog rows older than N days
@@ -102,6 +107,16 @@ model Organization {
   /// validates 30 ≤ N ≤ 3650 (10 years).
   auditRetentionDays Int?
 
+<<<<<<< HEAD
+=======
+  /// Unit 35 — Per-org monthly LLM budget in USD. null = no threshold
+  /// (warning never shown). Owner-only settable via
+  /// /api/owner/orgs/[id]/llm-budget. Decimal(10,2) supports up to
+  /// $99,999,999.99 per month.
+  monthlyLlmBudgetUsd Decimal? @db.Decimal(10, 2)
+
+>>>>>>> b4181b6 (docs(unit-35): spec + LlmCallLog/OrgLlmCostDaily schema + LLM_BUDGET_UPDATED)
+>>>>>>> e759d2a (docs(unit-35): spec + LlmCallLog/OrgLlmCostDaily schema + LLM_BUDGET_UPDATED)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -120,6 +135,8 @@ model Organization {
   fhirIdentities     FhirIdentity[]
   ehrConnections     OrgEhrConnection[]
   usageDaily         OrgUsageDaily[]
+  llmCalls           LlmCallLog[]
+  llmCostDaily       OrgLlmCostDaily[]
 
   @@index([baaExecutedAt])
   @@index([subscriptionPlan])
@@ -154,6 +171,50 @@ model OrgUsageDaily {
   draftsAccepted        Int          @default(0)
   computedAt            DateTime
   computedAtSourceCount Int          @default(0)
+
+  @@unique([orgId, day])
+  @@index([orgId, day])
+}
+
+/// Unit 35 — Per-call LLM usage log. One row per LLM generate call
+/// when the caller passes a `meter` option. PHI-free by construction
+/// — columns are model id + token counts + cost + caller-supplied
+/// surface tag. NEVER stores prompts or responses.
+///
+/// `costUsd` is computed AT THE TIME of the call and stored, NOT
+/// recomputed on read. Matches accounting reality + insulates the
+/// rollup from future MODEL_PRICING edits.
+model LlmCallLog {
+  id        String       @id @default(cuid())
+  orgId     String
+  organization Organization @relation(fields: [orgId], references: [id])
+  noteId    String?      // optional — anchor to a Note when applicable
+  surface   String       // 'copilot.ask', 'worker.brief', etc.
+  model     String       // Bedrock model id (cross-region prefix included)
+  tokensIn  Int
+  tokensOut Int
+  costUsd   Decimal      @db.Decimal(12, 4)
+  latencyMs Int
+  stub      Boolean      @default(false)
+  createdAt DateTime     @default(now())
+
+  @@index([orgId, createdAt])
+  @@index([surface])
+}
+
+/// Unit 35 — Per-org per-day LLM cost rollup cache. Mirrors
+/// OrgUsageDaily; 60-minute freshness window; recomputed on-demand
+/// from LlmCallLog when stale.
+model OrgLlmCostDaily {
+  id             String       @id @default(cuid())
+  orgId          String
+  organization   Organization @relation(fields: [orgId], references: [id])
+  day            DateTime     // midnight UTC
+  totalTokensIn  Int          @default(0)
+  totalTokensOut Int          @default(0)
+  totalCostUsd   Decimal      @default(0) @db.Decimal(12, 4)
+  callCount      Int          @default(0)
+  computedAt     DateTime
 
   @@unique([orgId, day])
   @@index([orgId, day])
