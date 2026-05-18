@@ -176,6 +176,10 @@ const HydratedMedicationSchema = z.object({
   status: z.string().min(1),
   fhirResourceId: z.string().min(1),
   fetchedAt: z.string().min(1),
+  // The FHIR resource type — needed so the drawer lookup uses the right
+  // (ehrSystem, resourceType, fhirResourceId) tuple. currentMedications can
+  // contain entries from both MedicationStatement and MedicationRequest.
+  sourceType: z.enum(['MedicationStatement', 'MedicationRequest']).optional(),
 });
 const HydratedAllergySchema = z.object({
   display: z.string().min(1),

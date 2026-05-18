@@ -25,11 +25,17 @@ export function hydrateEhrEnrichment(
   if (!llmEnrichment || !context) return undefined;
 
   const conditionFetched = byFhirId(context.activeConditions);
-  const medFetched = byFhirId([
-    ...context.currentMedications,
-    // No need to merge with anything else — currentMedications already
-    // pools MedicationStatement + MedicationRequest in Unit 22's projection.
-  ]);
+  // Medication map carries both fetchedAt and sourceType so the BriefCard
+  // drawer queries the right (ehrSystem, resourceType, fhirResourceId) tuple
+  // — currentMedications can contain MedicationStatement OR MedicationRequest
+  // entries (Unit 22 pools both).
+  const medMeta = new Map<string, { fetchedAt: string; sourceType?: 'MedicationStatement' | 'MedicationRequest' }>();
+  for (const m of context.currentMedications) {
+    medMeta.set(m.provenance.fhirResourceId, {
+      fetchedAt: m.provenance.fetchedAt,
+      sourceType: m.sourceType,
+    });
+  }
   const allergyFetched = byFhirId(context.allergies);
   const obsFetched = byFhirId(context.recentObservations);
 
@@ -49,14 +55,15 @@ export function hydrateEhrEnrichment(
   });
 
   const currentMedications = llmEnrichment.currentMedications?.flatMap((m) => {
-    const at = medFetched.get(m.fhirResourceId);
-    return at
+    const meta = medMeta.get(m.fhirResourceId);
+    return meta
       ? [
           {
             display: m.display,
             status: m.status,
             fhirResourceId: m.fhirResourceId,
-            fetchedAt: at,
+            fetchedAt: meta.fetchedAt,
+            ...(meta.sourceType ? { sourceType: meta.sourceType } : {}),
           },
         ]
       : [];

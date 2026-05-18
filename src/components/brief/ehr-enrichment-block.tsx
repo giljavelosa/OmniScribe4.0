@@ -83,7 +83,10 @@ export function EhrEnrichmentBlock({
                 pill={
                   <EhrSourcePill
                     ehrSystem={ehrSystem}
-                    resourceType="MedicationStatement"
+                    // Use the per-entry sourceType so MedicationRequest-sourced
+                    // meds resolve via the right composite-unique key (was
+                    // hardcoded MedicationStatement → 404 on MR entries).
+                    resourceType={m.sourceType ?? 'MedicationStatement'}
                     fhirResourceId={m.fhirResourceId}
                     fetchedAt={m.fetchedAt}
                     nowMs={nowMs}
