@@ -11,6 +11,7 @@ import { EpisodesPanel } from './_components/episodes-panel';
 import { PatientSnapshotStrip } from '@/components/patients/snapshot-strip';
 import { VisitHistoryList } from '@/components/patients/visit-history-list';
 import { InlineDemographics } from '@/components/patients/inline-demographics';
+import { EhrLinkPanel } from '@/components/fhir/ehr-link-panel';
 import { buildSnapshotStrip } from '@/lib/snapshots/build-snapshot-strip';
 import { deriveAssessmentSnippet } from '@/lib/notes/note-text';
 import type { FinalJsonShape } from '@/lib/notes/build-artifact-prompt';
@@ -128,6 +129,16 @@ export default async function PatientDetailPage({ params }: { params: Promise<{ 
               phone: patient.phone,
               email: patient.email,
               preferredLanguage: patient.preferredLanguage,
+            }}
+          />
+
+          <EhrLinkPanel
+            patientId={patient.id}
+            patient={{
+              firstName: patient.firstName,
+              lastName: patient.lastName,
+              mrn: patient.mrn,
+              dobIso: patient.dob.toISOString(),
             }}
           />
         </div>
