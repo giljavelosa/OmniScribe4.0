@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
 import { requireFeatureAccess } from '@/lib/authz/server';
 import { writeAuditLog } from '@/lib/audit/log';
+import { isValidPersonName } from '@/lib/patient/name-validator';
 import { Division, PatientSex, PatientAddressKind, PatientCoverageStatus } from '@prisma/client';
 
 export const runtime = 'nodejs';
@@ -11,8 +12,14 @@ export const runtime = 'nodejs';
 const PAGE_SIZE = 20;
 
 const createSchema = z.object({
-  firstName: z.string().min(1),
-  lastName: z.string().min(1),
+  firstName: z
+    .string()
+    .min(1)
+    .refine(isValidPersonName, { message: 'invalid characters in first name' }),
+  lastName: z
+    .string()
+    .min(1)
+    .refine(isValidPersonName, { message: 'invalid characters in last name' }),
   mrn: z.string().min(1),
   dob: z.string().min(1),
   sex: z.enum(PatientSex),
