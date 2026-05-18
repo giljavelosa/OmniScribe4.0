@@ -7,6 +7,7 @@ import { StatusBadge } from '@/components/ui/status-badge';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { MatchDialogTrigger } from './match-dialog';
+import { SyncStatus } from './sync-status';
 import { UnlinkButton } from './unlink-button';
 
 const EHR_SYSTEM = 'nextgen';
@@ -87,7 +88,7 @@ export async function EhrLinkPanel({
             EHR link
           </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-2 text-sm">
+        <CardContent className="space-y-3 text-sm">
           <div className="flex items-center gap-2 flex-wrap">
             <StatusBadge variant="success" noIcon>Verified</StatusBadge>
             <StatusBadge variant="neutral" noIcon>{EHR_SYSTEM}</StatusBadge>
@@ -100,7 +101,10 @@ export async function EhrLinkPanel({
               Verified {new Date(primary.verifiedAt).toLocaleDateString()}
             </p>
           )}
-          <div className="pt-2">
+          <div className="border-t border-border pt-3">
+            <SyncStatus patientId={patientId} />
+          </div>
+          <div className="pt-1">
             <UnlinkButton patientId={patientId} fid={primary.id} ehrSystem={EHR_SYSTEM} />
           </div>
         </CardContent>

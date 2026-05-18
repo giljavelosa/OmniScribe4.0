@@ -4,11 +4,11 @@
 
 ## Current Phase
 
-- **Wave 4 / F2 shipped — Unit 20.** PR #21 (branch `feat/unit-20-fhir-patient-identity`, stacked on `feat/unit-19-fhir-smart-auth`). Bridges OmniScribe Patient ↔ EHR Patient resource so F3 (Unit 21) knows which FHIR identity to fetch resources against. Clinician confirms every link via the new EhrLinkPanel on /patients/[id]; the match confidence semantics (`'verified'` unlocks F3 reads; `'high'` and `'manual'` block them pending confirmation) are now locked in code + audit metadata. 4 new APIs (search + create + verify + remove) + 3 new client components + 4 new audit actions ship; existing PatientFhirIdentity schema unchanged.
+- **Wave 4 / F3 shipped — Unit 21.** PR #22 (branch `feat/unit-21-fhir-resource-sync`, stacked on `feat/unit-20-fhir-patient-identity`). Activates `FhirCachedResource` (schema-shipped Unit 19). 8 per-resource adapters (Patient + 7 clinical) map FHIR → simplified internal shapes; sync orchestrator pulls each type for a verified patient link with per-type failure isolation; cache writer upserts `{ raw, simplified }` together so F5's provenance UI has both views without re-fetching. Clinician-triggered "Sync EHR data" button on the verified EhrLinkPanel state + last-synced indicator + per-type count chips. On-demand only in v1; background BullMQ staleness sweeper is Wave 4.5 polish.
 
 ## Current Goal
 
-- Await user confirmation before starting Unit 21 — Wave 4 F3 (Resource sync worker + cache). Builds the BullMQ `fhir-sync` queue that fetches Patient, Condition, Medication, Observation, AllergyIntolerance, Procedure, DiagnosticReport, CarePlan, Goal resources against a 'verified' PatientFhirIdentity and populates `FhirCachedResource` (the schema that's been sitting dormant since Unit 19). Per Prompt B's stop-between-units contract.
+- Await user confirmation before starting Unit 22 — Wave 4 F4 (Brief generator FHIR integration). Extends the Unit 06 BriefBuilderInput with an optional `<external_ehr_context>` block; maps cached FHIR resources to brief fields (active conditions / medications / recent observations / allergies); per-field provenance (which FHIR resource, when fetched). Per Prompt B's stop-between-units contract.
 
 ## Completed
 
@@ -291,6 +291,18 @@
     - `UnlinkButton` (client) — AlertDialog (rule 22) → DELETE.
   - 166 tests pass (was 160); build/lint/typecheck clean. 4 new APIs + 3 new client components ship. PatientFhirIdentity table now has full CRUD; FhirCachedResource still dormant (F3 / Unit 21).
 
+- **2026-05-17 — Unit 21: FHIR / Resource sync + cache (Wave 4 / F3)** (PR #22 — `feat(unit-21): fhir resource sync + cache`).
+  - Spec at `context/specs/21-fhir-resource-sync.md`. Wave 4 F3. Activates `FhirCachedResource` (schema-shipped Unit 19).
+  - 3 new AuditAction values: FHIR_SYNC_TRIGGERED (clinician click), FHIR_SYNC_COMPLETED (with per-type summary), FHIR_RESOURCE_CACHED (per resource type with count > 0 — suppressed at 0 to keep audit volume sane). All PHI-free.
+  - Locked decisions: 8 resource types in v1 (Patient + 7 clinical — CarePlan + Goal are Wave 4.5); on-demand only (background staleness sweeper is Wave 4.5); 7-day staleness threshold; per-type fetch granularity capped at 50; pure-function adapters; both raw + simplified stored under `FhirCachedResource.resource` for F5 provenance; per-type failure isolation.
+  - `src/services/fhir/adapters.ts` — 8 per-resource adapter functions + dispatch. Patient (given+family+birthDate+gender+mrn), Condition (code+display+clinicalStatus+dates), MedicationStatement+Request, Observation (valueQuantity → valueString fallback), AllergyIntolerance (first category), Procedure (performedDateTime → performedPeriod.start fallback), DiagnosticReport (carries conclusion). `extractSensitivityLevel` maps 42 CFR Part 2 security codes to a coarse 'restricted' flag.
+  - `src/services/fhir/resource-fetcher.ts` — generic `GET /<Type>?patient=…&_count=50`. Patient resource fetched by `_id` since it IS the patient. Same token-refresh + URL-building pattern as patient-client. Stub-mode synthesizes 2-3 plausible entries per type (seeded off the patient's FHIR id so repeated dev syncs are stable).
+  - `src/services/fhir/sync.ts` — `syncPatientResources` orchestrator. Resolves verified PatientFhirIdentity (throws SyncPreconditionError('not_linked') if absent or unconfirmed); resolves clinician's FhirIdentity (throws 'ehr_not_connected'); audits FHIR_SYNC_TRIGGERED; per-type loop with failure isolation; cache writes store `{ raw, simplified }`; audits FHIR_SYNC_COMPLETED with per-type summary.
+  - `src/lib/fhir/staleness.ts` — pure 7-day threshold helper.
+  - `POST /api/patients/[id]/fhir-sync` — synchronous trigger; SyncPreconditionError → 412. `GET /api/patients/[id]/fhir-sync` — sync status block (lastSyncedAt + per-type counts + stale types). Pure read; no audit.
+  - `src/components/fhir/sync-status.tsx` — three visual modes (idle / pending / result); auto-refreshes on mount + after every successful sync; stale types in header with AlertTriangle. Slots into EhrLinkPanel's verified state above the Unlink button.
+  - 185 tests pass (was 166); build/lint/typecheck clean. 19 new tests: 14 adapter shape tests (each resource type + sensitivity + the type-set lock), 5 staleness threshold cases.
+
 ## In Progress
 
 None.
@@ -299,7 +311,13 @@ None.
 
 In priority order:
 
-1. **Unit 21 — Wave 4 F3: Resource sync worker + cache** ([`references/fhir-integration-spec.md`](../references/fhir-integration-spec.md) F3). `FhirCachedResource` activation (schema shipped Unit 19); BullMQ `fhir-sync` queue (rate-limited, dispatched via the existing ai-generation worker pattern per rule 18 — or its own fleet if scope justifies it); refresh policy (on-demand + 7d staleness); resource types: Patient, Condition, Medication, Observation, AllergyIntolerance, Procedure, DiagnosticReport, CarePlan, Goal. F3 only fetches against `matchConfidence === 'verified'` PatientFhirIdentity rows — Unit 20's gating contract.
+1. **Unit 22 — Wave 4 F4: Brief generator FHIR integration** ([`references/fhir-integration-spec.md`](../references/fhir-integration-spec.md) F4). Extend Unit 06's BriefBuilderInput with optional `<external_ehr_context>` block; map cached FHIR resources to brief fields (active conditions / current medications / recent observations / allergies); per-field provenance (which FHIR resource + when fetched). Use Unit 21's staleness helper to skip cache entries older than 7 days — better to surface no EHR context than stale EHR context.
+
+Wave 4.5 (deferred polish, can land alongside Wave 5):
+- Background BullMQ staleness sweeper for FhirCachedResource (currently on-demand only).
+- CarePlan + Goal adapters (not needed for brief v1).
+- Pagination beyond 50 entries per resource type.
+- Per-resource manual refresh (sync is whole-patient).
 
 Wave 3.5 (deferred polish, can land alongside Wave 4):
 - Daily.co SDK swap for the patient audio track (one-line change in the room shell + token-mint endpoint).
@@ -486,6 +504,17 @@ These need user/PM decision before the depending unit can ship. Quote the source
 - **2026-05-17 — Copy-to-clipboard fires SECTION_COPIED_TO_CLIPBOARD via the copilot-event endpoint with itemCount = char count.** PHI-free at the audit layer (content never leaves the client beyond the clipboard write). The cap raise (1000 → 100_000) accommodates real section sizes; the prior cap was sized for "items in a list" not "characters in a section."
 - **2026-05-17 — Accordion animation polish ships data-state + transition-duration classes only — no CSS keyframes.** The simplest cross-browser solution that works inside Tailwind v4 without custom @keyframes. Future polish (CSS-only height animation for collapse/expand) can hook the data-state attribute when the design asks for it.
 - **2026-05-17 — Wave 2 COMPLETE.** Units 10–14 close the clinical-surface trust gaps. /review now has: SSE reconnect indicator (10), section regenerate with diff (10), failure-recovery banner (10), per-section observability (10), inline goal progression on the patient panel (11), snapshot strip + override-wins on /patients/[id] (12), templates authoring with version history (13), and AI compliance flags with severity-grouped review (14). The clinical surfaces are no longer "works" — they're "trusted daily."
+
+### Unit 21 (2026-05-17)
+
+- **2026-05-17 — On-demand sync only in v1; background BullMQ staleness sweeper is Wave 4.5.** The on-demand path proves the data shape end-to-end (sync triggers → resources fetched → cache populated → SyncStatus reads back). A background sweeper without an explicit trigger first risks deploying a worker fleet that processes stale data the brief never reads. Once F4 reads from the cache + measures hit rate, the case for proactive refresh becomes concrete.
+- **2026-05-17 — Per-type failure isolation in the sync orchestrator.** One resource type's fetch failure (Observation server-side error, MedicationStatement schema mismatch) doesn't poison the others. SyncResult carries `perResourceType: { Type: { count, error } }` so partial success is the most common UX outcome — better than all-or-nothing. The SyncStatus surface shows green/red chips per type for fast triage.
+- **2026-05-17 — Store both raw + simplified under `FhirCachedResource.resource: { raw, simplified }`.** F4's brief reader uses `simplified`; F5's provenance UI shows `raw` so the auditor can see exactly what the EHR returned. Storing them together avoids a re-fetch when the clinician asks "what did NextGen actually say?" and removes the temptation to write a separate raw-cache table.
+- **2026-05-17 — Sync runs synchronously in the API route, not as a BullMQ job.** Typical wait is 2-10s real-mode + instant in stub. The clinician explicitly clicked the button — blocking on the result is the right UX (vs. an async "We'll let you know" pattern that adds polling complexity). When the resource set grows past ~20 types or pagination kicks in past 50 entries per type, an async path will pay off.
+- **2026-05-17 — Stub-mode synthesizes 2-3 plausible entries per resource type, seeded off the patient's FHIR id.** Same rationale as Unit 20's 3-candidate stub: gives the clinician something to work with end-to-end, deterministic across sessions, exercises the cache + brief paths. Seeded ids keep upsert behavior testable (second sync overwrites the same rows, not creates duplicates).
+- **2026-05-17 — `FHIR_RESOURCE_CACHED` audit is suppressed when count === 0.** Otherwise every empty resource type per sync would write an audit row (8 per sync × N syncs per day × M patients). Counts of 0 are visible in `FHIR_SYNC_COMPLETED.metadata.perResourceType` anyway — the per-type audit only fires for actual cache writes.
+- **2026-05-17 — Patient resource is fetched by `_id`, not by `patient` search param.** The Patient IS the patient. Tested manually against the FHIR Patient.search contract; missed this once in early draft.
+- **2026-05-17 — Sensitivity propagation is coarse 'restricted' flag, not full 42 CFR Part 2 axes.** Maps the common security codes (R/ETH/HIV/PSY/SDV/SUD/GDIS/TBOO/DEMO/N/PROD) to a single 'restricted' value on `FhirCachedResource.sensitivityLevel`. F5's provenance UI will surface this as a "Restricted source" badge; the granular axis breakdown (which subcategory triggered the flag) is downstream polish when there's a real compliance team to read it.
 
 ### Unit 20 (2026-05-17)
 
