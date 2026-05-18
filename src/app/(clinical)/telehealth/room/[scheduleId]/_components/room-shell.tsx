@@ -61,6 +61,9 @@ export function TelehealthRoomShell({ noteId, scheduleId, sessionId, roomUrl, pa
   const pipelineRef = useRef<TelehealthAudioPipeline | null>(null);
   const clinicianStreamRef = useRef<MediaStream | null>(null);
   const clinicianTrackRef = useRef<MediaStreamTrack | null>(null);
+  // Cache the encoded WAV so an end-call retry replays it instead of
+  // re-draining the (already-empty) pipeline buffer.
+  const encodedWavRef = useRef<Blob | null>(null);
 
   const handleTranscript = useCallback((seg: { text: string; isFinal: boolean; speaker: number | null }) => {
     if (seg.isFinal) {
@@ -170,15 +173,21 @@ export function TelehealthRoomShell({ noteId, scheduleId, sessionId, roomUrl, pa
 
       // 1. Stop pipeline first — closes WS, tears down audio, prevents
       //    new samples from being retained while we're encoding.
+      // stop() is idempotent so a retry after a complete-stream failure
+      // is safe.
       await pipeline.stop();
 
-      // 2. Encode retained samples to a WAV. Note: if the call ended
-      //    before any audio flowed (mic denied, immediate end-click),
-      //    the WAV is header-only (44 bytes) which is still a valid
-      //    submission — complete-stream's empty-blob check is
-      //    `size === 0`, and 44 > 0.
-      const chunks = pipeline.drainRetainedSamples();
-      const wav = encodeWavBlob(chunks, TELEHEALTH_AUDIO_SAMPLE_RATE);
+      // 2. Encode retained samples to a WAV. drainRetainedSamples destroys
+      //    the internal buffer on first call, so cache the encoded blob on
+      //    the ref and replay it on retry — otherwise a complete-stream
+      //    failure followed by a retry would submit a 44-byte header-only
+      //    WAV, silently losing the entire visit's recording.
+      let wav = encodedWavRef.current;
+      if (!wav) {
+        const chunks = pipeline.drainRetainedSamples();
+        wav = encodeWavBlob(chunks, TELEHEALTH_AUDIO_SAMPLE_RATE);
+        encodedWavRef.current = wav;
+      }
 
       // 3. Hand the audio + transcript to the existing post-recording
       //    pipeline (same endpoint the in-person flow uses). Flips Note
