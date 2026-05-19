@@ -183,6 +183,47 @@ export async function handle(job: Job<AiGenerationJob>) {
     metadata: { requestId, templateId: template.id, sectionCount: sections.length },
   });
 
+  // Rule 1 (ATTESTATION) guard: with an empty transcript the LLM has no source
+  // material, but the per-section prompt still says "REQUIRED — do not leave
+  // empty". Observed: BH Risk Assessment produced a confident SI/HI denial
+  // paragraph from zero audio. Short-circuit to a uniform placeholder per
+  // section so the model never gets the chance to invent content.
+  const transcriptClean = note.transcriptClean as TranscriptClean | null;
+  const hasUsableTranscript = !!transcriptClean && transcriptClean.wordCount > 0;
+  if (!hasUsableTranscript) {
+    const nowIso = new Date().toISOString();
+    for (const section of sections) {
+      await mergeSectionIntoDraft(
+        noteId,
+        section.id,
+        'No transcript captured for this encounter. This section cannot be drafted from source material. Re-record or paste a transcript, then regenerate this section.',
+      );
+      await markSectionStatus(noteId, section.id, {
+        status: 'populated',
+        lastGeneratedAt: nowIso,
+      });
+    }
+    await prisma.note.update({
+      where: { id: noteId },
+      data: { status: NoteStatus.DRAFT },
+    });
+    await writeAuditLog({
+      orgId,
+      action: 'NOTE_STATUS_TRANSITIONED',
+      resourceType: 'Note',
+      resourceId: noteId,
+      metadata: { from: 'DRAFTING', to: 'DRAFT', via: 'ai-generation-worker' },
+    });
+    await writeAuditLog({
+      orgId,
+      action: 'NOTE_GENERATION_COMPLETED',
+      resourceType: 'Note',
+      resourceId: noteId,
+      metadata: { sectionCount: sections.length, failedCount: 0, skipped: 'no_transcript' },
+    });
+    return { ok: true, sections: sections.length, failed: 0, skipped: 'no_transcript' };
+  }
+
   let failedCount = 0;
   for (const section of sections) {
     await markSectionStatus(noteId, section.id, {
