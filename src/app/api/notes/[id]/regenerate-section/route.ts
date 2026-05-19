@@ -28,7 +28,7 @@ const bodySchema = z.object({
  *
  * Refuses:
  *   - 404 if note not found / not in org
- *   - 403 if not the assigned clinician (or SUPER_ADMIN)
+ *   - 403 if not the assigned clinician (or ORG_ADMIN)
  *   - 409 note_signed (rule 3)
  *   - 409 section_already_generating (defense — section status already
  *     'generating'; the client should disable the button while in flight)
@@ -63,7 +63,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!note) return NextResponse.json({ error: { code: 'not_found' } }, { status: 404 });
   if (
     note.clinicianOrgUserId !== authorizationUser.orgUserId &&
-    authorizationUser.role !== 'SUPER_ADMIN'
+    authorizationUser.role !== 'ORG_ADMIN'
   ) {
     return NextResponse.json({ error: { code: 'forbidden' } }, { status: 403 });
   }

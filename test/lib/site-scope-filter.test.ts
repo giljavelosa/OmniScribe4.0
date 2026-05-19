@@ -39,7 +39,7 @@ function buildUsersWhere(scope: Awaited<ReturnType<typeof getClinicianSiteIds>>,
     ...(scope.scope === 'enrolled'
       ? {
           OR: [
-            { role: { in: ['SUPER_ADMIN', 'ORG_ADMIN'] } },
+            { role: { in: ['ORG_ADMIN'] } },
             { siteEnrollments: { some: { siteId: { in: scope.siteIds } } } },
           ],
         }
@@ -76,7 +76,7 @@ describe('SITE_ADMIN scope filtering', () => {
     expect(where).toEqual({
       orgId: 'org_1',
       OR: [
-        { role: { in: ['SUPER_ADMIN', 'ORG_ADMIN'] } },
+        { role: { in: ['ORG_ADMIN'] } },
         { siteEnrollments: { some: { siteId: { in: ['s1', 's2'] } } } },
       ],
     });

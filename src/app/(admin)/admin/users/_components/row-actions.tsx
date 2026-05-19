@@ -70,7 +70,7 @@ export function RowActions({
   );
 
   // ORG_ADMIN+ are always "all sites" — no enrollment UI needed.
-  const showSitesItem = role !== 'ORG_ADMIN' && role !== 'SUPER_ADMIN';
+  const showSitesItem = role !== 'ORG_ADMIN';
 
   function close() {
     setOpen(null);

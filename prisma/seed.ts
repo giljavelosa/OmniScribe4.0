@@ -1,6 +1,6 @@
 /**
  * Seed for local dev. Creates a single Demo Clinic org with 5 users covering
- * every role (SUPER_ADMIN, CLINICIAN, VIEWER, SITE_ADMIN, PLATFORM_OWNER),
+ * every role (ORG_ADMIN, CLINICIAN, VIEWER, SITE_ADMIN, PLATFORM_OWNER),
  * one site with two rooms, and 5 seats. All passwords hash to `Demo1234!`.
  *
  * D9 — admin@demo.local seeds with MFA pre-enrolled using the canonical otplib
@@ -117,7 +117,7 @@ async function main() {
     mfaEnabled: boolean;
     platformRole?: PlatformRole;
   }> = [
-    { email: 'admin@demo.local', role: OrgRole.SUPER_ADMIN, division: Division.MULTI, mfaEnabled: true },
+    { email: 'admin@demo.local', role: OrgRole.ORG_ADMIN, division: Division.MULTI, mfaEnabled: true },
     {
       email: 'clinician@demo.local',
       role: OrgRole.CLINICIAN,

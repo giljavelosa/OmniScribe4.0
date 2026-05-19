@@ -9,11 +9,23 @@ import { diffForAudit } from '@/lib/audit/diff';
 
 export const runtime = 'nodejs';
 
+/** Roles assignable via this endpoint. Mirrors INVITABLE_ROLES on
+ *  /api/admin/invites — ORG_ADMIN is intentionally excluded
+ *  so an invited VIEWER cannot be promoted to admin via PATCH (which would
+ *  defeat the invite-level whitelist). Those elevations only happen at
+ *  org-provisioning time. */
+const ASSIGNABLE_ROLES: OrgRole[] = [OrgRole.CLINICIAN, OrgRole.VIEWER, OrgRole.SITE_ADMIN];
+
 const patchSchema = z
   .object({
     isActive: z.boolean().optional(),
     canManagePatients: z.boolean().optional(),
-    role: z.enum(OrgRole).optional(),
+    role: z
+      .enum(OrgRole)
+      .refine((r) => ASSIGNABLE_ROLES.includes(r), {
+        message: 'Only Clinician, Non-clinician, and Site admin roles can be assigned.',
+      })
+      .optional(),
     division: z.enum(Division).optional(),
   })
   .refine((v) => Object.keys(v).length > 0, { message: 'no_fields' });

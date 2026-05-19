@@ -13,9 +13,17 @@ export const runtime = 'nodejs';
 
 const INVITE_TTL_DAYS = 7;
 
+/** Roles invitable via the team-members surface. ORG_ADMIN is intentionally
+ *  excluded — that role is assigned only at org-provisioning time (owner
+ *  console or public signup), never by invite. Platform-owner power lives on
+ *  `User.platformRole = PLATFORM_OWNER`, entirely separate from OrgRole. */
+const INVITABLE_ROLES: OrgRole[] = [OrgRole.CLINICIAN, OrgRole.VIEWER, OrgRole.SITE_ADMIN];
+
 const bodySchema = z.object({
   email: z.email().transform((s) => s.toLowerCase()),
-  role: z.enum(OrgRole),
+  role: z.enum(OrgRole).refine((r) => INVITABLE_ROLES.includes(r), {
+    message: 'Only Clinician, Non-clinician, and Site admin roles can be invited.',
+  }),
   division: z.enum(Division),
   profession: z.string().min(1).optional(),
   canManagePatients: z.boolean().optional(),

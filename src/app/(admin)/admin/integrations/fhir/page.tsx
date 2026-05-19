@@ -16,7 +16,7 @@ import { SupportedEhrsPanel } from './_components/supported-ehrs-panel';
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'EHR integrations' };
 
-const ADMIN_ROLES = new Set(['SUPER_ADMIN', 'ORG_ADMIN', 'SITE_ADMIN']);
+const ADMIN_ROLES = new Set(['ORG_ADMIN', 'SITE_ADMIN']);
 
 /**
  * /admin/integrations/fhir — F1 admin surface.

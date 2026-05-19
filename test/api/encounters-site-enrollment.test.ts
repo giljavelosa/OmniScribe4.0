@@ -5,7 +5,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  *
  * Mocks auth + prisma + startVisit so we can exercise the new
  * `site_not_enrolled` branch without hitting Postgres. Verifies the route
- * still allows SUPER_ADMIN to bypass (scope: 'all') and still falls back to
+ * still allows ORG_ADMIN to bypass (scope: 'all') and still falls back to
  * the clinician's single enrollment when no siteId hint is supplied.
  */
 
@@ -41,7 +41,7 @@ vi.mock('@/lib/audit/impersonation', () => ({
 import { POST } from '@/app/api/encounters/route';
 
 function session(
-  role: 'CLINICIAN' | 'ORG_ADMIN' | 'SITE_ADMIN' | 'SUPER_ADMIN',
+  role: 'CLINICIAN' | 'ORG_ADMIN' | 'SITE_ADMIN',
   overrides: Record<string, unknown> = {},
 ) {
   return {
@@ -102,22 +102,22 @@ describe('POST /api/encounters — multi-site enforcement', () => {
     expect(startVisitMock).not.toHaveBeenCalled();
   });
 
-  it('SUPER_ADMIN bypasses enrollment check (scope=all)', async () => {
-    // ORG_ADMIN doesn't have VISITS_CREATE in the feature matrix, so
-    // SUPER_ADMIN is the canonical "all-sites bypass" actor under the spec's
-    // "ORG_ADMIN+ bypass" rule.
-    mockAuth.mockResolvedValueOnce(session('SUPER_ADMIN'));
+  it('ORG_ADMIN bypasses enrollment check (scope=all)', async () => {
+    // ORG_ADMIN has full clinical features (absorbed from removed SUPER_ADMIN)
+    // and is the canonical "all-sites bypass" actor — site-scope helpers
+    // return scope='all' for ORG_ADMIN without OrgUserSite rows.
+    mockAuth.mockResolvedValueOnce(session('ORG_ADMIN'));
     orgUserFindUnique.mockResolvedValueOnce({
       id: 'ou_caller',
       orgId: 'org_1',
-      role: 'SUPER_ADMIN',
+      role: 'ORG_ADMIN',
       division: 'MULTI',
       isActive: true,
       canManagePatients: false,
       organization: { forceMfa: false },
     });
     patientFindFirst.mockResolvedValueOnce({ id: 'pat_1', siteId: 's_any' });
-    orgUserFindUnique.mockResolvedValueOnce({ role: 'SUPER_ADMIN', orgId: 'org_1' });
+    orgUserFindUnique.mockResolvedValueOnce({ role: 'ORG_ADMIN', orgId: 'org_1' });
     siteFindMany.mockResolvedValueOnce([{ id: 's_any' }, { id: 's_other' }]);
     txFn.mockImplementationOnce(async (cb: (tx: unknown) => Promise<unknown>) => cb({}));
     startVisitMock.mockResolvedValueOnce({ encounter: { id: 'enc_1' }, note: { id: 'note_1' } });

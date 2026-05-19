@@ -6,7 +6,7 @@ import { BrandWordmark } from '@/components/brand-wordmark';
 
 export const dynamic = 'force-dynamic';
 
-const ADMIN_ROLES = new Set(['SUPER_ADMIN', 'ORG_ADMIN', 'SITE_ADMIN']);
+const ADMIN_ROLES = new Set(['ORG_ADMIN', 'SITE_ADMIN']);
 
 export default async function AdminLayout({ children }: { children: ReactNode }) {
   const session = await auth();

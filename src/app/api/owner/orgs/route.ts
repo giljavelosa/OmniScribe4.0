@@ -61,7 +61,7 @@ export async function POST(req: Request) {
       data: {
         email: data.initialAdminEmail.toLowerCase(),
         orgId: org.id,
-        role: OrgRole.SUPER_ADMIN,
+        role: OrgRole.ORG_ADMIN,
         division: data.division === Division.MULTI ? Division.MEDICAL : data.division,
         token: inviteToken,
         expiresAt,

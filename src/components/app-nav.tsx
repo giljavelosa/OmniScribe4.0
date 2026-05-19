@@ -26,7 +26,7 @@ import { StatusBadge } from '@/components/ui/status-badge';
  *
  * Visibility matrix:
  *   - Clinical group (Home, Patients): every authenticated user
- *   - Admin link: SUPER_ADMIN, ORG_ADMIN, SITE_ADMIN
+ *   - Admin link: ORG_ADMIN, SITE_ADMIN
  *   - Owner link: PLATFORM_OWNER (platformRole)
  *   - Ops link: PLATFORM_OWNER OR PLATFORM_OPS (platformRole)
  *
@@ -38,7 +38,7 @@ import { StatusBadge } from '@/components/ui/status-badge';
  * so we don't rely on usePathname (which would force client boundary).
  */
 
-const ADMIN_ROLES: OrgRole[] = ['SUPER_ADMIN', 'ORG_ADMIN', 'SITE_ADMIN'];
+const ADMIN_ROLES: OrgRole[] = ['ORG_ADMIN', 'SITE_ADMIN'];
 
 export type AppNavProps = {
   email: string;

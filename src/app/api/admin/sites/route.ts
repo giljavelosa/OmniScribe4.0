@@ -18,7 +18,7 @@ const createSchema = z.object({
 
 /**
  * GET /api/admin/sites — list sites for the current org.
- * POST /api/admin/sites — create a site (ORG_ADMIN or SUPER_ADMIN).
+ * POST /api/admin/sites — create a site (ORG_ADMIN).
  *
  * Both gated by TEAM_MEMBERS_MANAGE (same posture as user-mgmt) — sites are
  * org structural data, not patient data, so the closest existing capability

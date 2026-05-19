@@ -55,7 +55,7 @@ export async function PATCH(
   if (!note) return NextResponse.json({ error: { code: 'not_found' } }, { status: 404 });
   if (
     note.clinicianOrgUserId !== authorizationUser.orgUserId &&
-    authorizationUser.role !== 'SUPER_ADMIN'
+    authorizationUser.role !== 'ORG_ADMIN'
   ) {
     return NextResponse.json({ error: { code: 'forbidden' } }, { status: 403 });
   }

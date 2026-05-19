@@ -3,23 +3,27 @@ import type { FeatureKey, AuthorizationUser } from './types';
 /**
  * canUseFeature — (OrgRole × FeatureKey) matrix.
  *
- * Conservative defaults:
- *  - SUPER_ADMIN gets everything
- *  - ORG_ADMIN gets everything except VOICE_ID (clinician-only) and the
- *    clinical NOTE_CREATE/EDIT/REVIEW/SIGN
- *  - SITE_ADMIN: team management, template library reads, voice-id, visits
- *  - CLINICIAN: notes lifecycle, transcript view, voice-id, visit creation
- *  - VIEWER: read-only (NOTE_REVIEW, TRANSCRIPT_VIEW, TEMPLATE_LIBRARY_READ)
+ * Role model:
+ *  - ORG_ADMIN — top org role. Absorbs every feature previously held by the
+ *    removed (consolidated into PlatformRole): full clinical lifecycle (NOTE_*,
+ *    VOICE_ID, VISITS_CREATE) AND admin features (billing, team members,
+ *    templates, template library, transcript view). Bypass authority for
+ *    reading any note in the org lives in route-level checks (`role !==
+ *    'ORG_ADMIN'`).
+ *  - SITE_ADMIN — team management within scope, template library reads,
+ *    voice-id, visit creation.
+ *  - CLINICIAN — notes lifecycle, transcript view, voice-id, visit creation.
+ *  - VIEWER — read-only (NOTE_REVIEW, TRANSCRIPT_VIEW, TEMPLATE_LIBRARY_READ).
+ *    Cannot record visits or edit notes (cross-checked by route gates).
  *
- * Some keys depend on per-user toggles — PATIENT_MANAGEMENT requires
- * `canManagePatients = true` regardless of role (except SUPER_ADMIN).
+ * PATIENT_MANAGEMENT is gated by the per-user `canManagePatients` toggle for
+ * non-VIEWER roles. ORG_ADMIN bypasses the toggle. VIEWER never gets it.
  *
- * Unit 13 (templates editor) refines TEMPLATE_LIBRARY_MANAGE; Unit 11
- * (episode of care maturity) may refine NOTE_SIGN. Document any refinement
- * here with a comment + commit reference.
+ * Platform-owner authority (cross-org, BAA, subscription, impersonation) is
+ * entirely separate and lives on `User.platformRole = PLATFORM_OWNER`.
  */
 const BASE_MATRIX: Record<string, ReadonlyArray<FeatureKey>> = {
-  SUPER_ADMIN: [
+  ORG_ADMIN: [
     'NOTE_CREATE',
     'NOTE_EDIT',
     'NOTE_REVIEW',
@@ -34,14 +38,6 @@ const BASE_MATRIX: Record<string, ReadonlyArray<FeatureKey>> = {
     'VISITS_CREATE',
     'TEMPLATE_LIBRARY_READ',
     'TEMPLATE_LIBRARY_MANAGE',
-  ],
-  ORG_ADMIN: [
-    'BILLING_MANAGE',
-    'TEAM_MEMBERS_MANAGE',
-    'TEMPLATE_MANAGEMENT',
-    'TEMPLATE_LIBRARY_READ',
-    'TEMPLATE_LIBRARY_MANAGE',
-    'TRANSCRIPT_VIEW',
   ],
   SITE_ADMIN: [
     'TEAM_MEMBERS_MANAGE',
@@ -64,14 +60,13 @@ const BASE_MATRIX: Record<string, ReadonlyArray<FeatureKey>> = {
 };
 
 export function canUseFeature(featureKey: FeatureKey, user: AuthorizationUser): boolean {
-  // PATIENT_MANAGEMENT is a special case: gated by the per-user
-  // `canManagePatients` toggle rather than the role's base matrix. The
-  // toggle exists precisely so non-SUPER_ADMIN roles (clinicians, site
-  // admins, org admins) can be granted patient-create rights selectively
-  // without expanding their full role permission set. SUPER_ADMIN bypasses
-  // the toggle entirely; VIEWER never gets it regardless.
+  // PATIENT_MANAGEMENT is gated by the per-user `canManagePatients` toggle
+  // rather than the role's base matrix. The toggle exists precisely so
+  // non-ORG_ADMIN roles (clinicians, site admins) can be granted patient-
+  // create rights selectively without expanding their full role permission
+  // set. ORG_ADMIN bypasses the toggle. VIEWER never gets it.
   if (featureKey === 'PATIENT_MANAGEMENT') {
-    if (user.role === 'SUPER_ADMIN') return true;
+    if (user.role === 'ORG_ADMIN') return true;
     if (user.role === 'VIEWER') return false;
     return user.canManagePatients;
   }
