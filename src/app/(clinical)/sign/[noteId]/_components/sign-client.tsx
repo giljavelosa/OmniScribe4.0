@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { KeyRound, ShieldCheck, Unlock } from 'lucide-react';
+import { KeyRound, Unlock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -102,23 +102,21 @@ export function SignClient({
           const res = await postSign({ sweepAcknowledged: false });
           return handleSignResponse(res);
         }
-        if (hasPin) {
-          if (!/^\d{4}$/.test(authValue)) {
-            setError('Enter your 4-digit signing PIN.');
-            return;
-          }
-          await unlockWithPin(authValue);
-          lastAuthValueRef.current = authValue;
-          const res = await postSign({ sweepAcknowledged: false });
-          return handleSignResponse(res);
-        }
-        // No PIN set — fall back to TOTP.
-        if (!/^\d{6}$/.test(authValue)) {
-          setError('Enter the 6-digit code from your authenticator.');
+        if (!hasPin) {
+          // Sign-time attestation now requires a signing PIN. No TOTP
+          // fallback — the user already passed TOTP at sign-in; re-prompting
+          // here was friction without security benefit. The PinSetupInline
+          // card renders below in this state to guide the user.
+          setError('Set up your signing PIN below to sign this note.');
           return;
         }
+        if (!/^\d{4}$/.test(authValue)) {
+          setError('Enter your 4-digit signing PIN.');
+          return;
+        }
+        await unlockWithPin(authValue);
         lastAuthValueRef.current = authValue;
-        const res = await postSign({ sweepAcknowledged: false, mfaToken: authValue });
+        const res = await postSign({ sweepAcknowledged: false });
         return handleSignResponse(res);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
@@ -151,10 +149,10 @@ export function SignClient({
     setSweepOpen(false);
     setSweepFollowUps([]);
     startTransition(async () => {
-      const res = await postSign({
-        sweepAcknowledged: true,
-        mfaToken: !isUnlocked && !hasPin ? lastAuthValueRef.current : undefined,
-      });
+      // TOTP fallback removed — by the time we reach the sweep dialog,
+      // the user has either an active unlock window OR has entered a PIN
+      // (we unlock-then-sign earlier). The server checks unlock state.
+      const res = await postSign({ sweepAcknowledged: true });
       await handleSignResponse(res);
     });
   }
@@ -214,8 +212,8 @@ export function SignClient({
               </>
             ) : (
               <>
-                <ShieldCheck className="size-4" aria-hidden />
-                Attest + sign — enter authenticator code
+                <KeyRound className="size-4" aria-hidden />
+                Attest + sign — set up signing PIN first
               </>
             )}
           </CardTitle>
@@ -255,25 +253,10 @@ export function SignClient({
             </div>
           )}
           {!isUnlocked && !hasPin && (
-            <div className="space-y-2">
-              <Label htmlFor="sign-mfa">6-digit authenticator code</Label>
-              <Input
-                id="sign-mfa"
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                maxLength={6}
-                value={authValue}
-                onChange={(e) => setAuthValue(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                disabled={pending}
-              />
-              <button
-                type="button"
-                className="text-xs underline text-muted-foreground hover:text-foreground"
-                onClick={() => setShowPinSetup(true)}
-              >
-                Set up a 4-digit signing PIN so you don&apos;t have to type the authenticator code each time
-              </button>
-            </div>
+            <p className="text-sm text-muted-foreground">
+              You haven&apos;t set up a signing PIN yet. Set one in the card below to sign
+              this note (and every future note) without re-entering your authenticator code.
+            </p>
           )}
           {isUnlocked && (
             <p className="text-sm text-muted-foreground">
@@ -286,8 +269,8 @@ export function SignClient({
               onClick={sign}
               disabled={
                 pending ||
-                (!isUnlocked && hasPin && authValue.length !== 4) ||
-                (!isUnlocked && !hasPin && authValue.length !== 6)
+                (!isUnlocked && !hasPin) ||
+                (!isUnlocked && hasPin && authValue.length !== 4)
               }
             >
               {pending ? 'Signing…' : 'Sign note'}
@@ -299,7 +282,7 @@ export function SignClient({
         </CardContent>
       </Card>
 
-      {showPinSetup && (
+      {(!isUnlocked && !hasPin) || showPinSetup ? (
         <PinSetupInline
           onClose={(setNow) => {
             setShowPinSetup(false);
@@ -311,7 +294,7 @@ export function SignClient({
             }
           }}
         />
-      )}
+      ) : null}
 
       <SignFollowUpSweep
         open={sweepOpen}

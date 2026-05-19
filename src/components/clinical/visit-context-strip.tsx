@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useTransition } from 'react';
-import { AlertCircle, User as UserIcon } from 'lucide-react';
+import { User as UserIcon } from 'lucide-react';
 import { Division, NoteStyle, type Profession } from '@prisma/client';
 
 import { Card, CardContent } from '@/components/ui/card';
@@ -14,11 +14,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { StatusBanner } from '@/components/ui/status-banner';
-import {
-  CLINICIAN_PICKABLE_DIVISIONS,
-  professionLabel,
-} from '@/lib/professions';
-import { cn } from '@/lib/cn';
+import { professionLabel } from '@/lib/professions';
 
 type TemplateOption = {
   id: string;
@@ -73,7 +69,16 @@ const TYPICAL_DIVISION_FOR_PROFESSION: Partial<Record<Profession, Division>> = {
 };
 
 export function VisitContextStrip(props: Props) {
-  const [division, setDivision] = useState<Division>(props.noteDivision);
+  // Profession-derived division is authoritative when the clinician has a
+  // categorical profession set — division is NOT user-changeable for that
+  // visit. Templates filter to that division only. Admins/users without a
+  // professionType fall back to the note's stored division (which still
+  // can't go cross-division mid-visit; this code only renders it read-only).
+  const professionDivision = props.clinicianProfessionType
+    ? TYPICAL_DIVISION_FOR_PROFESSION[props.clinicianProfessionType]
+    : undefined;
+  const lockedDivision = professionDivision ?? props.noteDivision;
+
   const [templateId, setTemplateId] = useState<string>(props.noteTemplateId ?? '');
   const [noteStyle, setNoteStyle] = useState<NoteStyle>(props.noteStyle);
   const [templates, setTemplates] = useState<TemplateOption[]>([]);
@@ -81,7 +86,7 @@ export function VisitContextStrip(props: Props) {
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
-  // Fetch templates for the current division. PURE READ — no side-effect
+  // Fetch templates for the locked division. PURE READ — no side-effect
   // writes here. If the saved templateId isn't in the filtered list the
   // dropdown falls back to the "Auto-pick at draft" sentinel visually
   // (see effectiveTemplateValue below); the server value stays as-is
@@ -94,7 +99,7 @@ export function VisitContextStrip(props: Props) {
     // template names from the prior division.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setTemplateLoading(true);
-    fetch(`/api/admin/templates?division=${division}`)
+    fetch(`/api/admin/templates?division=${lockedDivision}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(r)))
       .then((j) => {
         if (cancelled) return;
@@ -115,10 +120,9 @@ export function VisitContextStrip(props: Props) {
     return () => {
       cancelled = true;
     };
-  }, [division]);
+  }, [lockedDivision]);
 
   function patch(payload: {
-    division?: Division;
     templateId?: string | null;
     noteStyle?: NoteStyle;
   }) {
@@ -140,22 +144,13 @@ export function VisitContextStrip(props: Props) {
     });
   }
 
-  const typicalDivision = props.clinicianProfessionType
-    ? TYPICAL_DIVISION_FOR_PROFESSION[props.clinicianProfessionType]
-    : undefined;
-  const showDivisionMismatchHint =
-    !props.locked &&
-    typicalDivision !== undefined &&
-    typicalDivision !== division;
-
   const clinicianLabel = props.clinicianProfessionType
     ? professionLabel(props.clinicianProfessionType)
     : props.clinicianFreeTextProfession ?? 'Profession not set';
 
-  // If the saved templateId no longer matches the current division (because
-  // the user changed divisions), show "Auto-pick at draft" in the dropdown
-  // without rewriting state. The actual save happens only when the user
-  // explicitly picks something.
+  // If the saved templateId no longer matches the locked division, show
+  // "Auto-pick at draft" without rewriting state. The actual save happens
+  // only when the user explicitly picks something.
   const templateInCurrentList = !templateId || templates.some((t) => t.id === templateId);
   const effectiveTemplateValue = templateInCurrentList && templateId ? templateId : '__auto__';
 
@@ -172,29 +167,15 @@ export function VisitContextStrip(props: Props) {
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div className="space-y-1">
-            <Label className="text-xs uppercase tracking-wide" htmlFor="vc-division">
-              Division (this visit)
-            </Label>
-            <Select
-              value={division}
-              onValueChange={(v) => {
-                const d = v as Division;
-                setDivision(d);
-                patch({ division: d });
-              }}
-              disabled={props.locked || pending}
-            >
-              <SelectTrigger id="vc-division">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {CLINICIAN_PICKABLE_DIVISIONS.map((d) => (
-                  <SelectItem key={d} value={d}>
-                    {DIVISION_LABELS[d]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <Label className="text-xs uppercase tracking-wide">Division</Label>
+            <div className="flex items-center h-9 px-3 rounded-md border border-border bg-muted text-sm font-medium">
+              {DIVISION_LABELS[lockedDivision]}
+            </div>
+            <p className="text-[10px] text-muted-foreground">
+              {professionDivision
+                ? 'Set by your profession — locked.'
+                : 'Set on the note. Change requires a clinician with a different profession.'}
+            </p>
           </div>
 
           <div className="space-y-1">
@@ -253,17 +234,6 @@ export function VisitContextStrip(props: Props) {
             </Select>
           </div>
         </div>
-
-        {showDivisionMismatchHint && (
-          <StatusBanner variant="warning">
-            <span className={cn('inline-flex items-center gap-2 text-sm')}>
-              <AlertCircle className="size-4" aria-hidden="true" />
-              You&apos;re recording this visit as {DIVISION_LABELS[division]} but your profile is
-              set to {DIVISION_LABELS[typicalDivision!]}. That&apos;s fine if you&apos;re covering
-              cross-division today — just confirming.
-            </span>
-          </StatusBanner>
-        )}
 
         {error && <StatusBanner variant="danger">{error}</StatusBanner>}
 
