@@ -79,8 +79,11 @@ export function enqueueAiGenerationJob(payload: {
   requestId: string;
   sectionId?: string;
 }) {
+  // BullMQ 5.76+ requires custom jobIds containing `:` to have exactly 3
+  // parts (split on `:`). Collapse sectionId+requestId into a single leaf
+  // segment so the 4-part form stays a valid 3-part ID.
   const id = payload.sectionId
-    ? `ai-generation:${payload.noteId}:${payload.sectionId}:${payload.requestId}`
+    ? `ai-generation:${payload.noteId}:${payload.sectionId}-${payload.requestId}`
     : `ai-generation:${payload.noteId}:${payload.requestId}`;
   return aiGenerationQueue.add(payload.type, payload, { jobId: id });
 }
@@ -101,14 +104,16 @@ export function enqueueVoiceIdJob(payload: {
 }) {
   const type = payload.type ?? 'match-speakers';
   return voiceIdQueue.add(type, { ...payload, type }, {
-    jobId: `voice-id:${payload.noteId}:${type}:${payload.requestId}`,
+    // 3-part rule (see comment in enqueueAiGenerationJob).
+    jobId: `voice-id:${payload.noteId}:${type}-${payload.requestId}`,
   });
 }
 
 export function enqueueNoteBriefJob(payload: { noteId: string; orgId: string }) {
   // Idempotent on noteId — only one brief per signed note (spec rule).
   return noteBriefQueue.add('precompute-brief', payload, {
-    jobId: `note-brief:${payload.noteId}`,
+    // 3-part rule (see comment in enqueueAiGenerationJob). 2-part also fails.
+    jobId: `note-brief:${payload.noteId}:once`,
   });
 }
 
@@ -121,7 +126,8 @@ export function enqueuePostSignArtifactJob(payload: {
   requestId: string;
 }) {
   return postSignArtifactsQueue.add(payload.type, payload, {
-    jobId: `post-sign:${payload.noteId}:${payload.type}:${payload.requestId}`,
+    // 3-part rule (see comment in enqueueAiGenerationJob).
+    jobId: `post-sign:${payload.noteId}:${payload.type}-${payload.requestId}`,
   });
 }
 

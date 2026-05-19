@@ -73,10 +73,24 @@ export async function POST(req: Request) {
     siteId = siteScope.siteIds[0]!;
   }
   if (!siteId) {
-    return NextResponse.json(
-      { error: { code: 'site_required', message: 'Patient has no default site; provide siteId.' } },
-      { status: 400 },
-    );
+    // Fall back to the first non-archived org site as a sensible default.
+    // Multi-site orgs that need explicit per-visit choice should call the
+    // endpoint with siteId; the UI picker (post #81) will do that going
+    // forward. This fallback prevents "site_required" dead-ends when the
+    // patient just hasn't been assigned a default yet.
+    const site = await prisma.site.findFirst({
+      where: { orgId: authorizationUser.orgId, archivedAt: null },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true },
+    });
+    if (site) {
+      siteId = site.id;
+    } else {
+      return NextResponse.json(
+        { error: { code: 'site_required', message: 'No active sites in your organization. Create a site first.' } },
+        { status: 400 },
+      );
+    }
   }
 
   if (!canActAtSite(siteScope, siteId)) {

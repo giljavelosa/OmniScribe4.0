@@ -83,6 +83,41 @@ export async function PATCH(
     );
   }
 
+  // Profession lock: if the caller has a categorical profession set, the
+  // visit's division is derived from it and is NOT user-changeable. Refuse
+  // any division override that doesn't match. The UI hides the division
+  // Select for this case; this is the server-side enforcement that prevents
+  // curl/DevTools bypass.
+  if (parsed.data.division !== undefined) {
+    const clinician = await prisma.orgUser.findUnique({
+      where: { id: authorizationUser.orgUserId },
+      select: { professionType: true },
+    });
+    if (clinician?.professionType) {
+      // Mapping is duplicated from the client; lives here too so the server
+      // is authoritative (don't import client-only modules into a route).
+      const TYPICAL: Partial<Record<string, Division>> = {
+        MD: Division.MEDICAL, DO: Division.MEDICAL, NP: Division.MEDICAL,
+        PA: Division.MEDICAL, RN: Division.MEDICAL,
+        OT: Division.REHAB, PT: Division.REHAB, SLP: Division.REHAB,
+        LCSW: Division.BEHAVIORAL_HEALTH, LMFT: Division.BEHAVIORAL_HEALTH,
+        LPC: Division.BEHAVIORAL_HEALTH, PSYCHOLOGIST: Division.BEHAVIORAL_HEALTH,
+      };
+      const required = TYPICAL[clinician.professionType];
+      if (required && parsed.data.division !== required) {
+        return NextResponse.json(
+          {
+            error: {
+              code: 'division_locked_by_profession',
+              message: `Your profession (${clinician.professionType}) locks the visit division to ${required}.`,
+            },
+          },
+          { status: 409 },
+        );
+      }
+    }
+  }
+
   // If the caller is changing division, validate that any supplied templateId
   // belongs to the new division (so we don't end up with a Medical SOAP
   // template on a Rehab note).

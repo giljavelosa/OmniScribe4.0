@@ -29,7 +29,14 @@ export async function generateTotpToken(secret: string): Promise<string> {
 
 export async function verifyTotpToken(opts: { secret: string; token: string }): Promise<boolean> {
   if (!/^\d{6}$/.test(opts.token)) return false;
-  const r = await otpVerify({ secret: opts.secret, token: opts.token });
+  // epochTolerance: 30s → accept the prior, current, and next 30s TOTP
+  // windows (90s total). otplib v13's default is 0 (zero clock-skew), which
+  // rejects valid codes when the authenticator app or server clock drifts —
+  // common during enrollment when the user takes a few seconds between
+  // scanning the QR and typing the code. NIST 800-63B endorses small skew
+  // tolerance; ±1 step is the conventional value. (v13 renamed `window` →
+  // `epochTolerance`, in seconds.)
+  const r = await otpVerify({ secret: opts.secret, token: opts.token, epochTolerance: 30 });
   return r.valid;
 }
 
