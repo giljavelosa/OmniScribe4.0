@@ -14,6 +14,7 @@ import { InlineDemographics } from '@/components/patients/inline-demographics';
 import { buildSnapshotStrip } from '@/lib/snapshots/build-snapshot-strip';
 import { deriveAssessmentSnippet } from '@/lib/notes/note-text';
 import type { FinalJsonShape } from '@/lib/notes/build-artifact-prompt';
+import { professionLabel } from '@/lib/professions';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Patient' };
@@ -39,7 +40,9 @@ export default async function PatientDetailPage({ params }: { params: Promise<{ 
   if (!patient) notFound();
 
   // Unit 12 — snapshot strip + visit history with snippets, server-fetched
-  // so the first paint has real content.
+  // so the first paint has real content. Cross-division stratification:
+  // fetch up to 50 most-recent signed visits including clinician identity
+  // and episode-of-care (powers the by-episode / by-clinician views).
   const [snapshotStrip, recentVisits] = await Promise.all([
     buildSnapshotStrip({ orgId: session.user.orgId, patientId: patient.id }),
     prisma.note.findMany({
@@ -49,26 +52,76 @@ export default async function PatientDetailPage({ params }: { params: Promise<{ 
         status: { in: ['SIGNED', 'TRANSFERRED'] },
       },
       orderBy: { signedAt: 'desc' },
-      take: 10,
+      take: 50,
       select: {
         id: true,
         signedAt: true,
         division: true,
         finalJson: true,
         template: { select: { name: true } },
+        // Note.clinicianOrgUserId is a bare FK column (no Prisma relation
+        // defined on the Note model). We fetch the id here and resolve
+        // identities in a separate query below — adding a relation later
+        // would mean a schema migration we don't need for this view.
+        clinicianOrgUserId: true,
+        encounter: {
+          select: {
+            episode: {
+              select: { id: true, diagnosis: true, division: true, status: true },
+            },
+          },
+        },
       },
     }),
   ]);
 
-  const visits = recentVisits.map((n) => ({
-    id: n.id,
-    signedAt: n.signedAt?.toISOString() ?? null,
-    division: n.division,
-    templateName: n.template?.name ?? null,
-    assessmentSnippet: deriveAssessmentSnippet(
-      (n.finalJson as unknown as FinalJsonShape) ?? null,
-    ),
-  }));
+  // Resolve clinician identities in one extra query (small N — bounded by
+  // the 50-note take above; usually a handful of distinct clinicians).
+  const clinicianIds = Array.from(
+    new Set(recentVisits.map((n) => n.clinicianOrgUserId).filter(Boolean)),
+  );
+  const clinicianRows = clinicianIds.length
+    ? await prisma.orgUser.findMany({
+        where: { id: { in: clinicianIds }, orgId: session.user.orgId },
+        select: {
+          id: true,
+          professionType: true,
+          profession: true,
+          user: { select: { name: true, email: true } },
+        },
+      })
+    : [];
+  const clinicianById = new Map(clinicianRows.map((c) => [c.id, c]));
+
+  const visits = recentVisits.map((n) => {
+    const ou = clinicianById.get(n.clinicianOrgUserId) ?? null;
+    const ep = n.encounter?.episode ?? null;
+    return {
+      id: n.id,
+      signedAt: n.signedAt?.toISOString() ?? null,
+      division: n.division,
+      templateName: n.template?.name ?? null,
+      assessmentSnippet: deriveAssessmentSnippet(
+        (n.finalJson as unknown as FinalJsonShape) ?? null,
+      ),
+      clinicianId: ou?.id ?? null,
+      clinicianName: ou?.user?.name ?? ou?.user?.email ?? 'Unknown clinician',
+      clinicianProfessionLabel: ou?.professionType
+        ? professionLabel(ou.professionType)
+        : ou?.profession ?? null,
+      episodeId: ep?.id ?? null,
+      episodeDiagnosis: ep?.diagnosis ?? null,
+      episodeDivision: ep?.division ?? null,
+      episodeStatus: ep?.status ?? null,
+    };
+  });
+
+  // Per-division visit counts — non-overlapping (each note has one
+  // division). Drives the header strip "Active in: Medical (X) · Rehab (Y)".
+  const visitsByDivision = visits.reduce<Record<string, number>>((acc, v) => {
+    acc[v.division] = (acc[v.division] ?? 0) + 1;
+    return acc;
+  }, {});
 
   const episodesForPanel = patient.episodes.map((ep) => ({
     id: ep.id,
@@ -93,9 +146,43 @@ export default async function PatientDetailPage({ params }: { params: Promise<{ 
     })),
   }));
 
+  // Build "Active in: Medical (2) · Rehab (5) · BH (3)" strip from the
+  // per-division visit counts, in a stable display order. Only shown when
+  // the patient has ≥1 signed visit; ad-hoc divisions (MULTI) are folded
+  // into "Other".
+  const DIVISION_DISPLAY: { key: string; label: string }[] = [
+    { key: 'MEDICAL', label: 'Medical' },
+    { key: 'REHAB', label: 'Rehab' },
+    { key: 'BEHAVIORAL_HEALTH', label: 'Behavioral Health' },
+  ];
+  const activeStripEntries = DIVISION_DISPLAY.filter(
+    (d) => (visitsByDivision[d.key] ?? 0) > 0,
+  );
+  const otherCount = Object.entries(visitsByDivision).reduce(
+    (acc, [k, n]) => (DIVISION_DISPLAY.some((d) => d.key === k) ? acc : acc + n),
+    0,
+  );
+  const totalVisits = visits.length;
+
   return (
     <div className="mx-auto max-w-6xl px-4 py-6 space-y-6">
       <PatientIdentityHeader patient={patient} />
+
+      {totalVisits > 0 && (
+        <div className="flex items-center gap-2 flex-wrap text-sm">
+          <span className="text-muted-foreground">
+            {totalVisits} signed visit{totalVisits === 1 ? '' : 's'} · Active in:
+          </span>
+          {activeStripEntries.map((d) => (
+            <StatusBadge key={d.key} variant="neutral" noIcon>
+              {d.label} ({visitsByDivision[d.key]})
+            </StatusBadge>
+          ))}
+          {otherCount > 0 && (
+            <StatusBadge variant="neutral" noIcon>Other ({otherCount})</StatusBadge>
+          )}
+        </div>
+      )}
 
       <div className="flex justify-end">
         <StartVisitButton patientId={patient.id} />
