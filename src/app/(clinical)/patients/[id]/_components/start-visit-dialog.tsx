@@ -9,6 +9,13 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
   Sheet,
   SheetContent,
   SheetDescription,
@@ -32,10 +39,20 @@ export type StartVisitDialogEpisode = {
   visitCount: number;
 };
 
+export type StartVisitDialogSite = {
+  id: string;
+  name: string;
+};
+
 export type StartVisitSubmitArgs = {
   patientId: string;
   episodeOfCareId: string | null;
   source: 'picker' | 'auto-single' | 'auto-none' | 'manual-skip';
+  /** Site-of-record for THIS visit. Required for the ad-hoc path
+   *  (`defaultEncountersSubmit` sends it in the POST body); the scheduled
+   *  path overrides the submitter and uses `schedule.siteId` server-side,
+   *  so siteId may be undefined for that flow. */
+  siteId?: string;
   /** ISO 8601 (full datetime, midnight local). Omit for normal same-day visits.
    * The route still validates the 30-day floor + today ceiling. */
   dateOfService?: string;
@@ -44,6 +61,14 @@ export type StartVisitSubmitArgs = {
 type Props = {
   patientId: string;
   activeEpisodes: StartVisitDialogEpisode[];
+  /** Sites the clinician can record at. Optional — when omitted the dialog
+   *  hides the Site picker and the submitter handles site selection
+   *  externally (the scheduling-card flow uses `schedule.siteId`). When
+   *  provided, the dialog enforces a site choice as a recording precondition. */
+  sites?: StartVisitDialogSite[];
+  /** Pre-selected site for the picker. Required when `sites` is provided
+   *  (the picker can't open with no default). */
+  defaultSiteId?: string | null;
   /** Controls when dialog opens. If activeEpisodes.length < 2 the dialog
    * auto-skips and immediately POSTs at open time — UNLESS
    * `forceDatePicker` is true, which surfaces the picker for the late-entry
@@ -85,14 +110,15 @@ const NO_EPISODE = '__no_episode__';
  *                          comes back and starts again from the patient page.
  */
 export function StartVisitDialog(props: Props) {
-  // The 0/1 auto-post effect lives on the auto-poster shell. The picker UI is
-  // a child keyed by `open` so reopening always starts with fresh state — no
-  // setState-in-effect (React 19 strict).
+  // The picker shell now ALSO carries the Site dropdown when sites are
+  // provided. We still keep the auto-post path for the everyday "0/1
+  // episode + 0 or 1 pickable site" case — it auto-uses defaultSiteId
+  // (when set) and skips UI entirely.
   //
-  // Late-entry charting: when `forceDatePicker` is true (the "Start late
-  // entry…" entry path), even 0/1-episode patients render the picker shell —
-  // we need a visible date input regardless of episode count.
-  if (props.forceDatePicker || props.activeEpisodes.length >= 2) {
+  // Forced picker when: late entry, 2+ episodes, OR 2+ pickable sites
+  // (clinician needs to choose where they are physically).
+  const needsSitePicker = (props.sites?.length ?? 0) >= 2;
+  if (props.forceDatePicker || props.activeEpisodes.length >= 2 || needsSitePicker) {
     return <PickerShell key={String(props.open)} {...props} />;
   }
   return <AutoPostShell {...props} />;
@@ -101,6 +127,8 @@ export function StartVisitDialog(props: Props) {
 function AutoPostShell({
   patientId,
   activeEpisodes,
+  sites,
+  defaultSiteId,
   open,
   onOpenChange,
   onStarted,
@@ -108,7 +136,14 @@ function AutoPostShell({
 }: Props) {
   const [error, setError] = useState<string | null>(null);
   const submitter = submit ?? defaultEncountersSubmit;
-  const autoPost = open && activeEpisodes.length < 2;
+  // When the dialog isn't governing site selection (sites omitted, e.g.
+  // scheduling-card flow), the submitter handles siteId externally.
+  // Otherwise we need a defaultSiteId before auto-posting.
+  const sitesGovernedHere = sites !== undefined;
+  const autoPost =
+    open &&
+    activeEpisodes.length < 2 &&
+    (!sitesGovernedHere || !!defaultSiteId);
 
   useEffect(() => {
     if (!autoPost) return;
@@ -117,6 +152,7 @@ function AutoPostShell({
       patientId,
       episodeOfCareId: explicit,
       source: explicit ? 'auto-single' : 'auto-none',
+      ...(sitesGovernedHere && defaultSiteId ? { siteId: defaultSiteId } : {}),
     })
       .then((res) => {
         onOpenChange(false);
@@ -139,22 +175,27 @@ function AutoPostShell({
 function PickerShell({
   patientId,
   activeEpisodes,
+  sites,
+  defaultSiteId,
   open,
   onOpenChange,
   onStarted,
   submit,
   forceDatePicker,
 }: Props) {
+  const siteListLen = sites?.length ?? 0;
+  const sitesGovernedHere = sites !== undefined;
   // Preselect the only episode (or the skip option) when forceDatePicker is on
   // and the patient has 0 or 1 active episode — the clinician shouldn't have
   // to re-pick an episode just to backdate the visit.
   const initialChoice =
-    activeEpisodes.length === 1 && forceDatePicker
+    activeEpisodes.length === 1 && (forceDatePicker || siteListLen >= 2)
       ? activeEpisodes[0]!.id
-      : activeEpisodes.length === 0 && forceDatePicker
+      : activeEpisodes.length === 0 && (forceDatePicker || siteListLen >= 2)
         ? NO_EPISODE
         : '';
   const [choice, setChoice] = useState<string>(initialChoice);
+  const [siteId, setSiteId] = useState<string>(defaultSiteId ?? '');
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const submitter = submit ?? defaultEncountersSubmit;
@@ -186,6 +227,10 @@ function PickerShell({
 
   function submitChoice() {
     if (!choice) return;
+    if (sitesGovernedHere && !siteId) {
+      setError('Pick the site you are at for this visit.');
+      return;
+    }
     if (dateInvalid) return;
     setError(null);
     startTransition(async () => {
@@ -194,6 +239,7 @@ function PickerShell({
           patientId,
           episodeOfCareId: choice === NO_EPISODE ? null : choice,
           source: choice === NO_EPISODE ? 'manual-skip' : 'picker',
+          ...(sitesGovernedHere && siteId ? { siteId } : {}),
           dateOfService: dateOfServiceIso,
         });
         onOpenChange(false);
@@ -205,6 +251,8 @@ function PickerShell({
   }
 
   const showEpisodePicker = activeEpisodes.length >= 2;
+  const showSitePicker = sitesGovernedHere && siteListLen >= 2;
+  const showSiteReadonly = sitesGovernedHere && siteListLen === 1;
   const title = showEpisodePicker
     ? forceDatePicker
       ? 'Start late entry'
@@ -259,6 +307,42 @@ function PickerShell({
             </div>
           )}
 
+          {/* Site-of-record for this visit. Shown only when the dialog is
+              governing site selection (the ad-hoc path). The scheduling-card
+              flow omits `sites` because the server uses `schedule.siteId`. */}
+          {sitesGovernedHere && (
+            <div className="space-y-2 pt-1">
+              <Label htmlFor="visit-site">Site (where you are)</Label>
+              {showSitePicker ? (
+                <Select
+                  value={siteId}
+                  onValueChange={(v) => setSiteId(v)}
+                  disabled={pending}
+                >
+                  <SelectTrigger id="visit-site">
+                    <SelectValue placeholder="Pick a site" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {sites!.map((s) => (
+                      <SelectItem key={s.id} value={s.id}>
+                        {s.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : showSiteReadonly ? (
+                <p className="text-sm">{sites![0]!.name}</p>
+              ) : (
+                <StatusBanner variant="danger">
+                  You aren&apos;t enrolled at any site — ask your admin to enroll you before recording.
+                </StatusBanner>
+              )}
+              <p className="text-xs text-muted-foreground">
+                The note is tied to this site so visits can be pulled by location.
+              </p>
+            </div>
+          )}
+
           {/* Visit date — same UI for all entry paths so clinicians don't see
               a context-sensitive picker. Defaults to today (same effective
               behavior as before for the normal-flow path). */}
@@ -308,7 +392,10 @@ function PickerShell({
           >
             Cancel
           </Button>
-          <Button onClick={submitChoice} disabled={pending || !choice || dateInvalid}>
+          <Button
+            onClick={submitChoice}
+            disabled={pending || !choice || (sitesGovernedHere && !siteId) || dateInvalid}
+          >
             {pending ? 'Starting…' : isBackdated ? 'Start late entry' : 'Start visit'}
           </Button>
         </SheetFooter>
@@ -486,6 +573,7 @@ async function defaultEncountersSubmit(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       patientId: args.patientId,
+      ...(args.siteId ? { siteId: args.siteId } : {}),
       ...(args.episodeOfCareId ? { episodeOfCareId: args.episodeOfCareId } : {}),
       ...(args.dateOfService ? { dateOfService: args.dateOfService } : {}),
       pickerSource: args.source,

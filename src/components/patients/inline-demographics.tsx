@@ -21,7 +21,16 @@ type Patient = {
   phone: string | null;
   email: string | null;
   preferredLanguage: string | null;
+  /** Patient's default site (optional). The site of record for each visit
+   *  is set on the Encounter at StartVisit-time; this is just a default
+   *  for the picker. */
+  siteId: string | null;
+  siteName: string | null;
 };
+
+type SiteOption = { id: string; name: string };
+
+const NO_SITE_VALUE = '__none__';
 
 const SEX_OPTIONS = [
   { value: 'MALE', label: 'Male' },
@@ -38,7 +47,15 @@ const SEX_OPTIONS = [
  *
  * No full-page form swap (founder rule from spec: inline editable).
  */
-export function InlineDemographics({ patient }: { patient: Patient }) {
+export function InlineDemographics({
+  patient,
+  availableSites,
+}: {
+  patient: Patient;
+  /** Sites the caller can pick as the patient's default. Same scope filter
+   *  as the StartVisit picker — passed in from the parent page. */
+  availableSites: SiteOption[];
+}) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
   const [firstName, setFirstName] = useState(patient.firstName);
@@ -49,6 +66,7 @@ export function InlineDemographics({ patient }: { patient: Patient }) {
   const [phone, setPhone] = useState(patient.phone ?? '');
   const [email, setEmail] = useState(patient.email ?? '');
   const [preferredLanguage, setPreferredLanguage] = useState(patient.preferredLanguage ?? '');
+  const [siteId, setSiteId] = useState<string>(patient.siteId ?? '');
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -61,6 +79,7 @@ export function InlineDemographics({ patient }: { patient: Patient }) {
     setPhone(patient.phone ?? '');
     setEmail(patient.email ?? '');
     setPreferredLanguage(patient.preferredLanguage ?? '');
+    setSiteId(patient.siteId ?? '');
     setError(null);
     setEditing(false);
   }
@@ -80,6 +99,7 @@ export function InlineDemographics({ patient }: { patient: Patient }) {
           phone: phone.trim() || null,
           email: email.trim() || null,
           preferredLanguage: preferredLanguage.trim() || null,
+          siteId: siteId || null,
         }),
       });
       if (!res.ok) {
@@ -118,6 +138,7 @@ export function InlineDemographics({ patient }: { patient: Patient }) {
             <Field label="Phone" value={patient.phone ?? '—'} mono />
             <Field label="Email" value={patient.email ?? '—'} mono />
             <Field label="Preferred language" value={patient.preferredLanguage ?? '—'} />
+            <Field label="Default site" value={patient.siteName ?? '—'} />
           </dl>
         ) : (
           <form
@@ -165,6 +186,23 @@ export function InlineDemographics({ patient }: { patient: Patient }) {
             <div className="space-y-1.5">
               <Label htmlFor="pref-lang">Preferred language</Label>
               <Input id="pref-lang" value={preferredLanguage} onChange={(e) => setPreferredLanguage(e.target.value)} disabled={pending} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Default site</Label>
+              <Select
+                value={siteId || NO_SITE_VALUE}
+                onValueChange={(v) => setSiteId(v === NO_SITE_VALUE ? '' : v)}
+              >
+                <SelectTrigger disabled={pending}>
+                  <SelectValue placeholder="No default site" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NO_SITE_VALUE}>No default site</SelectItem>
+                  {availableSites.map((s) => (
+                    <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             {error && (
