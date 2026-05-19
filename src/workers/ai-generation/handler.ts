@@ -97,10 +97,19 @@ export async function handle(job: Job<AiGenerationJob>) {
   let template = note.template;
   let sectionSchema = template?.sectionSchema as { sections: NoteSectionDef[] } | null;
   if (!template || !sectionSchema?.sections?.length) {
-    const fallback = await prisma.noteTemplate.findFirst({
+    let fallback = await prisma.noteTemplate.findFirst({
       where: { isPreset: true, division: note.division, visibility: 'PUBLIC' },
       orderBy: { createdAt: 'asc' },
     });
+    if (!fallback && note.division === Division.MULTI) {
+      // MULTI is an org-aggregate division — no dedicated preset is seeded
+      // for it (and buildMasterPrompt already routes MULTI → MEDICAL).
+      // Mirror that mapping here so a MULTI note can still pick up a draft.
+      fallback = await prisma.noteTemplate.findFirst({
+        where: { isPreset: true, division: Division.MEDICAL, visibility: 'PUBLIC' },
+        orderBy: { createdAt: 'asc' },
+      });
+    }
     if (!fallback) {
       // No preset template for the division — mark the note INTERRUPTED so
       // /processing can surface this clearly to the clinician.
@@ -182,6 +191,47 @@ export async function handle(job: Job<AiGenerationJob>) {
     resourceId: noteId,
     metadata: { requestId, templateId: template.id, sectionCount: sections.length },
   });
+
+  // Rule 1 (ATTESTATION) guard: with an empty transcript the LLM has no source
+  // material, but the per-section prompt still says "REQUIRED — do not leave
+  // empty". Observed: BH Risk Assessment produced a confident SI/HI denial
+  // paragraph from zero audio. Short-circuit to a uniform placeholder per
+  // section so the model never gets the chance to invent content.
+  const transcriptClean = note.transcriptClean as TranscriptClean | null;
+  const hasUsableTranscript = !!transcriptClean && transcriptClean.wordCount > 0;
+  if (!hasUsableTranscript) {
+    const nowIso = new Date().toISOString();
+    for (const section of sections) {
+      await mergeSectionIntoDraft(
+        noteId,
+        section.id,
+        'No transcript captured for this encounter. This section cannot be drafted from source material. Re-record or paste a transcript, then regenerate this section.',
+      );
+      await markSectionStatus(noteId, section.id, {
+        status: 'populated',
+        lastGeneratedAt: nowIso,
+      });
+    }
+    await prisma.note.update({
+      where: { id: noteId },
+      data: { status: NoteStatus.DRAFT },
+    });
+    await writeAuditLog({
+      orgId,
+      action: 'NOTE_STATUS_TRANSITIONED',
+      resourceType: 'Note',
+      resourceId: noteId,
+      metadata: { from: 'DRAFTING', to: 'DRAFT', via: 'ai-generation-worker' },
+    });
+    await writeAuditLog({
+      orgId,
+      action: 'NOTE_GENERATION_COMPLETED',
+      resourceType: 'Note',
+      resourceId: noteId,
+      metadata: { sectionCount: sections.length, failedCount: 0, skipped: 'no_transcript' },
+    });
+    return { ok: true, sections: sections.length, failed: 0, skipped: 'no_transcript' };
+  }
 
   let failedCount = 0;
   for (const section of sections) {
