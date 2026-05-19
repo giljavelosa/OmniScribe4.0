@@ -24,10 +24,11 @@ const createSchema = z.object({
   mrn: z.string().min(1),
   dob: z.string().min(1),
   sex: z.enum(PatientSex),
-  // Required: a patient must be anchored to a site so ad-hoc Start Visit
-  // has a default location. Old behavior accepted optional siteId, which
-  // produced patient rows that broke /api/encounters with `site_required`.
-  siteId: z.string().min(1, { message: 'siteId is required' }),
+  // Optional default site. The site of record for a specific visit is set
+  // at recording-time on the Encounter (via the StartVisit dialog), not
+  // baked into the patient row. Patient.siteId is just a convenience
+  // default for the dialog's site picker.
+  siteId: z.string().min(1).optional(),
   phone: z.string().optional(),
   email: z.string().email().optional(),
   preferredLanguage: z.string().optional(),
@@ -135,22 +136,27 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: { code: 'duplicate_mrn' } }, { status: 409 });
   }
 
-  // Site must (a) exist in this org and (b) be in the caller's site scope.
-  // Site-scoped admins can't assign a patient to a site they aren't enrolled
-  // at; ORG_ADMIN+ get scope: 'all' implicitly.
-  const site = await prisma.site.findFirst({
-    where: { id: data.siteId, orgId: authorizationUser.orgId, isArchived: false },
-    select: { id: true },
-  });
-  if (!site) {
-    return NextResponse.json({ error: { code: 'site_not_found' } }, { status: 400 });
-  }
-  const siteScope = await getClinicianSiteIds(
-    authorizationUser.orgUserId,
-    authorizationUser.orgId,
-  );
-  if (!canActAtSite(siteScope, data.siteId)) {
-    return NextResponse.json({ error: { code: 'site_not_in_scope' } }, { status: 403 });
+  // When a default site is supplied, validate it: (a) exists in this org
+  // and (b) is in the caller's site scope. Site-scoped admins can't assign
+  // a patient to a site they aren't enrolled at; ORG_ADMIN+ get scope:
+  // 'all' implicitly. When siteId is omitted entirely we skip validation —
+  // the patient is created without a default; the StartVisit dialog picks
+  // the site at recording-time.
+  if (data.siteId) {
+    const site = await prisma.site.findFirst({
+      where: { id: data.siteId, orgId: authorizationUser.orgId, isArchived: false },
+      select: { id: true },
+    });
+    if (!site) {
+      return NextResponse.json({ error: { code: 'site_not_found' } }, { status: 400 });
+    }
+    const siteScope = await getClinicianSiteIds(
+      authorizationUser.orgUserId,
+      authorizationUser.orgId,
+    );
+    if (!canActAtSite(siteScope, data.siteId)) {
+      return NextResponse.json({ error: { code: 'site_not_in_scope' } }, { status: 403 });
+    }
   }
 
   const patient = await prisma.$transaction(async (tx) => {

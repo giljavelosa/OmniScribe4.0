@@ -24,11 +24,12 @@ type SiteOption = { id: string; name: string };
 type Props = {
   /** Sites the caller can pick. Server-filtered by site scope:
    *  org-wide roles see every non-archived site, site-scoped roles see
-   *  only their enrollments. */
+   *  only their enrollments. May be empty — the picker stays usable with
+   *  just the "No default site" option. */
   sites: SiteOption[];
-  /** Pre-selected site (typically the caller's primary enrolled site).
-   *  Null when the caller has no pickable sites — the sheet renders a
-   *  blocking banner in that case. */
+  /** Pre-selected default site (typically the caller's primary enrolled
+   *  site). Null when no sensible default exists — the picker opens to
+   *  "No default site" and the patient is created without one. */
   defaultSiteId: string | null;
 };
 
@@ -44,19 +45,24 @@ export function AddPatientButton({ sites, defaultSiteId }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
-  const noSitesAvailable = sites.length === 0;
-
   function submit() {
     setError(null);
-    if (!siteId) {
-      setError('Pick a site for this patient.');
-      return;
-    }
     startTransition(async () => {
       const res = await fetch('/api/patients', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ firstName, lastName, mrn, dob, sex, siteId }),
+        // Default site is optional. When omitted, the patient is created
+        // without one — the StartVisit dialog asks for site at recording-time
+        // (which is where the visit actually happens). The picker below
+        // defaults to the caller's primary so the common case is one click.
+        body: JSON.stringify({
+          firstName,
+          lastName,
+          mrn,
+          dob,
+          sex,
+          ...(siteId ? { siteId } : {}),
+        }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => null);
@@ -92,34 +98,29 @@ export function AddPatientButton({ sites, defaultSiteId }: Props) {
           </SheetDescription>
         </SheetHeader>
         <div className="space-y-3 px-4">
-          {noSitesAvailable && (
-            <StatusBanner variant="danger">
-              You aren&apos;t enrolled at any site yet. Ask your admin to enroll you before creating a patient.
-            </StatusBanner>
-          )}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
               <Label htmlFor="fn">First name</Label>
-              <Input id="fn" required value={firstName} onChange={(e) => setFirstName(e.target.value)} disabled={pending || noSitesAvailable} />
+              <Input id="fn" required value={firstName} onChange={(e) => setFirstName(e.target.value)} disabled={pending} />
             </div>
             <div className="space-y-2">
               <Label htmlFor="ln">Last name</Label>
-              <Input id="ln" required value={lastName} onChange={(e) => setLastName(e.target.value)} disabled={pending || noSitesAvailable} />
+              <Input id="ln" required value={lastName} onChange={(e) => setLastName(e.target.value)} disabled={pending} />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
               <Label htmlFor="mrn">MRN</Label>
-              <Input id="mrn" required value={mrn} onChange={(e) => setMrn(e.target.value)} disabled={pending || noSitesAvailable} />
+              <Input id="mrn" required value={mrn} onChange={(e) => setMrn(e.target.value)} disabled={pending} />
             </div>
             <div className="space-y-2">
               <Label htmlFor="dob">DOB</Label>
-              <Input id="dob" type="date" required value={dob} onChange={(e) => setDob(e.target.value)} disabled={pending || noSitesAvailable} />
+              <Input id="dob" type="date" required value={dob} onChange={(e) => setDob(e.target.value)} disabled={pending} />
             </div>
           </div>
           <div className="space-y-2">
             <Label>Sex (SAAB)</Label>
-            <Select value={sex} onValueChange={(v) => setSex(v as (typeof SEXES)[number])} disabled={pending || noSitesAvailable}>
+            <Select value={sex} onValueChange={(v) => setSex(v as (typeof SEXES)[number])} disabled={pending}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
                 {SEXES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
@@ -127,16 +128,17 @@ export function AddPatientButton({ sites, defaultSiteId }: Props) {
             </Select>
           </div>
           <div className="space-y-2">
-            <Label>Site</Label>
+            <Label>Default site <span className="text-xs text-muted-foreground">(optional)</span></Label>
             <Select
-              value={siteId}
-              onValueChange={(v) => setSiteId(v)}
-              disabled={pending || noSitesAvailable}
+              value={siteId || '__none__'}
+              onValueChange={(v) => setSiteId(v === '__none__' ? '' : v)}
+              disabled={pending}
             >
               <SelectTrigger>
-                <SelectValue placeholder="Pick a site" />
+                <SelectValue placeholder="No default site" />
               </SelectTrigger>
               <SelectContent>
+                <SelectItem value="__none__">No default site</SelectItem>
                 {sites.map((s) => (
                   <SelectItem key={s.id} value={s.id}>
                     {s.name}
@@ -145,7 +147,7 @@ export function AddPatientButton({ sites, defaultSiteId }: Props) {
               </SelectContent>
             </Select>
             <p className="text-xs text-muted-foreground">
-              Where the patient is primarily seen. Used as the default site for ad-hoc visits.
+              Where the patient is primarily seen. The actual site for each visit is set when recording starts — this just pre-fills the picker.
             </p>
           </div>
           {error && <StatusBanner variant="danger">{error}</StatusBanner>}
@@ -153,7 +155,7 @@ export function AddPatientButton({ sites, defaultSiteId }: Props) {
         <SheetFooter>
           <Button
             onClick={submit}
-            disabled={pending || noSitesAvailable || !firstName || !lastName || !mrn || !dob || !siteId}
+            disabled={pending || !firstName || !lastName || !mrn || !dob}
             className="w-full"
           >
             {pending ? 'Creating…' : 'Create patient'}

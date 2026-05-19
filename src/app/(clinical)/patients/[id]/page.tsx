@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+import { getClinicianSiteIds } from '@/lib/authz/site-scope';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { StatusBanner } from '@/components/ui/status-banner';
@@ -43,6 +44,9 @@ export default async function PatientDetailPage({
     include: {
       addresses: true,
       coverages: true,
+      // Patient.siteId is just the "default site" — informational. The site
+      // of record for each visit is set on the Encounter (StartVisit dialog).
+      site: { select: { id: true, name: true } },
       // Unit 11 — include DISCHARGED so the panel can Reopen + show close history.
       episodes: {
         where: { status: { in: ['ACTIVE', 'RECERT_DUE', 'DISCHARGED'] } },
@@ -202,6 +206,33 @@ export default async function PatientDetailPage({
     (ep) => ep.status === 'ACTIVE' || ep.status === 'RECERT_DUE',
   );
   const orgId = session.user.orgId;
+
+  // StartVisit-dialog needs the caller's pickable sites + a sensible default.
+  // ORG_ADMIN+ get all non-archived sites; site-scoped roles get just their
+  // enrollments. Default site precedence for the picker:
+  //   patient.siteId (if set + still in scope) → caller's primary enrolled
+  //   site → first pickable.
+  const siteScope = session.user.orgUserId
+    ? await getClinicianSiteIds(session.user.orgUserId, orgId)
+    : { scope: 'all' as const, siteIds: [] as string[] };
+  const startVisitSites = await prisma.site.findMany({
+    where: {
+      orgId,
+      isArchived: false,
+      ...(siteScope.scope === 'enrolled' && siteScope.siteIds.length > 0
+        ? { id: { in: siteScope.siteIds } }
+        : {}),
+    },
+    orderBy: { name: 'asc' },
+    select: { id: true, name: true },
+  });
+  const startVisitDefaultSiteId =
+    (patient.siteId && startVisitSites.some((s) => s.id === patient.siteId)
+      ? patient.siteId
+      : null) ??
+    (siteScope.scope === 'enrolled' && siteScope.siteIds.length > 0
+      ? siteScope.siteIds[0]!
+      : startVisitSites[0]?.id ?? null);
   const activeEpisodesForPicker = await (async () => {
     if (activeEpsForStats.length === 0) return [];
     const epIds = activeEpsForStats.map((e) => e.id);
@@ -310,7 +341,12 @@ export default async function PatientDetailPage({
       )}
 
       <div className="flex justify-end">
-        <StartVisitButton patientId={patient.id} activeEpisodes={activeEpisodesForPicker} />
+        <StartVisitButton
+          patientId={patient.id}
+          activeEpisodes={activeEpisodesForPicker}
+          sites={startVisitSites}
+          defaultSiteId={startVisitDefaultSiteId}
+        />
       </div>
 
       {/* Snapshot strip — first visual after identity, full-width. */}
@@ -345,7 +381,10 @@ export default async function PatientDetailPage({
               phone: patient.phone,
               email: patient.email,
               preferredLanguage: patient.preferredLanguage,
+              siteId: patient.siteId,
+              siteName: patient.site?.name ?? null,
             }}
+            availableSites={startVisitSites}
           />
 
           <EhrLinkPanel
