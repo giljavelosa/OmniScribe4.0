@@ -86,7 +86,13 @@ No more than 30 flags total. Return { "flags": [] } if there's nothing to flag.
 ═══ EDGE CASES ═══
 
 - Empty draft section → return { "flags": [] }.
-- Empty transcript → cannot verify; return { "flags": [] } rather than guessing.
+- Empty transcript AND empty draft section → return { "flags": [] }.
+- Empty transcript AND draft section has clinical content → emit EXACTLY ONE RED flag
+  covering the whole section: claim="(entire section is unsourced)", rationale="No
+  transcript was captured for this encounter — every clinical claim in this section is
+  unsourced and cannot be verified.", evidence=null, suggestion="Re-record the encounter
+  or paste a transcript, then regenerate this section." Do NOT enumerate per-claim flags
+  in this case; one blanket RED is enough to force pre-sign resolution.
 - Section content matches transcript word-for-word → 0 or 1 GREEN flag, not one per
   sentence.
 - Don't flag the section header or template scaffolding — only the clinical content.
@@ -99,9 +105,15 @@ export function buildFlagAnalyzerUserMessage(input: {
   sectionContent: string;
   transcript: TranscriptClean | null;
 }): string {
-  const transcriptText = input.transcript
-    ? input.transcript.structured.map((s) => `${s.speaker}: ${s.text}`).join('\n')
-    : '[no transcript captured]';
+  // Treat null transcript OR zero-word transcript OR zero-segment transcript as
+  // the same "no source material" case, and label it loudly so the LLM applies
+  // the empty-transcript edge-case rule instead of inferring "missing input".
+  const transcriptText =
+    !input.transcript ||
+    input.transcript.wordCount === 0 ||
+    input.transcript.structured.length === 0
+      ? '[no transcript captured — every clinical claim in the draft section above is unsourced]'
+      : input.transcript.structured.map((s) => `${s.speaker}: ${s.text}`).join('\n');
   return [
     `SECTION: ${input.sectionLabel}`,
     '',

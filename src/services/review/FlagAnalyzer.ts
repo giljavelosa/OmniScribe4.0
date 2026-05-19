@@ -39,9 +39,18 @@ export class FlagAnalyzer {
 }
 
 function parseAnalyzerOutput(rawText: string): FlagAnalyzerOutput {
+  // Strip ```json … ``` (or bare ``` … ```) fences. Sonnet 4.5 wraps in
+  // fences habitually even with jsonMode + an explicit "no markdown fences"
+  // instruction; without this strip, every fenced response silently
+  // becomes { flags: [] } and the entire feature returns no flags.
+  const stripped = rawText
+    .trim()
+    .replace(/^```(?:json)?\s*\n?/i, '')
+    .replace(/\n?```\s*$/i, '')
+    .trim();
   let parsed: unknown;
   try {
-    parsed = JSON.parse(rawText.trim());
+    parsed = JSON.parse(stripped);
   } catch {
     return { flags: [] };
   }
