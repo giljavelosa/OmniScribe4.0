@@ -235,7 +235,16 @@ export function CaptureStateProvider({
     if (state.kind !== 'recording' && state.kind !== 'paused') return;
     setState({ kind: 'finalizing' });
     try {
+      const chunkCount = audioBuffersRef.current.length;
+      const totalSamples = audioBuffersRef.current.reduce((n, c) => n + c.length, 0);
       const wavBlob = encodeWavBlob(audioBuffersRef.current, SAMPLE_RATE);
+      // Diagnostic — pins down a finalize failure at a glance. A healthy
+      // recording logs hundreds of chunks + a multi-KB WAV; "0 chunks /
+      // 44 bytes" means no PCM ever reached the accumulation buffer (mic
+      // muted, permission denied, or the worklet never produced frames).
+      console.info(
+        `[capture] finalize: chunks=${chunkCount} samples=${totalSamples} wavBytes=${wavBlob.size}`,
+      );
       setFinalAudioBlob(wavBlob);
 
       const formData = new FormData();
@@ -249,7 +258,20 @@ export function CaptureStateProvider({
         method: 'POST',
         body: formData,
       });
-      if (!res.ok) throw new Error(`complete-stream returned ${res.status}`);
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as
+          | { error?: { code?: string; message?: string } }
+          | null;
+        const code = body?.error?.code;
+        if (code === 'audio_missing') {
+          throw new Error(
+            'No audio was captured for this recording. Check that your microphone is connected and not muted, then record again.',
+          );
+        }
+        throw new Error(
+          body?.error?.message ?? `Couldn't finalize the recording (${res.status}).`,
+        );
+      }
 
       teardown();
       setState({ kind: 'complete' });

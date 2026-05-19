@@ -13,6 +13,11 @@ export const runtime = 'nodejs';
 // 30 minutes of 16-bit 16 kHz mono audio plus a healthy fudge factor.
 const MAX_AUDIO_BYTES = 32 * 60 * 16_000 * 2; // ~60 MB
 
+// A RIFF/WAVE header is 44 bytes. encodeWavBlob([]) (no PCM chunks) returns
+// exactly a 44-byte header-only blob — so "no audio" presents as size ≤ 44,
+// not size 0. Anything at/below this carries zero samples.
+const WAV_HEADER_BYTES = 44;
+
 /**
  * POST /api/notes/[id]/complete-stream
  *
@@ -53,13 +58,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const audioFile = form.get('audio');
   const finalTranscriptRaw = form.get('finalTranscript');
 
-  if (!(audioFile instanceof Blob)) {
-    return NextResponse.json({ error: { code: 'bad_request', message: 'audio missing' } }, { status: 400 });
-  }
-  if (audioFile.size === 0) {
-    return NextResponse.json({ error: { code: 'bad_request', message: 'audio empty' } }, { status: 400 });
-  }
-  if (audioFile.size > MAX_AUDIO_BYTES) {
+  const audioBlob = audioFile instanceof Blob ? audioFile : null;
+  // "No audio" = field missing, 0 bytes, or a header-only WAV. A real
+  // recording is far larger than the 44-byte header.
+  const audioMissing = !audioBlob || audioBlob.size <= WAV_HEADER_BYTES;
+
+  if (audioBlob && audioBlob.size > MAX_AUDIO_BYTES) {
     return NextResponse.json({ error: { code: 'audio_too_large' } }, { status: 413 });
   }
 
@@ -72,44 +76,60 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
   }
 
-  // Generate the segment id up-front so the S3 key + the DB row line up.
-  const segmentId = `seg-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-  const s3Key = audioKeyFor(noteId, segmentId);
+  // Audio is evidence of record — in production a finalize MUST carry it.
+  // In dev/non-production we allow a transcript-only finalize so an
+  // audio-capture bug (dead mic, worklet hiccup) doesn't hard-block the
+  // rest of the pipeline — the realtime transcript is enough to generate
+  // the note. The note is flagged audioMissing in the audit either way.
+  const isProd = process.env.NODE_ENV === 'production';
+  if (audioMissing && isProd) {
+    return NextResponse.json(
+      { error: { code: 'audio_missing', message: 'No audio was captured for this recording.' } },
+      { status: 400 },
+    );
+  }
 
-  const bytes = Buffer.from(await audioFile.arrayBuffer());
-  await putAudio({ key: s3Key, body: bytes, contentType: audioFile.type || 'audio/wav' });
-  // Verify upload existence is implicit in the local-fs / S3 PUT throwing on
-  // failure — rule 5 ("verify file existence") would warrant a head-object in
-  // a real S3-backed path; the stub guarantees the write completed before
-  // returning. Lands as part of the production S3 work post-Unit-05.
-
-  // Rough duration estimate: WAV header (44 bytes) stripped, 2 bytes/sample,
-  // sampleRate 16000.
-  const audioBytes = Math.max(0, bytes.byteLength - 44);
   const sampleRate = 16_000;
-  const durationMs = Math.round((audioBytes / 2 / sampleRate) * 1000);
+  let s3Key: string | null = null;
+  let durationMs = 0;
+  let byteSize = 0;
 
-  await prisma.$transaction([
-    prisma.audioSegment.create({
-      data: {
-        id: segmentId,
-        noteId,
-        segmentIndex: 0,
-        s3Key,
-        durationMs,
-        sampleRate,
-        byteSize: bytes.byteLength,
-      },
-    }),
-    prisma.note.update({
+  if (!audioMissing && audioBlob) {
+    // Generate the segment id up-front so the S3 key + the DB row line up.
+    const segmentId = `seg-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    s3Key = audioKeyFor(noteId, segmentId);
+
+    const bytes = Buffer.from(await audioBlob.arrayBuffer());
+    await putAudio({ key: s3Key, body: bytes, contentType: audioBlob.type || 'audio/wav' });
+    byteSize = bytes.byteLength;
+    // Rough duration estimate: WAV header (44 bytes) stripped, 2 bytes/sample.
+    durationMs = Math.round((Math.max(0, bytes.byteLength - WAV_HEADER_BYTES) / 2 / sampleRate) * 1000);
+
+    await prisma.$transaction([
+      prisma.audioSegment.create({
+        data: { id: segmentId, noteId, segmentIndex: 0, s3Key, durationMs, sampleRate, byteSize },
+      }),
+      prisma.note.update({
+        where: { id: noteId },
+        data: {
+          audioFileKey: s3Key,
+          transcriptRaw: transcriptRaw as object | undefined,
+          status: NoteStatus.TRANSCRIBING,
+        },
+      }),
+    ]);
+  } else {
+    // Dev transcript-only path — no S3 upload, no AudioSegment row. The
+    // finalize-realtime-transcript worker job works off transcriptRaw, so
+    // the note still drafts. audioFileKey stays null.
+    await prisma.note.update({
       where: { id: noteId },
       data: {
-        audioFileKey: s3Key,
         transcriptRaw: transcriptRaw as object | undefined,
         status: NoteStatus.TRANSCRIBING,
       },
-    }),
-  ]);
+    });
+  }
 
   await writeAuditLog({
     userId: user.id,
@@ -119,9 +139,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     resourceId: noteId,
     metadata: {
       durationMs,
-      segmentCount: 1,
-      byteSize: bytes.byteLength,
+      segmentCount: audioMissing ? 0 : 1,
+      byteSize,
       captureMode: note.captureMode,
+      audioMissing,
     },
   });
 
@@ -143,5 +164,5 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     metadata: { type: 'finalize-realtime-transcript', requestId },
   });
 
-  return NextResponse.json({ data: { ok: true, segmentId, durationMs } });
+  return NextResponse.json({ data: { ok: true, durationMs, audioMissing } });
 }
