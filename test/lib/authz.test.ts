@@ -40,11 +40,20 @@ describe('canUseFeature matrix', () => {
     expect(canUseFeature('NOTE_SIGN', u)).toBe(false);
   });
 
-  it('PATIENT_MANAGEMENT requires canManagePatients=true for non-SUPER_ADMINs', () => {
-    expect(canUseFeature('PATIENT_MANAGEMENT', mkUser({ role: 'CLINICIAN', canManagePatients: false }))).toBe(false);
-    expect(canUseFeature('PATIENT_MANAGEMENT', mkUser({ role: 'CLINICIAN', canManagePatients: true }))).toBe(false);
-    // CLINICIAN doesn't have PATIENT_MANAGEMENT in their matrix either way (Unit 02 may refine)
+  it('PATIENT_MANAGEMENT is gated by canManagePatients for non-SUPER_ADMIN, non-VIEWER roles', () => {
+    // SUPER_ADMIN bypasses the toggle entirely.
     expect(canUseFeature('PATIENT_MANAGEMENT', mkUser({ role: 'SUPER_ADMIN', canManagePatients: false }))).toBe(true);
+    expect(canUseFeature('PATIENT_MANAGEMENT', mkUser({ role: 'SUPER_ADMIN', canManagePatients: true }))).toBe(true);
+    // VIEWER never gets PATIENT_MANAGEMENT regardless of toggle (viewers don't create patients).
+    expect(canUseFeature('PATIENT_MANAGEMENT', mkUser({ role: 'VIEWER', canManagePatients: false }))).toBe(false);
+    expect(canUseFeature('PATIENT_MANAGEMENT', mkUser({ role: 'VIEWER', canManagePatients: true }))).toBe(false);
+    // CLINICIAN, ORG_ADMIN, SITE_ADMIN: gated by canManagePatients flag.
+    expect(canUseFeature('PATIENT_MANAGEMENT', mkUser({ role: 'CLINICIAN', canManagePatients: false }))).toBe(false);
+    expect(canUseFeature('PATIENT_MANAGEMENT', mkUser({ role: 'CLINICIAN', canManagePatients: true }))).toBe(true);
+    expect(canUseFeature('PATIENT_MANAGEMENT', mkUser({ role: 'ORG_ADMIN', canManagePatients: false }))).toBe(false);
+    expect(canUseFeature('PATIENT_MANAGEMENT', mkUser({ role: 'ORG_ADMIN', canManagePatients: true }))).toBe(true);
+    expect(canUseFeature('PATIENT_MANAGEMENT', mkUser({ role: 'SITE_ADMIN', canManagePatients: false }))).toBe(false);
+    expect(canUseFeature('PATIENT_MANAGEMENT', mkUser({ role: 'SITE_ADMIN', canManagePatients: true }))).toBe(true);
   });
 
   it('ORG_ADMIN gets team + billing, not clinical', () => {

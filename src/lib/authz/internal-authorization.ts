@@ -64,11 +64,18 @@ const BASE_MATRIX: Record<string, ReadonlyArray<FeatureKey>> = {
 };
 
 export function canUseFeature(featureKey: FeatureKey, user: AuthorizationUser): boolean {
-  const allowed = BASE_MATRIX[user.role] ?? [];
-  if (!allowed.includes(featureKey)) return false;
-
-  if (featureKey === 'PATIENT_MANAGEMENT' && user.role !== 'SUPER_ADMIN') {
+  // PATIENT_MANAGEMENT is a special case: gated by the per-user
+  // `canManagePatients` toggle rather than the role's base matrix. The
+  // toggle exists precisely so non-SUPER_ADMIN roles (clinicians, site
+  // admins, org admins) can be granted patient-create rights selectively
+  // without expanding their full role permission set. SUPER_ADMIN bypasses
+  // the toggle entirely; VIEWER never gets it regardless.
+  if (featureKey === 'PATIENT_MANAGEMENT') {
+    if (user.role === 'SUPER_ADMIN') return true;
+    if (user.role === 'VIEWER') return false;
     return user.canManagePatients;
   }
-  return true;
+
+  const allowed = BASE_MATRIX[user.role] ?? [];
+  return allowed.includes(featureKey);
 }
