@@ -17,6 +17,9 @@ import {
   Profession,
   SeatTier,
   NoteStyle,
+  NoteStatus,
+  CaptureMode,
+  EncounterStatus,
   ComplianceProfile,
   PatientSex,
   VisitType,
@@ -515,6 +518,412 @@ async function main() {
       },
     },
   });
+
+  // ---------------- Multi-discipline test corpus ----------------
+  // Seeds the data shape needed to exercise the cross-division stratification
+  // on /patients/[id] (PR #92):
+  //   - 6 additional Demo Clinic clinicians of varied professions
+  //   - 1 additional Demo Clinic site (Westside)
+  //   - 1 second organization (Acme Specialty Care) with its own user + patient
+  //   - 9 signed visits across the existing 3 patients, spanning multiple
+  //     clinicians + divisions + episodes
+  // All deterministic (stable IDs + dates relative to seed time) so re-runs
+  // are idempotent.
+
+  type SeedClinician = {
+    email: string;
+    name: string;
+    division: Division;
+    professionType: Profession;
+    profession: string;
+  };
+  const extraClinicians: SeedClinician[] = [
+    { email: 'pt.smith@demo.local', name: 'Dr. Sara Smith', division: Division.REHAB, professionType: Profession.PT, profession: 'Orthopedic PT' },
+    { email: 'ot.lee@demo.local', name: 'Dr. Aaron Lee', division: Division.REHAB, professionType: Profession.OT, profession: 'Outpatient OT' },
+    { email: 'slp.wong@demo.local', name: 'Dr. Jane Wong', division: Division.REHAB, professionType: Profession.SLP, profession: 'Adult SLP' },
+    { email: 'lcsw.garcia@demo.local', name: 'Dr. Carlos Garcia', division: Division.BEHAVIORAL_HEALTH, professionType: Profession.LCSW, profession: 'Clinical Social Worker' },
+    { email: 'psy.patel@demo.local', name: 'Dr. Anika Patel', division: Division.BEHAVIORAL_HEALTH, professionType: Profession.PSYCHOLOGIST, profession: 'Clinical Psychologist' },
+    { email: 'np.brown@demo.local', name: 'Dr. Maya Brown', division: Division.MEDICAL, professionType: Profession.NP, profession: 'Family NP' },
+  ];
+
+  const clinicianRowByEmail: Record<string, { userId: string; orgUserId: string }> = {};
+  for (const c of extraClinicians) {
+    const u = await prisma.user.upsert({
+      where: { email: c.email },
+      update: { name: c.name },
+      create: {
+        email: c.email,
+        name: c.name,
+        passwordHash: await hashPassword(DEMO_PASSWORD),
+        mfaEnabled: false,
+        platformRole: PlatformRole.NONE,
+      },
+    });
+    const seat = await prisma.seat.upsert({
+      where: { id: `seed-seat-${c.email}` },
+      update: {},
+      create: {
+        id: `seed-seat-${c.email}`,
+        orgId: org.id,
+        tier: SeatTier.TEAM,
+        expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+      },
+    });
+    const ou = await prisma.orgUser.upsert({
+      where: { userId_orgId: { userId: u.id, orgId: org.id } },
+      update: {
+        division: c.division,
+        profession: c.profession,
+        professionType: c.professionType,
+        canManagePatients: true,
+      },
+      create: {
+        userId: u.id,
+        orgId: org.id,
+        role: OrgRole.CLINICIAN,
+        division: c.division,
+        profession: c.profession,
+        professionType: c.professionType,
+        canManagePatients: true,
+        preferredNoteStyle: NoteStyle.HYBRID,
+        seatId: seat.id,
+      },
+    });
+    clinicianRowByEmail[c.email] = { userId: u.id, orgUserId: ou.id };
+  }
+
+  // Track the existing demo clinician too (for cross-division MD visits below).
+  const clinicianUserFull = await prisma.user.findUnique({
+    where: { email: 'clinician@demo.local' },
+    include: { orgUsers: { where: { orgId: org.id }, take: 1 } },
+  });
+  clinicianRowByEmail['clinician@demo.local'] = {
+    userId: clinicianUserFull!.id,
+    orgUserId: clinicianUserFull!.orgUsers[0]!.id,
+  };
+
+  // Second site under Demo Clinic — gives the admin/site picker something to chew on.
+  await prisma.site.upsert({
+    where: { id: 'seed-demo-site-westside' },
+    update: {},
+    create: {
+      id: 'seed-demo-site-westside',
+      orgId: org.id,
+      name: 'Demo Westside Clinic',
+      address: '47 Demo Way, West Wing, Springfield, USA',
+      phone: '+1-555-0199',
+      primaryDivision: Division.REHAB,
+    },
+  });
+
+  // Second organization — Acme Specialty Care — proves cross-tenant isolation
+  // in the admin / owner consoles. Smaller footprint: 1 clinician + 1 patient.
+  const acmeOrg = await prisma.organization.upsert({
+    where: { id: 'seed-acme-clinic' },
+    update: {},
+    create: {
+      id: 'seed-acme-clinic',
+      name: 'Acme Specialty Care',
+      division: Division.MEDICAL,
+      defaultDivision: Division.MEDICAL,
+      billingEmail: 'billing@acme.local',
+      forceMfa: false,
+      baaExecutedAt: new Date('2026-05-17T00:00:00Z'),
+      baaVersion: '2026.05.01',
+      complianceProfile: ComplianceProfile.STANDARD,
+    },
+  });
+  const acmeSite = await prisma.site.upsert({
+    where: { id: 'seed-acme-site' },
+    update: {},
+    create: {
+      id: 'seed-acme-site',
+      orgId: acmeOrg.id,
+      name: 'Acme Main Office',
+      address: '99 Acme Blvd, Springfield, USA',
+      phone: '+1-555-0250',
+      primaryDivision: Division.MEDICAL,
+    },
+  });
+  const acmeMdUser = await prisma.user.upsert({
+    where: { email: 'md.acme@demo.local' },
+    update: { name: 'Dr. Olivia Reed' },
+    create: {
+      email: 'md.acme@demo.local',
+      name: 'Dr. Olivia Reed',
+      passwordHash: await hashPassword(DEMO_PASSWORD),
+      mfaEnabled: false,
+      platformRole: PlatformRole.NONE,
+    },
+  });
+  const acmeMdSeat = await prisma.seat.upsert({
+    where: { id: 'seed-seat-acme-md' },
+    update: {},
+    create: {
+      id: 'seed-seat-acme-md',
+      orgId: acmeOrg.id,
+      tier: SeatTier.TEAM,
+      expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+    },
+  });
+  await prisma.orgUser.upsert({
+    where: { userId_orgId: { userId: acmeMdUser.id, orgId: acmeOrg.id } },
+    update: {},
+    create: {
+      userId: acmeMdUser.id,
+      orgId: acmeOrg.id,
+      role: OrgRole.CLINICIAN,
+      division: Division.MEDICAL,
+      profession: 'Internal Medicine MD',
+      professionType: Profession.MD,
+      canManagePatients: true,
+      preferredNoteStyle: NoteStyle.HYBRID,
+      seatId: acmeMdSeat.id,
+    },
+  });
+  await prisma.patient.upsert({
+    where: { id: 'seed-acme-patient' },
+    update: {},
+    create: {
+      id: 'seed-acme-patient',
+      orgId: acmeOrg.id,
+      siteId: acmeSite.id,
+      division: Division.MEDICAL,
+      firstName: 'Rachel',
+      lastName: 'Kim',
+      mrn: 'ACME-001',
+      dob: new Date('1980-03-14'),
+      sex: PatientSex.FEMALE,
+      preferredLanguage: 'en',
+    },
+  });
+
+  // Additional episodes of care for James Park (cross-division coverage)
+  // so his chart's "By episode" view shows three distinct episode buckets.
+  const jpRehabEpisode = await prisma.episodeOfCare.upsert({
+    where: { id: 'seed-episode-jp-rehab' },
+    update: {},
+    create: {
+      id: 'seed-episode-jp-rehab',
+      orgId: org.id,
+      patientId: 'seed-patient-medical',
+      clinicianOrgUserId: clinicianRowByEmail['pt.smith@demo.local']!.orgUserId,
+      departmentId: deptRehab.id,
+      division: Division.REHAB,
+      diagnosis: 'Right rotator cuff strain',
+      status: EpisodeStatus.ACTIVE,
+    },
+  });
+  const jpBhEpisode = await prisma.episodeOfCare.upsert({
+    where: { id: 'seed-episode-jp-bh' },
+    update: {},
+    create: {
+      id: 'seed-episode-jp-bh',
+      orgId: org.id,
+      patientId: 'seed-patient-medical',
+      clinicianOrgUserId: clinicianRowByEmail['lcsw.garcia@demo.local']!.orgUserId,
+      departmentId: deptBh.id,
+      division: Division.BEHAVIORAL_HEALTH,
+      diagnosis: 'Adjustment disorder with anxious mood',
+      status: EpisodeStatus.ACTIVE,
+    },
+  });
+
+  // Helper: build a minimal-but-valid finalJson the assessment-snippet
+  // deriver can read (the visit-history rows show the Assessment text).
+  function buildFinalJson(args: {
+    subjective?: string;
+    assessment: string;
+    plan?: string;
+  }) {
+    return {
+      sections: [
+        { id: 'subjective', label: 'Subjective', content: args.subjective ?? '' },
+        { id: 'assessment', label: 'Assessment', content: args.assessment },
+        { id: 'plan', label: 'Plan', content: args.plan ?? '' },
+      ],
+    };
+  }
+
+  type SeedVisit = {
+    noteId: string;
+    patientId: string;
+    clinicianEmail: string;
+    division: Division;
+    templateId: string;
+    signedDaysAgo: number;
+    departmentId: string;
+    episodeId?: string;
+    subjective?: string;
+    assessment: string;
+    plan?: string;
+  };
+
+  const visits: SeedVisit[] = [
+    // James Park (primary: MEDICAL) — visits from MD / PT / LCSW
+    {
+      noteId: 'seed-visit-jp-md-1',
+      patientId: 'seed-patient-medical',
+      clinicianEmail: 'np.brown@demo.local',
+      division: Division.MEDICAL,
+      templateId: 'seed-tmpl-medical-soap',
+      signedDaysAgo: 21,
+      departmentId: deptMedical.id,
+      episodeId: 'seed-episode-seed-patient-medical',
+      subjective: 'Patient reports headache 3-4× weekly, worse in mornings. Compliant with current lisinopril 10 mg.',
+      assessment: '1. Essential hypertension — BP poorly controlled (avg 148/92 over last 5 readings). 2. Tension-type headache, likely related.',
+      plan: 'Increase lisinopril to 20 mg daily. Recheck BP in 2 weeks. Consider adding HCTZ if not at goal.',
+    },
+    {
+      noteId: 'seed-visit-jp-pt-1',
+      patientId: 'seed-patient-medical',
+      clinicianEmail: 'pt.smith@demo.local',
+      division: Division.REHAB,
+      templateId: 'seed-tmpl-rehab-daily',
+      signedDaysAgo: 14,
+      departmentId: deptRehab.id,
+      episodeId: jpRehabEpisode.id,
+      subjective: 'Right shoulder pain 6/10 with overhead reach; improving since last visit.',
+      assessment: 'Right rotator cuff strain — week 3 of 8. Active flexion 140° (improved from 120°). Continued limited end-range external rotation.',
+      plan: 'Continue PT 2×/week. Progress to resistive ER strengthening. HEP: scapular stabilization 2×/day.',
+    },
+    {
+      noteId: 'seed-visit-jp-bh-1',
+      patientId: 'seed-patient-medical',
+      clinicianEmail: 'lcsw.garcia@demo.local',
+      division: Division.BEHAVIORAL_HEALTH,
+      templateId: 'seed-tmpl-bh-session',
+      signedDaysAgo: 7,
+      departmentId: deptBh.id,
+      episodeId: jpBhEpisode.id,
+      subjective: 'Patient reports continued work-related stress; sleep onset improved with CBT-I techniques.',
+      assessment: 'Adjustment disorder with anxious mood — moderate improvement. PHQ-9: 7 (from 11). GAD-7: 8 (from 12). No SI/HI.',
+      plan: 'Continue weekly CBT sessions. Reinforce cognitive restructuring + sleep hygiene. Re-screen GAD-7 in 4 weeks.',
+    },
+    // Maria Alvarez (primary: REHAB) — visits from PT / OT / MD
+    {
+      noteId: 'seed-visit-ma-pt-1',
+      patientId: 'seed-patient-rehab',
+      clinicianEmail: 'pt.smith@demo.local',
+      division: Division.REHAB,
+      templateId: 'seed-tmpl-rehab-daily',
+      signedDaysAgo: 18,
+      departmentId: deptRehab.id,
+      episodeId: 'seed-episode-seed-patient-rehab',
+      subjective: 'Patient ambulating with single-point cane; right knee pain 4/10 with stairs.',
+      assessment: 'Right knee OA s/p arthroscopy — week 6 post-op. Active flexion 105° (improved from 90° last visit). Quad strength 4/5.',
+      plan: 'Continue PT 2×/week. Progress to single-leg balance + closed-chain strengthening. HEP: TKE + step-ups.',
+    },
+    {
+      noteId: 'seed-visit-ma-ot-1',
+      patientId: 'seed-patient-rehab',
+      clinicianEmail: 'ot.lee@demo.local',
+      division: Division.REHAB,
+      templateId: 'seed-tmpl-rehab-daily',
+      signedDaysAgo: 11,
+      departmentId: deptRehab.id,
+      subjective: 'Difficulty with kitchen tasks requiring sustained standing; energy conservation a concern.',
+      assessment: 'ADL impairment secondary to knee OA recovery + deconditioning. IADL score improved 12 points since intake.',
+      plan: 'Issue perching stool for kitchen. Trial joint-protection strategies for grocery prep. Re-eval in 2 weeks.',
+    },
+    {
+      noteId: 'seed-visit-ma-md-1',
+      patientId: 'seed-patient-rehab',
+      clinicianEmail: 'clinician@demo.local',
+      division: Division.MEDICAL,
+      templateId: 'seed-tmpl-medical-acute',
+      signedDaysAgo: 4,
+      departmentId: deptMedical.id,
+      subjective: 'Routine post-op check; mild medial-knee warmth resolved. No new c/o.',
+      assessment: 'S/p right knee arthroscopy — uncomplicated recovery. Wound well-healed. Cleared for full PT advancement.',
+      plan: 'Continue ortho follow-up at 6 weeks. PCP follow-up in 3 months unless new concerns.',
+    },
+    // Devon Mitchell (primary: BH) — visits from LCSW / Psychologist / MD
+    {
+      noteId: 'seed-visit-dm-bh-1',
+      patientId: 'seed-patient-bh',
+      clinicianEmail: 'lcsw.garcia@demo.local',
+      division: Division.BEHAVIORAL_HEALTH,
+      templateId: 'seed-tmpl-bh-session',
+      signedDaysAgo: 24,
+      departmentId: deptBh.id,
+      episodeId: 'seed-episode-seed-patient-bh',
+      subjective: 'Patient reports anxiety worsens with deadlines; using deep breathing during work meetings.',
+      assessment: 'Generalized anxiety disorder — moderate. GAD-7: 14. Sleep disturbed; appetite intact. No SI/HI.',
+      plan: 'Initiate weekly CBT. Introduce worry-postponement + cognitive restructuring. Coordinate with PCP re: pharmacotherapy.',
+    },
+    {
+      noteId: 'seed-visit-dm-psy-1',
+      patientId: 'seed-patient-bh',
+      clinicianEmail: 'psy.patel@demo.local',
+      division: Division.BEHAVIORAL_HEALTH,
+      templateId: 'seed-tmpl-bh-session',
+      signedDaysAgo: 17,
+      departmentId: deptBh.id,
+      episodeId: 'seed-episode-seed-patient-bh',
+      subjective: 'Psychodiagnostic intake follow-up. Reviewed MMPI-2 profile; congruent with anxious-distress presentation.',
+      assessment: 'GAD primary; trait anxiety + perfectionistic schema. Rule out social anxiety — Liebowitz scheduled.',
+      plan: 'Co-treat with LCSW (weekly CBT). Psychologist to provide quarterly progress re-evaluation. Liebowitz SAS in 1 week.',
+    },
+    {
+      noteId: 'seed-visit-dm-md-1',
+      patientId: 'seed-patient-bh',
+      clinicianEmail: 'clinician@demo.local',
+      division: Division.MEDICAL,
+      templateId: 'seed-tmpl-medical-soap',
+      signedDaysAgo: 9,
+      departmentId: deptMedical.id,
+      subjective: 'Patient requests medication evaluation per BH team recommendation. Current sleep impacted by anxiety.',
+      assessment: 'GAD — co-managing with BH team. No medical contraindications to SSRI initiation. TSH wnl, CMP wnl.',
+      plan: 'Start sertraline 25 mg daily × 1 week, then 50 mg. Follow up in 4 weeks for tolerability + GAD-7.',
+    },
+  ];
+
+  for (const v of visits) {
+    const c = clinicianRowByEmail[v.clinicianEmail];
+    if (!c) throw new Error(`Seed: missing clinician ${v.clinicianEmail}`);
+    const signedAt = new Date(Date.now() - v.signedDaysAgo * 86_400_000);
+    const encounter = await prisma.encounter.upsert({
+      where: { id: `seed-enc-${v.noteId}` },
+      update: {},
+      create: {
+        id: `seed-enc-${v.noteId}`,
+        orgId: org.id,
+        patientId: v.patientId,
+        clinicianOrgUserId: c.orgUserId,
+        siteId: site.id,
+        departmentId: v.departmentId,
+        episodeOfCareId: v.episodeId ?? null,
+        status: EncounterStatus.COMPLETED,
+        startedAt: signedAt,
+        endedAt: signedAt,
+      },
+    });
+    await prisma.note.upsert({
+      where: { id: v.noteId },
+      update: {},
+      create: {
+        id: v.noteId,
+        orgId: org.id,
+        patientId: v.patientId,
+        encounterId: encounter.id,
+        clinicianOrgUserId: c.orgUserId,
+        division: v.division,
+        status: NoteStatus.SIGNED,
+        captureMode: CaptureMode.LIVE,
+        finalJson: buildFinalJson({
+          subjective: v.subjective,
+          assessment: v.assessment,
+          plan: v.plan,
+        }) as unknown as object,
+        templateId: v.templateId,
+        templateVersion: 1,
+        noteStyle: NoteStyle.HYBRID,
+        signedAt,
+        signedByUserId: c.userId,
+      },
+    });
+  }
 
   // Sanity: generate a TOTP token against the seeded secret so devs know
   // their authenticator app will accept it.
