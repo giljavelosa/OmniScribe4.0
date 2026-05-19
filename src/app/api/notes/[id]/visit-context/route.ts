@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { Division, NoteStyle } from '@prisma/client';
+import { NoteStyle } from '@prisma/client';
 
 import { prisma } from '@/lib/prisma';
 import { requireFeatureAccess } from '@/lib/authz/server';
@@ -9,31 +9,24 @@ import { writeAuditLog } from '@/lib/audit/log';
 export const runtime = 'nodejs';
 
 /**
- * PATCH /api/notes/[id]/visit-context — per-visit override of division,
- * template, and note style. Writes to Note.{division,templateId,noteStyle}
- * BEFORE the recording starts (status must still be PREPARING; downstream
- * status pins these for AI generation per spec §E).
+ * PATCH /api/notes/[id]/visit-context — per-visit override of template and
+ * note style. Writes to Note.{templateId,noteStyle} BEFORE recording starts.
  *
- * Refuses 409 once the note has moved past PREPARING — at that point the
- * division resolver has already locked + audit lens is committed.
+ * Division is NOT writeable here. Note.division is derived at recording
+ * start from the clinician's profession (see src/lib/divisions/resolve.ts)
+ * and is part of the immutable record.
+ *
+ * Refuses 409 once the note has moved past PREPARING — at that point both
+ * template + format are pinned for AI generation per spec §E.
  */
 const bodySchema = z
   .object({
-    division: z
-      .nativeEnum(Division)
-      .refine((d) => d !== Division.MULTI, {
-        message: 'Division MULTI cannot be a per-visit choice.',
-      })
-      .optional(),
     templateId: z.string().min(1).nullable().optional(),
     noteStyle: z.nativeEnum(NoteStyle).optional(),
   })
   .refine(
-    (v) =>
-      v.division !== undefined ||
-      v.templateId !== undefined ||
-      v.noteStyle !== undefined,
-    { message: 'Provide at least one of division / templateId / noteStyle.' },
+    (v) => v.templateId !== undefined || v.noteStyle !== undefined,
+    { message: 'Provide at least one of templateId / noteStyle.' },
   );
 
 export async function PATCH(
@@ -74,7 +67,7 @@ export async function PATCH(
   ) {
     return NextResponse.json({ error: { code: 'forbidden' } }, { status: 403 });
   }
-  // Once recording has started, the division/template/style are part of the
+  // Once recording has started, the template/style are part of the
   // immutable record. Refuse rather than silently noop.
   if (note.status !== 'PREPARING') {
     return NextResponse.json(
@@ -83,10 +76,8 @@ export async function PATCH(
     );
   }
 
-  // If the caller is changing division, validate that any supplied templateId
-  // belongs to the new division (so we don't end up with a Medical SOAP
-  // template on a Rehab note).
-  const nextDivision = parsed.data.division ?? note.division;
+  // Validate that any supplied templateId belongs to the note's locked
+  // division (so we don't end up with a Medical SOAP template on a Rehab note).
   const nextTemplateId =
     parsed.data.templateId === undefined ? note.templateId : parsed.data.templateId;
   if (nextTemplateId) {
@@ -100,12 +91,12 @@ export async function PATCH(
     if (tmpl.isArchived) {
       return NextResponse.json({ error: { code: 'template_archived' } }, { status: 409 });
     }
-    if (tmpl.division !== nextDivision) {
+    if (tmpl.division !== note.division) {
       return NextResponse.json(
         {
           error: {
             code: 'template_division_mismatch',
-            message: `Template division (${tmpl.division}) does not match note division (${nextDivision}).`,
+            message: `Template division (${tmpl.division}) does not match note division (${note.division}).`,
           },
         },
         { status: 409 },
@@ -121,7 +112,6 @@ export async function PATCH(
   const updated = await prisma.note.update({
     where: { id: noteId },
     data: {
-      ...(parsed.data.division !== undefined && { division: parsed.data.division }),
       ...(parsed.data.templateId !== undefined && { templateId: parsed.data.templateId }),
       ...(parsed.data.noteStyle !== undefined && { noteStyle: parsed.data.noteStyle }),
     },
@@ -135,8 +125,8 @@ export async function PATCH(
     resourceType: 'Note',
     resourceId: noteId,
     metadata: {
-      from: { division: note.division, templateId: note.templateId, noteStyle: note.noteStyle },
-      to: { division: updated.division, templateId: updated.templateId, noteStyle: updated.noteStyle },
+      from: { templateId: note.templateId, noteStyle: note.noteStyle },
+      to: { templateId: updated.templateId, noteStyle: updated.noteStyle },
     },
   });
 

@@ -622,7 +622,6 @@ model Patient {
   organization      Organization @relation(fields: [orgId], references: [id])
   siteId            String?
   site              Site?        @relation(fields: [siteId], references: [id])
-  division          Division
   firstName         String
   lastName          String
   mrn               String

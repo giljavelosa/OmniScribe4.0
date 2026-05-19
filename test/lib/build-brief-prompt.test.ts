@@ -21,7 +21,6 @@ const patient = projectPatientForBrief({
   id: 'pat_test',
   orgId: 'org_test',
   siteId: null,
-  division: 'MEDICAL',
   firstName: 'Maria',
   lastName: 'Alvarez',
   mrn: 'MRN-001',

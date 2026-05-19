@@ -24,7 +24,6 @@ export type BriefPatientProjection = {
   displayAge: number | null;
   sex: string;
   displayName: string; // first + last initial — never full legal name
-  division: string;
   preferredLanguage: string | null;
   mrn: string;
 };
@@ -352,7 +351,7 @@ export function buildBriefUserMessage(input: BuildBriefPromptInput): string {
     `  displayAge: ${input.patient.displayAge ?? 'null'}`,
     `  sex: ${input.patient.sex}`,
     `  displayName: ${input.patient.displayName}`,
-    `  division: ${input.patient.division}`,
+    `  division: ${input.division}`,
     `  preferredLanguage: ${input.patient.preferredLanguage ?? 'English'}`,
     `  mrn: ${input.patient.mrn}`,
     `  today: ${input.todayIso}`,
@@ -559,7 +558,6 @@ export function projectPatientForBrief(patient: Patient): BriefPatientProjection
     displayAge: ageInYears(patient.dob),
     sex: patient.sex,
     displayName,
-    division: patient.division,
     preferredLanguage: patient.preferredLanguage,
     mrn: patient.mrn,
   };

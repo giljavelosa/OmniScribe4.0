@@ -6,7 +6,7 @@ import { requireFeatureAccess } from '@/lib/authz/server';
 import { writeAuditLog } from '@/lib/audit/log';
 import { assertOrgScoped } from '@/lib/phi-access';
 import { isValidPersonName } from '@/lib/patient/name-validator';
-import { Division, PatientSex } from '@prisma/client';
+import { PatientSex } from '@prisma/client';
 import { buildSnapshotStrip } from '@/lib/snapshots/build-snapshot-strip';
 import { deriveAssessmentSnippet } from '@/lib/notes/note-text';
 import type { FinalJsonShape } from '@/lib/notes/build-artifact-prompt';
@@ -28,7 +28,6 @@ const patchSchema = z
     mrn: z.string().min(1).optional(),
     dob: z.string().optional(),
     sex: z.enum(PatientSex).optional(),
-    division: z.enum(Division).optional(),
     siteId: z.string().nullable().optional(),
     phone: z.string().nullable().optional(),
     email: z.string().email().nullable().optional(),
@@ -164,7 +163,6 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       ...(data.mrn !== undefined && { mrn: data.mrn }),
       ...(dob && { dob }),
       ...(data.sex !== undefined && { sex: data.sex }),
-      ...(data.division !== undefined && { division: data.division }),
       ...(data.siteId !== undefined && { siteId: data.siteId }),
       ...(data.phone !== undefined && { phone: data.phone }),
       ...(data.email !== undefined && { email: data.email }),

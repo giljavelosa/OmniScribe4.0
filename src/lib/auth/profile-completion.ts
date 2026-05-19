@@ -1,4 +1,4 @@
-import { Division, OrgRole, type Profession } from '@prisma/client';
+import { Division, OrgRole, Profession } from '@prisma/client';
 
 /** Subset of the NextAuth session.user shape this helper inspects. */
 type ProfileShape = {
@@ -15,12 +15,13 @@ const BYPASSED_ROLES: OrgRole[] = [OrgRole.VIEWER];
 /** Returns true when the user must complete their profile before reaching
  *  a recording-entry surface (`/prepare` or `/capture`). Conditions:
  *  role is non-null AND not VIEWER AND (division is missing-or-MULTI OR
- *  professionType is null). The gate is invoked at the recording pages
- *  themselves so admins can still use /home, /patients, and /admin
- *  freely — they only hit the form when they try to start a visit. */
+ *  professionType is null-or-OTHER). OTHER is refused because note division
+ *  is now derived from profession (PROFESSION_TO_DIVISION) and OTHER maps
+ *  to null — a recording clinician must pick a concrete profession so the
+ *  resolver has a deterministic answer. */
 export function requiresProfileCompletion(user: ProfileShape): boolean {
   if (!user.role || BYPASSED_ROLES.includes(user.role)) return false;
   if (!user.division || user.division === Division.MULTI) return true;
-  if (!user.professionType) return true;
+  if (!user.professionType || user.professionType === Profession.OTHER) return true;
   return false;
 }

@@ -38,8 +38,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
           preferredLanguage: true,
           // ReviewClient snapshot expects these — without them, SSE refetches
           // overwrite the initial server-render's complete patient object and
-          // division/isDeleted become undefined.
-          division: true,
+          // isDeleted becomes undefined.
           isDeleted: true,
         },
       },

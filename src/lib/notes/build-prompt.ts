@@ -129,7 +129,7 @@ export function buildSharedUserBody(input: BuildPromptInput): string {
     `  First name: ${input.patient.firstName}`,
     `  Age: ${input.patient.age}`,
     `  Sex (assigned at birth): ${input.patient.sex}`,
-    `  Division: ${input.patient.division}`,
+    `  Division (this note): ${input.division}`,
     `  Preferred language: ${input.patient.preferredLanguage ?? 'unspecified'}`,
     `  MRN: ${input.patient.mrn}`,
     '',

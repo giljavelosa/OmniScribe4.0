@@ -39,7 +39,6 @@ type ReviewSnapshot = {
     mrn: string;
     dob: string;
     sex: string;
-    division: string;
     preferredLanguage: string | null;
     isDeleted: boolean;
   };
@@ -148,7 +147,6 @@ export function ReviewClient({ noteId, initial, copilotFollowUps }: Props) {
           mrn: snap.patient.mrn,
           dob: new Date(snap.patient.dob),
           sex: snap.patient.sex as never,
-          division: snap.patient.division as never,
           preferredLanguage: snap.patient.preferredLanguage,
           isDeleted: snap.patient.isDeleted,
         }}

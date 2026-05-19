@@ -133,6 +133,8 @@ export function buildFlagAnalyzerUserMessage(input: {
   sectionContent: string;
   transcript: TranscriptClean | null;
   patient: PatientProjection;
+  /** The note's locked division — sourced from `Note.division`, not the patient. */
+  division: string;
 }): string {
   // Treat null transcript OR zero-word transcript OR zero-segment transcript as
   // the same "no source material" case, and label it loudly so the LLM applies
@@ -151,7 +153,7 @@ export function buildFlagAnalyzerUserMessage(input: {
     `  First name: ${input.patient.firstName}`,
     `  Age: ${input.patient.age}`,
     `  Sex (assigned at birth): ${input.patient.sex}`,
-    `  Division: ${input.patient.division}`,
+    `  Division (this note): ${input.division}`,
     `  Preferred language: ${input.patient.preferredLanguage ?? 'unspecified'}`,
     `  MRN: ${input.patient.mrn}`,
     '"""',

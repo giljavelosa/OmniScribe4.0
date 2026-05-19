@@ -6,7 +6,7 @@ import { SectionLabel } from '@/components/ui/section-label';
 type Props = {
   patient: Pick<
     Patient,
-    'firstName' | 'lastName' | 'mrn' | 'dob' | 'sex' | 'division' | 'preferredLanguage' | 'isDeleted'
+    'firstName' | 'lastName' | 'mrn' | 'dob' | 'sex' | 'preferredLanguage' | 'isDeleted'
   >;
   className?: string;
 };
@@ -26,9 +26,6 @@ export function PatientIdentityHeader({ patient, className }: Props) {
         </h1>
         <StatusBadge variant="neutral" noIcon>
           {patient.sex} · {age}
-        </StatusBadge>
-        <StatusBadge variant="neutral" noIcon>
-          {patient.division}
         </StatusBadge>
         {patient.isDeleted && <StatusBadge variant="danger">deleted</StatusBadge>}
       </div>

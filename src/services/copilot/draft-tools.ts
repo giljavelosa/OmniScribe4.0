@@ -96,7 +96,6 @@ async function loadPatientContext(patientId: string, orgId: string) {
       lastName: true,
       dob: true,
       sex: true,
-      division: true,
     },
   });
   if (!patient) return null;
