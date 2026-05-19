@@ -15,7 +15,7 @@ export const metadata: Metadata = { title: 'Patients' };
 
 const PAGE_SIZE = 20;
 
-const ADMIN_ROLES = ['SUPER_ADMIN', 'ORG_ADMIN'] as const;
+const ADMIN_ROLES = ['ORG_ADMIN'] as const;
 
 type SearchParamsShape = Promise<{
   query?: string;

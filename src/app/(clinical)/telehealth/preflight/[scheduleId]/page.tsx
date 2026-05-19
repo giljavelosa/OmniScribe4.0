@@ -23,7 +23,7 @@ export const metadata: Metadata = {
  * in the waiting room.
  *
  * Required: schedule exists in the signed-in org + clinicianOrgUserId
- * matches the caller (or caller is SUPER_ADMIN).
+ * matches the caller (or caller is ORG_ADMIN).
  */
 export default async function TelehealthPreflightPage({
   params,
@@ -47,7 +47,7 @@ export default async function TelehealthPreflightPage({
   if (!schedule) notFound();
 
   const isOwningClinician = schedule.clinicianOrgUserId === orgUserId;
-  if (!isOwningClinician && role !== 'SUPER_ADMIN') {
+  if (!isOwningClinician && role !== 'ORG_ADMIN') {
     return (
       <StatusBanner variant="danger" title="Not your visit">
         You can only preflight telehealth visits assigned to you.

@@ -39,7 +39,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // Defense in depth: a clinician may only mint keys for their own notes.
   // (PHI scoping helper canAccessClinicianOwnedResource will land for richer
   // surfaces in later units; this gate is the explicit Unit-03 version.)
-  if (note.clinicianOrgUserId !== authorizationUser.orgUserId && authorizationUser.role !== 'SUPER_ADMIN') {
+  if (note.clinicianOrgUserId !== authorizationUser.orgUserId && authorizationUser.role !== 'ORG_ADMIN') {
     return NextResponse.json({ error: { code: 'forbidden' } }, { status: 403 });
   }
 

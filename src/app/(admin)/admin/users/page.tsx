@@ -32,7 +32,7 @@ export default async function AdminUsersPage() {
         ...(siteScope.scope === 'enrolled'
           ? {
               OR: [
-                { role: { in: ['SUPER_ADMIN', 'ORG_ADMIN'] } },
+                { role: { in: ['ORG_ADMIN'] } },
                 { siteEnrollments: { some: { siteId: { in: siteScope.siteIds } } } },
               ],
             }
@@ -83,7 +83,7 @@ export default async function AdminUsersPage() {
             </thead>
             <tbody>
               {orgUsers.map((ou) => {
-                const isAllSitesRole = ou.role === 'ORG_ADMIN' || ou.role === 'SUPER_ADMIN';
+                const isAllSitesRole = ou.role === 'ORG_ADMIN';
                 const enrolled = ou.siteEnrollments;
                 return (
                   <tr key={ou.id} className="border-b border-border last:border-b-0">

@@ -95,7 +95,7 @@ export function NewOrgForm() {
         </div>
       </fieldset>
       <div className="space-y-2">
-        <Label htmlFor="aemail">Initial admin email (invited as SUPER_ADMIN)</Label>
+        <Label htmlFor="aemail">Initial admin email (invited as ORG_ADMIN)</Label>
         <Input id="aemail" type="email" required value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} disabled={pending} />
       </div>
       {error && <StatusBanner variant="danger">{error}</StatusBanner>}

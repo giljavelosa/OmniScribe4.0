@@ -19,7 +19,7 @@ import { StatusBadge } from '@/components/ui/status-badge';
 import { SchedulingCard } from '@/components/clinical/scheduling-card';
 import { HomeSearchForm } from './_components/home-search-form';
 
-const ADMIN_ROLES: OrgRole[] = ['SUPER_ADMIN', 'ORG_ADMIN', 'SITE_ADMIN'];
+const ADMIN_ROLES: OrgRole[] = ['ORG_ADMIN', 'SITE_ADMIN'];
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Home' };

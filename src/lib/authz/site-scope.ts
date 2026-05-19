@@ -2,10 +2,10 @@
  * Site scope for clinician multi-site enrollment.
  * Spec: context/specs/clinician-site-enrollment.md
  *
- * Org-wide roles (ORG_ADMIN, SUPER_ADMIN, plus PLATFORM_OWNER / PLATFORM_OPS)
- * implicitly cover every site in scope. They do NOT need OrgUserSite rows —
- * this helper treats them as "all sites" automatically. This avoids forcing
- * org admins to enroll at every site.
+ * Org-wide roles (ORG_ADMIN, plus PLATFORM_OWNER / PLATFORM_OPS) implicitly
+ * cover every site in scope. They do NOT need OrgUserSite rows — this helper
+ * treats them as "all sites" automatically. This avoids forcing org admins to
+ * enroll at every site.
  *
  * SITE_ADMIN, CLINICIAN, and VIEWER are scoped to the OrgUserSite rows that
  * have been written for them. A clinician with zero enrollments has zero
@@ -29,7 +29,7 @@ export type SiteScope =
   | { scope: 'enrolled'; siteIds: string[] };
 
 /** Org-wide roles get "all sites" implicitly (no OrgUserSite row required). */
-const ALL_SITES_ROLES: ReadonlyArray<OrgRole> = ['ORG_ADMIN', 'SUPER_ADMIN'];
+const ALL_SITES_ROLES: ReadonlyArray<OrgRole> = ['ORG_ADMIN'];
 
 export function isAllSitesRole(role: OrgRole): boolean {
   return ALL_SITES_ROLES.includes(role);

@@ -33,7 +33,7 @@ import { assertNotImpersonating } from '@/lib/audit/impersonation';
 import { canUseFeature } from './internal-authorization';
 import type { FeatureKey, AuthorizationUser } from './types';
 
-const ADMIN_ROLES: OrgRole[] = ['SUPER_ADMIN', 'ORG_ADMIN', 'SITE_ADMIN'];
+const ADMIN_ROLES: OrgRole[] = ['ORG_ADMIN', 'SITE_ADMIN'];
 
 export type RequireFeatureAccessOk = {
   user: Session['user'];

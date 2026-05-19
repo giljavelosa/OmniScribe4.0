@@ -25,9 +25,9 @@ beforeEach(() => {
 });
 
 describe('isAllSitesRole', () => {
-  it('returns true for ORG_ADMIN and SUPER_ADMIN', () => {
+  it('returns true for ORG_ADMIN only', () => {
     expect(isAllSitesRole('ORG_ADMIN')).toBe(true);
-    expect(isAllSitesRole('SUPER_ADMIN')).toBe(true);
+    expect(isAllSitesRole('CLINICIAN')).toBe(false);
   });
   it('returns false for SITE_ADMIN, CLINICIAN, VIEWER', () => {
     expect(isAllSitesRole('SITE_ADMIN')).toBe(false);
@@ -48,15 +48,6 @@ describe('getClinicianSiteIds — all-vs-enrolled scope', () => {
     expect(siteFindMany.mock.calls[0]?.[0]).toMatchObject({
       where: { orgId: 'org_1', isArchived: false },
     });
-  });
-
-  it('SUPER_ADMIN gets scope=all just like ORG_ADMIN', async () => {
-    orgUserFindUnique.mockResolvedValueOnce({ role: 'SUPER_ADMIN', orgId: 'org_1' });
-    siteFindMany.mockResolvedValueOnce([{ id: 's1' }]);
-
-    const scope = await getClinicianSiteIds('ou_super', 'org_1');
-    expect(scope.scope).toBe('all');
-    expect(scope.siteIds).toEqual(['s1']);
   });
 
   it('CLINICIAN gets scope=enrolled with their OrgUserSite list', async () => {

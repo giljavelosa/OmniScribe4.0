@@ -60,7 +60,6 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   // we use clinicianOrgUserId.
   if (
     note.clinicianOrgUserId !== authorizationUser.orgUserId &&
-    authorizationUser.role !== 'SUPER_ADMIN' &&
     authorizationUser.role !== 'ORG_ADMIN' &&
     authorizationUser.role !== 'VIEWER'
   ) {
