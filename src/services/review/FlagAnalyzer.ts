@@ -25,6 +25,8 @@ export class FlagAnalyzer {
     sectionContent: string;
     transcript: TranscriptClean | null;
     patient: PatientProjection;
+    /** The note's locked division — sourced from `Note.division`. */
+    division: string;
     requestId?: string;
   }): Promise<FlagAnalyzerOutput> {
     const user = buildFlagAnalyzerUserMessage(input);

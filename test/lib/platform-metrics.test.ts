@@ -85,7 +85,6 @@ beforeAll(async () => {
       lastName: 'Metrics',
       dob: new Date('1980-01-01'),
       sex: PatientSex.FEMALE,
-      division: Division.MEDICAL,
     },
   });
 

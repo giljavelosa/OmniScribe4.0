@@ -62,16 +62,13 @@ const GOAL_STATUS_OPTIONS: EpisodeGoal['status'][] = [
 /**
  * EpisodesPanel — Unit 11 surface for episode lifecycle + goal progression
  * on /patients/[id]. Inline-editable goal status + per-episode actions
- * (recertify / close / reopen). Patient's primary division is shown so a
- * per-episode division override surfaces clearly.
+ * (recertify / close / reopen).
  */
 export function EpisodesPanel({
   patientId,
-  patientDivision,
   episodes,
 }: {
   patientId: string;
-  patientDivision: string;
   episodes: Episode[];
 }) {
   return (
@@ -79,8 +76,7 @@ export function EpisodesPanel({
       <CardHeader>
         <CardTitle className="text-md">Episodes of care</CardTitle>
         <CardDescription>
-          Active + recert-due + discharged. Per-episode division override flagged when it
-          differs from the patient&apos;s primary division ({patientDivision}).
+          Active + recert-due + discharged. Each episode carries its own division.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -91,7 +87,6 @@ export function EpisodesPanel({
             <EpisodeCard
               key={ep.id}
               patientId={patientId}
-              patientDivision={patientDivision}
               episode={ep}
             />
           ))
@@ -103,11 +98,9 @@ export function EpisodesPanel({
 
 function EpisodeCard({
   patientId,
-  patientDivision,
   episode,
 }: {
   patientId: string;
-  patientDivision: string;
   episode: Episode;
 }) {
   const router = useRouter();
@@ -116,7 +109,6 @@ function EpisodeCard({
   const [reopenOpen, setReopenOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const divisionOverride = episode.division !== patientDivision;
   const recertCells = recertCellInfo(episode.recertDueAt, episode.status);
   const visitCells = visitCellInfo(episode.visitsCompleted, episode.visitsAuthorized);
   const isClosed = episode.status === 'DISCHARGED' || episode.status === 'CANCELLED';
@@ -153,11 +145,6 @@ function EpisodeCard({
                 <span className="text-muted-foreground text-sm">({episode.bodyPart})</span>
               )}
               <StatusBadge variant="neutral" noIcon>{episode.division}</StatusBadge>
-              {divisionOverride && (
-                <StatusBadge variant="warning" noIcon>
-                  ≠ patient ({patientDivision})
-                </StatusBadge>
-              )}
               <StatusBadge variant={statusVariant(episode.status)} noIcon>
                 {episode.status}
               </StatusBadge>

@@ -17,7 +17,6 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { StatusBanner } from '@/components/ui/status-banner';
 
-const DIVISIONS = ['MEDICAL', 'REHAB', 'BEHAVIORAL_HEALTH', 'MULTI'] as const;
 const SEXES = ['MALE', 'FEMALE', 'OTHER', 'UNKNOWN'] as const;
 
 export function AddPatientButton() {
@@ -28,7 +27,6 @@ export function AddPatientButton() {
   const [mrn, setMrn] = useState('');
   const [dob, setDob] = useState('');
   const [sex, setSex] = useState<(typeof SEXES)[number]>('UNKNOWN');
-  const [division, setDivision] = useState<(typeof DIVISIONS)[number]>('MEDICAL');
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -38,7 +36,7 @@ export function AddPatientButton() {
       const res = await fetch('/api/patients', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ firstName, lastName, mrn, dob, sex, division }),
+        body: JSON.stringify({ firstName, lastName, mrn, dob, sex }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => null);
@@ -85,25 +83,14 @@ export function AddPatientButton() {
               <Input id="dob" type="date" required value={dob} onChange={(e) => setDob(e.target.value)} disabled={pending} />
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-2">
-              <Label>Sex (SAAB)</Label>
-              <Select value={sex} onValueChange={(v) => setSex(v as (typeof SEXES)[number])} disabled={pending}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {SEXES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>Division</Label>
-              <Select value={division} onValueChange={(v) => setDivision(v as (typeof DIVISIONS)[number])} disabled={pending}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {DIVISIONS.map((d) => <SelectItem key={d} value={d}>{d}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
+          <div className="space-y-2">
+            <Label>Sex (SAAB)</Label>
+            <Select value={sex} onValueChange={(v) => setSex(v as (typeof SEXES)[number])} disabled={pending}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {SEXES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+              </SelectContent>
+            </Select>
           </div>
           {error && <StatusBanner variant="danger">{error}</StatusBanner>}
         </div>

@@ -25,7 +25,10 @@ const bodySchema = z.object({
     (d) => d !== Division.MULTI,
     { message: 'Division MULTI cannot be a per-clinician choice.' },
   ),
-  professionType: z.nativeEnum(Profession),
+  professionType: z.nativeEnum(Profession).refine(
+    (p) => p !== Profession.OTHER,
+    { message: 'Profession "Other" is not allowed for recording clinicians — pick a concrete profession.' },
+  ),
   profession: z.string().max(200).optional(),
 });
 

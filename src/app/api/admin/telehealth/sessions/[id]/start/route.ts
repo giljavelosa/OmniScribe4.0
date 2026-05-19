@@ -6,6 +6,7 @@ import { writeAuditLog } from '@/lib/audit/log';
 import { assertOrgScoped } from '@/lib/phi-access';
 import { createRoom, dailyConfig } from '@/services/telehealth/daily';
 import { startVisit } from '@/lib/encounters/start';
+import { DivisionResolutionError } from '@/lib/divisions/resolve';
 
 export const runtime = 'nodejs';
 
@@ -79,30 +80,50 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     expiresAt: session.magicExpiresAt,
   });
 
-  const { noteId, encounterId } = await prisma.$transaction(async (tx) => {
-    const { encounter, note } = await startVisit({
-      tx,
-      orgId: session.orgId,
-      patientId: session.patientId,
-      clinicianOrgUserId: session.schedule.clinicianOrgUserId,
-      siteId: session.schedule.siteId,
-      roomId: session.schedule.roomId,
-      scheduleId: session.scheduleId,
-      actingUserId: user.id,
+  let started: { noteId: string; encounterId: string };
+  try {
+    started = await prisma.$transaction(async (tx) => {
+      const { encounter, note } = await startVisit({
+        tx,
+        orgId: session.orgId,
+        patientId: session.patientId,
+        clinicianOrgUserId: session.schedule.clinicianOrgUserId,
+        siteId: session.schedule.siteId,
+        roomId: session.schedule.roomId,
+        scheduleId: session.scheduleId,
+        actingUserId: user.id,
+      });
+      await tx.telehealthSession.update({
+        where: { id },
+        data: {
+          status: 'ACTIVE',
+          startedAt: new Date(),
+          roomName: room.roomName,
+          roomUrl: room.roomUrl,
+          roomExpiresAt: room.expiresAt,
+          noteId: note.id,
+        },
+      });
+      return { noteId: note.id, encounterId: encounter.id };
     });
-    await tx.telehealthSession.update({
-      where: { id },
-      data: {
-        status: 'ACTIVE',
-        startedAt: new Date(),
-        roomName: room.roomName,
-        roomUrl: room.roomUrl,
-        roomExpiresAt: room.expiresAt,
-        noteId: note.id,
-      },
-    });
-    return { noteId: note.id, encounterId: encounter.id };
-  });
+  } catch (err) {
+    if (err instanceof DivisionResolutionError) {
+      return NextResponse.json(
+        {
+          error: {
+            code: err.code,
+            message:
+              err.code === 'profession_other_blocked'
+                ? 'Your profession is set to "Other" — please update it on your profile before recording.'
+                : 'Could not derive a note division for this visit.',
+          },
+        },
+        { status: 422 },
+      );
+    }
+    throw err;
+  }
+  const { noteId, encounterId } = started;
 
   await writeAuditLog({
     userId: user.id,

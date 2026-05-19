@@ -75,7 +75,6 @@ beforeAll(async () => {
       lastName: 'DraftPatient',
       dob: new Date('1980-01-01'),
       sex: PatientSex.FEMALE,
-      division: Division.MEDICAL,
     },
   });
   // Signed note with a Plan section so the loader has something to grip.

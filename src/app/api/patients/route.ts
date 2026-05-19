@@ -5,7 +5,7 @@ import { prisma } from '@/lib/prisma';
 import { requireFeatureAccess } from '@/lib/authz/server';
 import { writeAuditLog } from '@/lib/audit/log';
 import { isValidPersonName } from '@/lib/patient/name-validator';
-import { Division, PatientSex, PatientAddressKind, PatientCoverageStatus } from '@prisma/client';
+import { PatientSex, PatientAddressKind, PatientCoverageStatus } from '@prisma/client';
 
 export const runtime = 'nodejs';
 
@@ -23,7 +23,6 @@ const createSchema = z.object({
   mrn: z.string().min(1),
   dob: z.string().min(1),
   sex: z.enum(PatientSex),
-  division: z.enum(Division),
   siteId: z.string().optional(),
   phone: z.string().optional(),
   email: z.string().email().optional(),
@@ -57,14 +56,12 @@ export async function GET(req: Request) {
 
   const url = new URL(req.url);
   const rawQuery = (url.searchParams.get('query') ?? '').trim();
-  const division = url.searchParams.get('division') as Division | null;
   const includeDeleted = url.searchParams.get('includeDeleted') === '1';
   const page = Math.max(1, Number(url.searchParams.get('page') ?? '1') || 1);
 
   const where = {
     orgId: authorizationUser.orgId,
     ...(includeDeleted ? {} : { isDeleted: false }),
-    ...(division ? { division } : {}),
     ...(rawQuery
       ? {
           OR: [
@@ -90,7 +87,6 @@ export async function GET(req: Request) {
         mrn: true,
         dob: true,
         sex: true,
-        division: true,
         siteId: true,
         isDeleted: true,
         encounters: {
@@ -106,7 +102,7 @@ export async function GET(req: Request) {
     userId: user.id,
     orgId: authorizationUser.orgId,
     action: 'PATIENT_SEARCHED',
-    metadata: { queryLength: rawQuery.length, page, division, includeDeleted, totalMatched: total },
+    metadata: { queryLength: rawQuery.length, page, includeDeleted, totalMatched: total },
   });
 
   return NextResponse.json({ data: { items, total, page, pageSize: PAGE_SIZE } });
@@ -140,7 +136,6 @@ export async function POST(req: Request) {
       data: {
         orgId: authorizationUser.orgId,
         siteId: data.siteId,
-        division: data.division,
         firstName: data.firstName,
         lastName: data.lastName,
         mrn: data.mrn,
@@ -166,7 +161,7 @@ export async function POST(req: Request) {
     action: 'PATIENT_CREATED',
     resourceType: 'Patient',
     resourceId: patient.id,
-    metadata: { division: patient.division, hadAddress: !!data.address, hadCoverage: !!data.coverage },
+    metadata: { hadAddress: !!data.address, hadCoverage: !!data.coverage },
   });
 
   return NextResponse.json({ data: { id: patient.id } });

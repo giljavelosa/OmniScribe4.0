@@ -7,6 +7,7 @@ import { requireFeatureAccess } from '@/lib/authz/server';
 import { canActAtSite, getClinicianSiteIds } from '@/lib/authz/site-scope';
 import { writeAuditLog } from '@/lib/audit/log';
 import { startVisit, type PickerSource } from '@/lib/encounters/start';
+import { DivisionResolutionError } from '@/lib/divisions/resolve';
 
 export const runtime = 'nodejs';
 
@@ -140,6 +141,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       if (existing && existingNote) {
         return NextResponse.json({ data: { noteId: existingNote.id, encounterId: existing.id } });
       }
+    }
+    if (err instanceof DivisionResolutionError) {
+      return NextResponse.json(
+        {
+          error: {
+            code: err.code,
+            message:
+              err.code === 'profession_other_blocked'
+                ? 'Your profession is set to "Other" — please update it on your profile before recording.'
+                : 'Could not derive a note division for this visit.',
+          },
+        },
+        { status: 422 },
+      );
     }
     throw err;
   }

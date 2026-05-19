@@ -11,7 +11,6 @@ const patient: PatientProjection = {
   firstName: 'Riley',
   age: 42,
   sex: 'F',
-  division: 'MEDICAL',
   preferredLanguage: 'English',
   mrn: 'MRN-TEST-001',
 };

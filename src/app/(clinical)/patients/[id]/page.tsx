@@ -323,7 +323,6 @@ export default async function PatientDetailPage({
         <div className="space-y-4 min-w-0">
           <EpisodesPanel
             patientId={patient.id}
-            patientDivision={patient.division}
             episodes={episodesForPanel}
           />
 

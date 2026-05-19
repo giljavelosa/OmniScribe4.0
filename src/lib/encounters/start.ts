@@ -62,37 +62,44 @@ export type StartVisitArgs = {
 };
 
 export async function startVisit(args: StartVisitArgs) {
-  const [patient, org, explicitEpisode] = await Promise.all([
-    args.tx.patient.findUnique({ where: { id: args.patientId } }),
+  const [patient, org, clinician, explicitEpisode] = await Promise.all([
+    args.tx.patient.findUnique({ where: { id: args.patientId }, select: { id: true } }),
     args.tx.organization.findUnique({
       where: { id: args.orgId },
       select: { division: true, defaultDivision: true },
     }),
+    args.tx.orgUser.findUnique({
+      where: { id: args.clinicianOrgUserId },
+      select: { professionType: true, division: true },
+    }),
     args.episodeOfCareId
       ? args.tx.episodeOfCare.findUnique({
           where: { id: args.episodeOfCareId },
-          select: { id: true, division: true },
+          select: { id: true },
         })
       : Promise.resolve(null),
   ]);
   if (!patient) throw new Error('startVisit: patient missing');
   if (!org) throw new Error('startVisit: org missing');
+  if (!clinician) throw new Error('startVisit: clinician OrgUser missing');
 
   // Auto-link to the patient's single active episode if the caller didn't
   // specify one. Common case for outpatient PT/OT/SLP where a patient comes
-  // in for the SAME ongoing rehab episode — without this, the resolver falls
-  // through to org.defaultDivision and a REHAB patient's notes get tagged
-  // MEDICAL, missing the REHAB master prompt (CPT codes, skilled-care lens).
+  // in for the SAME ongoing rehab episode — keeps goal/progress tracking
+  // attached to the right episode without a picker tap.
+  // Division resolution is now profession-driven (resolveDivisionForNote),
+  // so the auto-link no longer affects what note master prompt fires; it's
+  // purely about clinical continuity (goals, recert, episode visit counts).
   // We deliberately do NOT auto-link if multiple ACTIVE episodes exist —
   // multi-episode patients require explicit clinician choice.
-  let episode: { id: string; division: typeof patient.division } | null = explicitEpisode;
+  let episode: { id: string } | null = explicitEpisode;
   // When startVisit auto-links because the caller didn't supply, mark the
   // audit row so the picker-vs-fallback split stays observable.
   let resolvedSource: PickerSource = args.pickerSource ?? 'unspecified';
   if (!episode && !args.episodeOfCareId) {
     const active = await args.tx.episodeOfCare.findMany({
       where: { patientId: args.patientId, status: 'ACTIVE' },
-      select: { id: true, division: true },
+      select: { id: true },
       take: 2,
     });
     if (active.length === 1) {
@@ -104,8 +111,7 @@ export async function startVisit(args: StartVisitArgs) {
   }
 
   const division = resolveDivisionForNote({
-    patient: { division: patient.division },
-    episode: episode ? { division: episode.division } : null,
+    clinician: { professionType: clinician.professionType, division: clinician.division },
     org,
   });
 

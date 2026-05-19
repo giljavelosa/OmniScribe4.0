@@ -32,6 +32,36 @@ export const CLINICIAN_PICKABLE_DIVISIONS: Division[] = [
   Division.BEHAVIORAL_HEALTH,
 ];
 
-/** All Profession enum values in display order (matches LABELS object key
- *  insertion order). Useful for rendering `<select>` options. */
-export const PROFESSION_OPTIONS: Profession[] = Object.keys(LABELS) as Profession[];
+/** Profession values offered in the profile-completion picker. OTHER is
+ *  intentionally excluded — recording clinicians must pick a concrete
+ *  profession because note division is derived from it. Legacy rows with
+ *  professionType=OTHER are gated by `requiresProfileCompletion` and routed
+ *  back to /onboarding/profile to make a concrete choice. */
+export const PROFESSION_OPTIONS: Profession[] = (Object.keys(LABELS) as Profession[]).filter(
+  (p) => p !== Profession.OTHER,
+);
+
+/** Profession → Division. Load-bearing at recording start: a note's division
+ *  is derived from the recording clinician's profession, NOT from the patient.
+ *  OTHER maps to null and is blocked at the profile-completion gate — clinicians
+ *  must choose a concrete profession before they can record. */
+export const PROFESSION_TO_DIVISION: Record<Profession, Division | null> = {
+  [Profession.MD]: Division.MEDICAL,
+  [Profession.DO]: Division.MEDICAL,
+  [Profession.NP]: Division.MEDICAL,
+  [Profession.PA]: Division.MEDICAL,
+  [Profession.RN]: Division.MEDICAL,
+  [Profession.OT]: Division.REHAB,
+  [Profession.PT]: Division.REHAB,
+  [Profession.SLP]: Division.REHAB,
+  [Profession.LCSW]: Division.BEHAVIORAL_HEALTH,
+  [Profession.LMFT]: Division.BEHAVIORAL_HEALTH,
+  [Profession.LPC]: Division.BEHAVIORAL_HEALTH,
+  [Profession.PSYCHOLOGIST]: Division.BEHAVIORAL_HEALTH,
+  [Profession.OTHER]: null,
+};
+
+export function divisionForProfession(p: Profession | null): Division | null {
+  if (!p) return null;
+  return PROFESSION_TO_DIVISION[p];
+}

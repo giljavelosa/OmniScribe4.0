@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma';
 import { requireFeatureAccess } from '@/lib/authz/server';
 import { canActAtSite, getClinicianSiteIds } from '@/lib/authz/site-scope';
 import { startVisit } from '@/lib/encounters/start';
+import { DivisionResolutionError } from '@/lib/divisions/resolve';
 import {
   evaluateDateOfService,
   LATE_ENTRY_MAX_DAYS,
@@ -136,23 +137,44 @@ export async function POST(req: Request) {
     };
   }
 
-  const { encounter, note } = await prisma.$transaction(async (tx) =>
-    startVisit({
-      tx,
-      orgId: authorizationUser.orgId,
-      patientId: patient.id,
-      clinicianOrgUserId: authorizationUser.orgUserId,
-      siteId,
-      roomId: data.roomId,
-      departmentId: data.departmentId,
-      episodeOfCareId: data.episodeOfCareId,
-      actingUserId: user.id,
-      pickerSource: data.pickerSource,
-      dateOfService: lateEntry.dateOfService,
-      isLateEntry: lateEntry.isLateEntry,
-      lateEntryDaysGap: lateEntry.lateEntryDaysGap,
-    }),
-  );
+  let result: { encounter: { id: string }; note: { id: string } };
+  try {
+    result = await prisma.$transaction(async (tx) =>
+      startVisit({
+        tx,
+        orgId: authorizationUser.orgId,
+        patientId: patient.id,
+        clinicianOrgUserId: authorizationUser.orgUserId,
+        siteId,
+        roomId: data.roomId,
+        departmentId: data.departmentId,
+        episodeOfCareId: data.episodeOfCareId,
+        actingUserId: user.id,
+        pickerSource: data.pickerSource,
+        dateOfService: lateEntry.dateOfService,
+        isLateEntry: lateEntry.isLateEntry,
+        lateEntryDaysGap: lateEntry.lateEntryDaysGap,
+      }),
+    );
+  } catch (err) {
+    if (err instanceof DivisionResolutionError) {
+      return NextResponse.json(
+        {
+          error: {
+            code: err.code,
+            message:
+              err.code === 'profession_other_blocked'
+                ? 'Your profession is set to "Other" — please update it on your profile before recording.'
+                : 'Could not derive a note division for this visit.',
+          },
+        },
+        { status: 422 },
+      );
+    }
+    throw err;
+  }
 
-  return NextResponse.json({ data: { encounterId: encounter.id, noteId: note.id } });
+  return NextResponse.json({
+    data: { encounterId: result.encounter.id, noteId: result.note.id },
+  });
 }

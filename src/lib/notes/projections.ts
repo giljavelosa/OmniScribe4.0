@@ -5,8 +5,10 @@
  * meaningful note. Anything beyond that is friction / leak surface. These
  * projections deliberately limit what goes into the prompt:
  *
- *   - Patient: first name, age, sex, division, preferred language, MRN (for
+ *   - Patient: first name, age, sex, preferred language, MRN (for
  *     traceability in the note header). DOB/SSN/phone/email NEVER projected.
+ *     Note division is passed separately by callers (sourced from
+ *     `note.division`, not from the patient).
  *   - Episode : department + diagnosis + body part + active LTG/STG goal
  *     texts. Goal status. NEVER raw goal IDs or note IDs.
  */
@@ -17,7 +19,6 @@ export type PatientProjection = {
   firstName: string;
   age: number;
   sex: string;
-  division: string;
   preferredLanguage: string | null;
   mrn: string;
 };
@@ -27,7 +28,6 @@ export function projectPatientForPrompt(patient: Patient): PatientProjection {
     firstName: patient.firstName,
     age: ageInYears(patient.dob),
     sex: patient.sex,
-    division: patient.division,
     preferredLanguage: patient.preferredLanguage,
     mrn: patient.mrn,
   };

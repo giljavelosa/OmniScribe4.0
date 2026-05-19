@@ -91,7 +91,6 @@ export default async function ReviewPage({ params }: { params: Promise<{ noteId:
             mrn: note.patient.mrn,
             dob: note.patient.dob.toISOString(),
             sex: note.patient.sex,
-            division: note.patient.division,
             preferredLanguage: note.patient.preferredLanguage,
             isDeleted: note.patient.isDeleted,
           },

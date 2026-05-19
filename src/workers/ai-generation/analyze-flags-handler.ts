@@ -79,6 +79,7 @@ export async function handleAnalyzeFlags(job: Job<AnalyzeFlagsJob>) {
         sectionContent: content,
         transcript,
         patient,
+        division: note.division,
         requestId: `${requestId}:${section.id}`,
       });
     } catch (err) {
