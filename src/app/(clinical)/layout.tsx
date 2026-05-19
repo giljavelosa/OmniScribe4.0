@@ -4,7 +4,6 @@ import { auth } from '@/lib/auth';
 import { BrandWordmark } from '@/components/brand-wordmark';
 import { AppNav } from '@/components/app-nav';
 import { postSigninRedirect } from '@/lib/post-signin-redirect';
-import { requiresProfileCompletion } from '@/lib/auth/profile-completion';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,13 +27,10 @@ export default async function ClinicalLayout({ children }: { children: ReactNode
   });
   if (target !== '/home') redirect(target);
 
-  // Profile-completion gate: a CLINICIAN without a concrete division +
-  // categorical professionType cannot reach /capture or any (clinical)
-  // surface. Division=MULTI is treated as "not chosen" because it's the
-  // org-aggregate value, not a per-clinician scope of practice.
-  if (requiresProfileCompletion(session.user)) {
-    redirect('/onboarding/profile');
-  }
+  // Note: profile-completion gate lives on the two recording-entry pages
+  // (/prepare/[noteId], /capture/[noteId]) rather than this layout —
+  // admins also record, so we don't want to block /home or /patients on
+  // profile completeness.
 
   return (
     <div className="flex-1 flex flex-col">

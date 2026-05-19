@@ -1,9 +1,10 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { notFound } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+import { requiresProfileCompletion } from '@/lib/auth/profile-completion';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { StatusBadge } from '@/components/ui/status-badge';
@@ -26,6 +27,10 @@ export default async function PreparePage({ params }: { params: Promise<{ noteId
   const { noteId } = await params;
   const session = await auth();
   if (!session?.user?.orgId) return null;
+  // Profile-completion gate: any role that ever records (CLINICIAN or
+  // admin acting as clinician) must declare division + professionType
+  // before reaching the recording-entry surface.
+  if (requiresProfileCompletion(session.user)) redirect('/onboarding/profile');
 
   const note = await prisma.note.findFirst({
     where: { id: noteId, orgId: session.user.orgId },
