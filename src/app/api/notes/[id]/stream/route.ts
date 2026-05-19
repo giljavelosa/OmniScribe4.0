@@ -54,7 +54,6 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   assertOrgScoped(note.orgId, authorizationUser.orgId);
   if (
     note.clinicianOrgUserId !== authorizationUser.orgUserId &&
-    authorizationUser.role !== 'SUPER_ADMIN' &&
     authorizationUser.role !== 'ORG_ADMIN' &&
     authorizationUser.role !== 'VIEWER'
   ) {

@@ -34,7 +34,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   assertOrgScoped(identity.orgId, authorizationUser.orgId);
 
   // Authorization: org admin (TEAM_MEMBERS_MANAGE) OR the owning clinician.
-  const isAdmin = ['SUPER_ADMIN', 'ORG_ADMIN', 'SITE_ADMIN'].includes(authorizationUser.role);
+  const isAdmin = ['ORG_ADMIN', 'SITE_ADMIN'].includes(authorizationUser.role);
   const isOwner = identity.clinicianOrgUserId === authorizationUser.orgUserId;
   if (!isAdmin && !isOwner) {
     return NextResponse.json({ error: { code: 'forbidden' } }, { status: 403 });

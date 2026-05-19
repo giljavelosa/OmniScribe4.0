@@ -27,7 +27,6 @@ enum ComplianceProfile {
 }
 
 enum OrgRole {
-  SUPER_ADMIN
   ORG_ADMIN
   SITE_ADMIN
   CLINICIAN

@@ -24,7 +24,7 @@ export const metadata: Metadata = {
  *     - TelehealthSession exists for the schedule (1:1) and is ACTIVE
  *     - session.noteId is set (Unit 16 always sets it on start)
  *     - schedule.clinicianOrgUserId === current orgUserId, OR caller is
- *       SUPER_ADMIN (defense in depth)
+ *       ORG_ADMIN (defense in depth)
  *
  * Pre-active sessions get a friendly card pointing back to /home; they
  * shouldn't normally land here because Unit 16's start endpoint is the
@@ -51,7 +51,7 @@ export default async function TelehealthRoomPage({
   if (!schedule) notFound();
 
   const isOwningClinician = schedule.clinicianOrgUserId === orgUserId;
-  const isPlatformAdmin = role === 'SUPER_ADMIN';
+  const isPlatformAdmin = role === 'ORG_ADMIN';
   if (!isOwningClinician && !isPlatformAdmin) {
     return (
       <StatusBanner variant="danger" title="Not your visit">

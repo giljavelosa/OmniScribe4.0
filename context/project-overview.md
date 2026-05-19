@@ -16,7 +16,7 @@ Three primary personas. Each maps to a `Division`:
 
 Plus two operator personas:
 
-- **Org admin** (any senior clinician with `SUPER_ADMIN` / `ORG_ADMIN` / `SITE_ADMIN`) — manages sites, rooms, users, seats, templates, billing.
+- **Org admin** (`OrgRole.ORG_ADMIN` for the org's owner, `OrgRole.SITE_ADMIN` for site-scoped admins) — manages sites, rooms, users, seats, templates, billing.
 - **Platform owner** (your team) — provisions customer orgs, manages BAA, allocates seats, supports.
 
 ## Goals
@@ -132,7 +132,7 @@ Read [`journeys/05-copilot-ask-mode.md`](../journeys/05-copilot-ask-mode.md) for
 
 Verifiable when all of the following are true on production with a real customer:
 
-1. **Onboarding** — a platform owner can provision a new Organization with BAA fields, invite a first SUPER_ADMIN, and that admin can accept the invite, set a password, and enroll TOTP MFA without leaving the product. (Journey 07 + 01)
+1. **Onboarding** — a platform owner can provision a new Organization with BAA fields, invite a first ORG_ADMIN, and that admin can accept the invite, set a password, and enroll TOTP MFA without leaving the product. (Journey 07 + 01)
 2. **Auth resilience** — a clinician can complete password reset and MFA reset via in-product workflows; admin-initiated MFA reset is audited.
 3. **End-to-end recording → signed note** — a signed-in clinician can pick a scheduled patient, record a live 5-minute encounter, see live diarized transcript + section progress strip, transition to `/review`, edit one section + regenerate another, sweep open follow-ups, and sign the note in ≤ 5 minutes of clinician interaction time. (Journey 02)
 4. **`finalJson` immutability verified** — automated test asserts that no code path mutates `Note.finalJson` after `Note.status === SIGNED`.

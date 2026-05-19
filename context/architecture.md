@@ -42,7 +42,7 @@ Each top-level folder under `src/` owns exactly one responsibility. Cross-folder
 
 - **`src/app/(auth)/`** — public sign-in, signup-via-invite, password reset, MFA challenge. No authenticated session required.
 - **`src/app/(clinical)/`** — clinician workspace: `/home`, `/patients`, `/prepare/[noteId]`, `/capture/[noteId]`, `/processing/[noteId]`, `/review/[noteId]`, `/sign/[noteId]`, `/drafts`, `/templates`, `/profile`, `/profile/voice`. Gated by `requireFeatureAccess` + division scoping.
-- **`src/app/(admin)/`** — org-admin console: users, sites, rooms, seats, billing, manage-templates, voice profile admin, audit, org-settings, dashboard. Gated by `OrgRole` ∈ `{ADMIN, SUPER_ADMIN, SITE_ADMIN, ORG_ADMIN}`.
+- **`src/app/(admin)/`** — org-admin console: users, sites, rooms, seats, billing, manage-templates, voice profile admin, audit, org-settings, dashboard. Gated by `OrgRole` ∈ `{ORG_ADMIN, SITE_ADMIN}`.
 - **`src/app/(telehealth)/`** — `/telehealth/room/[scheduleId]`, `/telehealth/waiting/[scheduleId]`. Clinician + patient telehealth surfaces.
 - **`src/app/v/[magicToken]/`** — public telehealth patient identity verification.
 - **`src/app/(owner)/`** — platform-owner cross-org console. Gated by `PlatformRole = PLATFORM_OWNER`.
@@ -90,7 +90,7 @@ Build the `prisma/schema.prisma` file with these models grouped by domain. Migra
 
 ### Identity & Roles
 - `User` — global identity; `email` (unique), `passwordHash`, `mfaSecret`, `mfaEnabled`, `platformRole` (`PLATFORM_OWNER` | `NONE`).
-- `OrgUser` — membership row joining User × Org; `role` ∈ `{SUPER_ADMIN, ORG_ADMIN, SITE_ADMIN, CLINICIAN, VIEWER}`, `division`, `profession`, `canManagePatients`, `preferredNoteStyle`.
+- `OrgUser` — membership row joining User × Org; `role` ∈ `{ORG_ADMIN, SITE_ADMIN, CLINICIAN, VIEWER}`, `division`, `profession`, `canManagePatients`, `preferredNoteStyle`. Platform-owner authority is exclusively on `User.platformRole = PLATFORM_OWNER` — never conflated with OrgRole.
 - `UserSession` — active session tokens.
 - `PractitionerProfile` — clinician identity for EHR (NPI, specialty, display name).
 - `Invite` — org-scoped user invites with role pre-configured; `expiresAt`, `consumedAt`.

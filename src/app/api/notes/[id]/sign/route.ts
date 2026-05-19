@@ -52,7 +52,7 @@ const bodySchema = z.object({
  *   - 401 mfa_required if user has no mfaSecret (shouldn't happen with
  *     D2 always-required, but defense)
  *   - 401 invalid_mfa if the TOTP doesn't verify
- *   - 403 forbidden if user isn't the assigned clinician (or SUPER_ADMIN
+ *   - 403 forbidden if user isn't the assigned clinician (or ORG_ADMIN
  *     for incident response)
  */
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -73,7 +73,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!note) return NextResponse.json({ error: { code: 'not_found' } }, { status: 404 });
   if (
     note.clinicianOrgUserId !== authorizationUser.orgUserId &&
-    authorizationUser.role !== 'SUPER_ADMIN'
+    authorizationUser.role !== 'ORG_ADMIN'
   ) {
     return NextResponse.json({ error: { code: 'forbidden' } }, { status: 403 });
   }

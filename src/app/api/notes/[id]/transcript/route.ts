@@ -36,7 +36,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
   if (
     note.clinicianOrgUserId !== authorizationUser.orgUserId &&
-    authorizationUser.role !== 'SUPER_ADMIN'
+    authorizationUser.role !== 'ORG_ADMIN'
   ) {
     return NextResponse.json({ error: { code: 'forbidden' } }, { status: 403 });
   }

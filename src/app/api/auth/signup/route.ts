@@ -36,7 +36,7 @@ const bodySchema = z.object({
  *   4. Email uniqueness check (returns 409 — no enumeration risk for
  *      a self-serve signup; pretending the email IS available would
  *      just make the next step fail anyway).
- *   5. Atomic transaction: Organization + User + OrgUser(SUPER_ADMIN)
+ *   5. Atomic transaction: Organization + User + OrgUser(ORG_ADMIN)
  *      + Seat. Default subscription = STARTER, compliance =
  *      STANDARD, no BAA.
  *   6. Audit ORG_SELF_PROVISIONED twice (org-scope + platform-scope).
@@ -132,7 +132,7 @@ export async function POST(req: Request) {
       data: {
         orgId: newOrg.id,
         userId: newUser.id,
-        role: OrgRole.SUPER_ADMIN,
+        role: OrgRole.ORG_ADMIN,
         division: data.division,
         isActive: true,
       },

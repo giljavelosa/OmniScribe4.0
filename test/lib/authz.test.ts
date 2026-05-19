@@ -18,8 +18,8 @@ function mkUser(over: Partial<AuthorizationUser> = {}): AuthorizationUser {
 }
 
 describe('canUseFeature matrix', () => {
-  it('SUPER_ADMIN can do everything', () => {
-    const u = mkUser({ role: 'SUPER_ADMIN' as OrgRole });
+  it('ORG_ADMIN can do everything (absorbed former SUPER_ADMIN powers)', () => {
+    const u = mkUser({ role: 'ORG_ADMIN' as OrgRole });
     expect(canUseFeature('NOTE_SIGN', u)).toBe(true);
     expect(canUseFeature('TEAM_MEMBERS_MANAGE', u)).toBe(true);
     expect(canUseFeature('PATIENT_MANAGEMENT', u)).toBe(true);
@@ -40,27 +40,26 @@ describe('canUseFeature matrix', () => {
     expect(canUseFeature('NOTE_SIGN', u)).toBe(false);
   });
 
-  it('PATIENT_MANAGEMENT is gated by canManagePatients for non-SUPER_ADMIN, non-VIEWER roles', () => {
-    // SUPER_ADMIN bypasses the toggle entirely.
-    expect(canUseFeature('PATIENT_MANAGEMENT', mkUser({ role: 'SUPER_ADMIN', canManagePatients: false }))).toBe(true);
-    expect(canUseFeature('PATIENT_MANAGEMENT', mkUser({ role: 'SUPER_ADMIN', canManagePatients: true }))).toBe(true);
+  it('PATIENT_MANAGEMENT is gated by canManagePatients for non-ORG_ADMIN, non-VIEWER roles', () => {
+    // ORG_ADMIN bypasses the toggle entirely.
+    expect(canUseFeature('PATIENT_MANAGEMENT', mkUser({ role: 'ORG_ADMIN', canManagePatients: false }))).toBe(true);
+    expect(canUseFeature('PATIENT_MANAGEMENT', mkUser({ role: 'ORG_ADMIN', canManagePatients: true }))).toBe(true);
     // VIEWER never gets PATIENT_MANAGEMENT regardless of toggle (viewers don't create patients).
     expect(canUseFeature('PATIENT_MANAGEMENT', mkUser({ role: 'VIEWER', canManagePatients: false }))).toBe(false);
     expect(canUseFeature('PATIENT_MANAGEMENT', mkUser({ role: 'VIEWER', canManagePatients: true }))).toBe(false);
-    // CLINICIAN, ORG_ADMIN, SITE_ADMIN: gated by canManagePatients flag.
+    // CLINICIAN, SITE_ADMIN: gated by canManagePatients flag.
     expect(canUseFeature('PATIENT_MANAGEMENT', mkUser({ role: 'CLINICIAN', canManagePatients: false }))).toBe(false);
     expect(canUseFeature('PATIENT_MANAGEMENT', mkUser({ role: 'CLINICIAN', canManagePatients: true }))).toBe(true);
-    expect(canUseFeature('PATIENT_MANAGEMENT', mkUser({ role: 'ORG_ADMIN', canManagePatients: false }))).toBe(false);
-    expect(canUseFeature('PATIENT_MANAGEMENT', mkUser({ role: 'ORG_ADMIN', canManagePatients: true }))).toBe(true);
     expect(canUseFeature('PATIENT_MANAGEMENT', mkUser({ role: 'SITE_ADMIN', canManagePatients: false }))).toBe(false);
     expect(canUseFeature('PATIENT_MANAGEMENT', mkUser({ role: 'SITE_ADMIN', canManagePatients: true }))).toBe(true);
   });
 
-  it('ORG_ADMIN gets team + billing, not clinical', () => {
-    const u = mkUser({ role: 'ORG_ADMIN' as OrgRole });
+  it('SITE_ADMIN gets visit creation + team management, not note signing', () => {
+    const u = mkUser({ role: 'SITE_ADMIN' as OrgRole });
+    expect(canUseFeature('VISITS_CREATE', u)).toBe(true);
     expect(canUseFeature('TEAM_MEMBERS_MANAGE', u)).toBe(true);
-    expect(canUseFeature('BILLING_MANAGE', u)).toBe(true);
     expect(canUseFeature('NOTE_SIGN', u)).toBe(false);
+    expect(canUseFeature('BILLING_MANAGE', u)).toBe(false);
   });
 });
 

@@ -18,7 +18,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch';
 import { StatusBanner } from '@/components/ui/status-banner';
 
-const ROLES = ['CLINICIAN', 'VIEWER', 'SITE_ADMIN', 'ORG_ADMIN', 'SUPER_ADMIN'] as const;
+/** Roles an org admin can invite. ORG_ADMIN
+ *  are NOT invitable — those elevations happen only at org-provisioning
+ *  time (owner console / signup), never via the team-members surface. */
+const ROLES = ['CLINICIAN', 'VIEWER', 'SITE_ADMIN'] as const;
+const ROLE_LABELS: Record<(typeof ROLES)[number], string> = {
+  CLINICIAN: 'Clinician',
+  VIEWER: 'Non-clinician (read-only)',
+  SITE_ADMIN: 'Site admin',
+};
 const DIVISIONS = ['MEDICAL', 'REHAB', 'BEHAVIORAL_HEALTH', 'MULTI'] as const;
 
 export function UsersToolbar() {
@@ -110,7 +118,7 @@ export function UsersToolbar() {
               <Select value={role} onValueChange={(v) => setRole(v as (typeof ROLES)[number])} disabled={pending}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {ROLES.map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}
+                  {ROLES.map((r) => <SelectItem key={r} value={r}>{ROLE_LABELS[r]}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>

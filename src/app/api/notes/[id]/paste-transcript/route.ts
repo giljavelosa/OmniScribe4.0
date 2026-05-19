@@ -38,7 +38,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     select: { id: true, status: true, clinicianOrgUserId: true },
   });
   if (!note) return NextResponse.json({ error: { code: 'not_found' } }, { status: 404 });
-  if (note.clinicianOrgUserId !== authorizationUser.orgUserId && authorizationUser.role !== 'SUPER_ADMIN') {
+  if (note.clinicianOrgUserId !== authorizationUser.orgUserId && authorizationUser.role !== 'ORG_ADMIN') {
     return NextResponse.json({ error: { code: 'forbidden' } }, { status: 403 });
   }
   if (note.status !== NoteStatus.PREPARING) {
