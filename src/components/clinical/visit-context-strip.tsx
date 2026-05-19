@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useState, useTransition } from 'react';
-import { useRouter } from 'next/navigation';
 import { AlertCircle, User as UserIcon } from 'lucide-react';
 import { Division, NoteStyle, type Profession } from '@prisma/client';
 
@@ -74,7 +73,6 @@ const TYPICAL_DIVISION_FOR_PROFESSION: Partial<Record<Profession, Division>> = {
 };
 
 export function VisitContextStrip(props: Props) {
-  const router = useRouter();
   const [division, setDivision] = useState<Division>(props.noteDivision);
   const [templateId, setTemplateId] = useState<string>(props.noteTemplateId ?? '');
   const [noteStyle, setNoteStyle] = useState<NoteStyle>(props.noteStyle);
@@ -83,9 +81,11 @@ export function VisitContextStrip(props: Props) {
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
-  // Fetch templates for the current division. Re-fetches on division change so
-  // the dropdown stays in sync — if the previously-selected templateId is no
-  // longer in the filtered list, we clear it (the user picks again).
+  // Fetch templates for the current division. PURE READ — no side-effect
+  // writes here. If the saved templateId isn't in the filtered list the
+  // dropdown falls back to the "Auto-pick at draft" sentinel visually
+  // (see effectiveTemplateValue below); the server value stays as-is
+  // until the user explicitly picks a new one.
   useEffect(() => {
     let cancelled = false;
     setTemplateLoading(true);
@@ -100,12 +100,6 @@ export function VisitContextStrip(props: Props) {
           isPreset: t.isPreset,
         }));
         setTemplates(items);
-        // If the current templateId is no longer valid for this division,
-        // clear it so the next save defaults to "auto-pick at draft time".
-        if (templateId && !items.find((t) => t.id === templateId)) {
-          setTemplateId('');
-          void patch({ templateId: null });
-        }
       })
       .catch(() => {
         if (!cancelled) setTemplates([]);
@@ -116,8 +110,6 @@ export function VisitContextStrip(props: Props) {
     return () => {
       cancelled = true;
     };
-    // patch is stable enough for this scope; intentionally not in deps.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [division]);
 
   function patch(payload: {
@@ -135,9 +127,11 @@ export function VisitContextStrip(props: Props) {
       if (!res.ok) {
         const body = await res.json().catch(() => null);
         setError(body?.error?.message ?? `Couldn't save (${res.status}).`);
-        return;
       }
-      router.refresh();
+      // Intentionally no router.refresh() here — the server PATCH persists,
+      // and the next navigation away from /prepare will load fresh values.
+      // Refreshing while the user is mid-interaction risks an unmount race
+      // (causes "removeChild" reconciliation errors on Radix portals).
     });
   }
 
@@ -152,6 +146,13 @@ export function VisitContextStrip(props: Props) {
   const clinicianLabel = props.clinicianProfessionType
     ? professionLabel(props.clinicianProfessionType)
     : props.clinicianFreeTextProfession ?? 'Profession not set';
+
+  // If the saved templateId no longer matches the current division (because
+  // the user changed divisions), show "Auto-pick at draft" in the dropdown
+  // without rewriting state. The actual save happens only when the user
+  // explicitly picks something.
+  const templateInCurrentList = !templateId || templates.some((t) => t.id === templateId);
+  const effectiveTemplateValue = templateInCurrentList && templateId ? templateId : '__auto__';
 
   return (
     <Card>
@@ -196,7 +197,7 @@ export function VisitContextStrip(props: Props) {
               Template
             </Label>
             <Select
-              value={templateId || '__auto__'}
+              value={effectiveTemplateValue}
               onValueChange={(v) => {
                 const next = v === '__auto__' ? null : v;
                 setTemplateId(next ?? '');
