@@ -2,9 +2,11 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { signOut } from 'next-auth/react';
 import type { OrgRole, PlatformRole } from '@prisma/client';
 import {
   LayoutDashboard,
+  LogOut,
   ShieldCheck,
   Sparkles,
   Stethoscope,
@@ -118,9 +120,21 @@ export function AppNav({ email, role, platformRole, currentSection }: AppNavProp
           ))}
         </>
       )}
-      <span className="ml-auto pl-3 text-xs text-muted-foreground truncate max-w-[16rem]">
-        {email}
-      </span>
+      <div className="ml-auto pl-3 flex items-center gap-2">
+        <span className="text-xs text-muted-foreground truncate max-w-[16rem]">
+          {email}
+        </span>
+        <button
+          type="button"
+          onClick={() => signOut({ callbackUrl: '/login' })}
+          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
+          aria-label="Sign out"
+          title="Sign out"
+        >
+          <LogOut className="h-3 w-3" aria-hidden />
+          Sign out
+        </button>
+      </div>
     </nav>
   );
 }
