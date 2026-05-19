@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
 import { requireFeatureAccess } from '@/lib/authz/server';
 import { writeAuditLog } from '@/lib/audit/log';
+import { canActAtSite, getClinicianSiteIds } from '@/lib/authz/site-scope';
 import { isValidPersonName } from '@/lib/patient/name-validator';
 import { PatientSex, PatientAddressKind, PatientCoverageStatus } from '@prisma/client';
 
@@ -23,7 +24,10 @@ const createSchema = z.object({
   mrn: z.string().min(1),
   dob: z.string().min(1),
   sex: z.enum(PatientSex),
-  siteId: z.string().optional(),
+  // Required: a patient must be anchored to a site so ad-hoc Start Visit
+  // has a default location. Old behavior accepted optional siteId, which
+  // produced patient rows that broke /api/encounters with `site_required`.
+  siteId: z.string().min(1, { message: 'siteId is required' }),
   phone: z.string().optional(),
   email: z.string().email().optional(),
   preferredLanguage: z.string().optional(),
@@ -129,6 +133,24 @@ export async function POST(req: Request) {
   });
   if (dupe) {
     return NextResponse.json({ error: { code: 'duplicate_mrn' } }, { status: 409 });
+  }
+
+  // Site must (a) exist in this org and (b) be in the caller's site scope.
+  // Site-scoped admins can't assign a patient to a site they aren't enrolled
+  // at; ORG_ADMIN+ get scope: 'all' implicitly.
+  const site = await prisma.site.findFirst({
+    where: { id: data.siteId, orgId: authorizationUser.orgId, isArchived: false },
+    select: { id: true },
+  });
+  if (!site) {
+    return NextResponse.json({ error: { code: 'site_not_found' } }, { status: 400 });
+  }
+  const siteScope = await getClinicianSiteIds(
+    authorizationUser.orgUserId,
+    authorizationUser.orgId,
+  );
+  if (!canActAtSite(siteScope, data.siteId)) {
+    return NextResponse.json({ error: { code: 'site_not_in_scope' } }, { status: 403 });
   }
 
   const patient = await prisma.$transaction(async (tx) => {

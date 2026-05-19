@@ -69,7 +69,7 @@ export default async function PatientsPage({
       : {}),
   };
 
-  const [total, patients] = await Promise.all([
+  const [total, patients, addPatientSites] = await Promise.all([
     prisma.patient.count({ where }),
     prisma.patient.findMany({
       where,
@@ -80,13 +80,37 @@ export default async function PatientsPage({
         encounters: { orderBy: { startedAt: 'desc' }, take: 1 },
       },
     }),
+    // Sites the caller can assign a new patient to. Org-wide roles get every
+    // non-archived site; site-scoped roles get just their enrollments. The
+    // AddPatient sheet uses this to render a required Site picker so we
+    // never create a patient with a null siteId (which breaks ad-hoc
+    // Start Visit downstream — patient has no default site / siteId required).
+    prisma.site.findMany({
+      where: {
+        orgId: session.user.orgId,
+        isArchived: false,
+        ...(siteScope.scope === 'enrolled' && siteScope.siteIds.length > 0
+          ? { id: { in: siteScope.siteIds } }
+          : {}),
+      },
+      orderBy: { name: 'asc' },
+      select: { id: true, name: true },
+    }),
   ]);
+
+  // Default the AddPatient site picker to the caller's primary enrolled
+  // site if they have one; otherwise the first site in their pickable
+  // list. Computed server-side so the sheet renders instantly.
+  const defaultSiteId =
+    siteScope.scope === 'enrolled' && siteScope.siteIds.length > 0
+      ? siteScope.siteIds[0]!
+      : addPatientSites[0]?.id ?? null;
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-6 space-y-4">
       <div className="flex items-center justify-between gap-4">
         <h1 className="text-2lg font-semibold">Patients</h1>
-        <AddPatientButton />
+        <AddPatientButton sites={addPatientSites} defaultSiteId={defaultSiteId} />
       </div>
       <PatientsSearchForm initialQuery={rawQuery} />
 
