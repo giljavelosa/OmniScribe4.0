@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
 import { writeAuditLog, writePlatformAuditLog } from '@/lib/audit/log';
 import { validatePassword } from '@/lib/auth/password-policy';
+import { bootstrapPlatformOwner, readBootstrapEmail } from '@/lib/auth/bootstrap-platform-owner';
 import { consumeSignupAttempt } from '@/lib/rate-limit';
 import {
   hashIpForAudit,
@@ -112,7 +113,8 @@ export async function POST(req: Request) {
 
   // 5. Atomic transaction.
   const passwordHash = await bcrypt.hash(data.password, 10);
-  const { org, user } = await prisma.$transaction(async (tx) => {
+  const bootstrapEmail = readBootstrapEmail();
+  const { org, user, bootstrapResult } = await prisma.$transaction(async (tx) => {
     const newOrg = await tx.organization.create({
       data: {
         name: data.orgName,
@@ -147,7 +149,21 @@ export async function POST(req: Request) {
         expiresAt: new Date(Date.now() + 365 * 86_400_000),
       },
     });
-    return { org: newOrg, user: newUser };
+
+    // Platform-owner bootstrap: if BOOTSTRAP_PLATFORM_OWNER_EMAIL matches the
+    // signing-up email AND no platform owner exists yet, elevate atomically
+    // in this same tx. Lets a first-time production deploy go signup→owner
+    // without a reboot. Idempotent: the bootstrap helper guards against
+    // double-elevation.
+    let bootstrap: Awaited<ReturnType<typeof bootstrapPlatformOwner>> | null = null;
+    if (bootstrapEmail && bootstrapEmail === data.email) {
+      bootstrap = await bootstrapPlatformOwner({
+        source: 'signup',
+        email: data.email,
+        client: tx,
+      });
+    }
+    return { org: newOrg, user: newUser, bootstrapResult: bootstrap };
   });
 
   // 6. Audit.
@@ -174,6 +190,12 @@ export async function POST(req: Request) {
     resourceId: org.id,
     metadata: auditMeta,
   });
+
+  if (bootstrapResult?.status === 'elevated') {
+    console.info(
+      `[signup] elevated newly-created user ${bootstrapResult.email} (id=${bootstrapResult.userId}) to PLATFORM_OWNER via env-driven bootstrap`,
+    );
+  }
 
   return NextResponse.json(
     { data: { ok: true, orgId: org.id, userId: user.id } },

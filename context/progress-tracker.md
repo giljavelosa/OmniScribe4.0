@@ -12,6 +12,17 @@
 
 ## Completed
 
+- **2026-05-19 — Env-driven platform-owner bootstrap (production day-1)** (follow-up — `feat(auth): env-driven platform-owner bootstrap for production day-1`).
+  - **Why**: Day-1 production has a chicken-and-egg: the only role that can grant `User.platformRole = PLATFORM_OWNER` is an existing platform owner, but on a freshly-deployed instance nobody holds the role. The previous "solution" was the seed (dev-only). Production deploys would have needed manual SQL.
+  - **Mechanism**: `BOOTSTRAP_PLATFORM_OWNER_EMAIL` env var. Two trigger paths:
+    1. **Startup hook** (`src/instrumentation.ts`) — on every server boot, if the env var is set AND no platform owner exists yet AND a User row with that email exists, elevate them. Idempotent — early-returns after first promotion.
+    2. **Signup-time** (`POST /api/auth/signup`) — if the signing-up email matches the env var AND no platform owner exists yet, elevate atomically in the same tx. Lets an operator deploy, hit `/signup`, and be immediately the platform owner without a reboot.
+  - **Idempotency**: refuses to fire if *any* `PLATFORM_OWNER` exists. Operators rotating to a new owner email after launch use the `/owner/users` elevation UI (forthcoming), NOT this env var. This avoids the env-var-as-source-of-truth footgun (you demote yourself via UI; next boot would silently re-promote).
+  - **Audit**: every elevation writes a `PLATFORM_OWNER_BOOTSTRAPPED` row with `metadata: { source: 'startup' | 'signup' }`. PHI-free.
+  - **Files**: `src/lib/auth/bootstrap-platform-owner.ts` (helper + `readBootstrapEmail()`), `src/instrumentation.ts` (Next.js lifecycle hook), `src/app/api/auth/signup/route.ts` (signup-tx elevation), `src/lib/audit/actions.ts` (new action), `.env.example` (documented), `test/lib/bootstrap-platform-owner.test.ts` (9 tests covering env unset/blank/case, waiting-for-user, elevation, idempotency, rotation-after-bootstrap).
+  - **Compatibility**: stacks on top of [PR #100](https://github.com/giljavelosa/OmniScribe4.0/pull/100) (which already moved signup to assign `ORG_ADMIN` instead of the removed `SUPER_ADMIN`). Independent of [PR #99](https://github.com/giljavelosa/OmniScribe4.0/pull/99) (division refactor).
+  - **Three-lens**: Clinician — irrelevant. Compliance — every elevation is audited with source path; the env-driven path is traceable + reproducible from deploy config. Auditor — the privilege-grant chain has a verifiable bootstrap that doesn't require DBA intervention; the `already_bootstrapped` short-circuit prevents replay-style re-promotion.
+
 - **2026-05-19 — Consolidate `OrgRole.SUPER_ADMIN` → `PlatformRole.PLATFORM_OWNER`** (follow-up — `refactor(authz): drop OrgRole.SUPER_ADMIN; ORG_ADMIN absorbs powers; platform-owner only via PlatformRole`).
   - **Why**: `OrgRole.SUPER_ADMIN` conflated two concepts that should be strictly separated: the platform owner (OmniScribe's owner — one person, global) and the customer's org admin (per-org). The role model is now: **platform owner** lives exclusively on `User.platformRole = PLATFORM_OWNER`; **org admin** lives exclusively on `OrgUser.role = ORG_ADMIN`. They never mix.
   - **Schema migration** (`20260519130000_drop_orgrole_super_admin`): hand-rolled enum-rebuild — backfilled `OrgUser` + `Invite` rows (SUPER_ADMIN → ORG_ADMIN), then RENAMEd the old type, CREATEd the new 4-value enum, ALTERed columns via `text` cast, DROPped the old type.

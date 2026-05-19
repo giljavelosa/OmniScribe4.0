@@ -359,4 +359,16 @@ export type AuditAction =
   // metadata is extended (no new action) to carry { isLateEntry,
   // lateEntryDaysGap, dateOfService } so a reviewer can prove the
   // attestation copy switch fired without joining tables.
-  | 'NOTE_LATE_ENTRY_CREATED';
+  | 'NOTE_LATE_ENTRY_CREATED'
+  // ---- Platform-owner bootstrap ----
+  // Fires when an automated bootstrap mechanism elevates a User to
+  // platformRole=PLATFORM_OWNER. Two trigger paths today:
+  //   - Startup hook (src/instrumentation.ts) — env BOOTSTRAP_PLATFORM_OWNER_EMAIL
+  //     matches an existing User AND no platform owner exists yet
+  //   - Signup-time (POST /api/auth/signup) — signing-up email matches the env
+  //     AND no platform owner exists yet; elevation happens in the same tx
+  // Metadata: { source: 'startup' | 'signup', email (lowercased, but treated
+  // as sensitive — operators may decide to redact in their hosted log shipping).
+  // userId is on the audit row directly. } Idempotent: refuses to fire if any
+  // PLATFORM_OWNER already exists.
+  | 'PLATFORM_OWNER_BOOTSTRAPPED';
