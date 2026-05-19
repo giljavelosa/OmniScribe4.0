@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { newMfaSecret, generateTotpToken, verifyTotpToken, newRecoveryCodes, consumeRecoveryCode, buildOtpAuthUri } from '@/lib/mfa';
 
 describe('mfa', () => {
@@ -21,6 +21,35 @@ describe('mfa', () => {
     expect(await verifyTotpToken({ secret, token: 'abcdef' })).toBe(false);
     expect(await verifyTotpToken({ secret, token: '12345' })).toBe(false);
     expect(await verifyTotpToken({ secret, token: '1234567' })).toBe(false);
+  });
+
+  describe('clock-skew tolerance', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('accepts a code from the previous 30s step (read-then-type race)', async () => {
+      const secret = await newMfaSecret();
+      const base = 1_700_000_000_000; // fixed epoch, mid-step
+      vi.useFakeTimers();
+      vi.setSystemTime(base);
+      const token = await generateTotpToken(secret);
+      // Clock advances 35s — server is now in the NEXT 30s step. Without
+      // epochTolerance this code would be rejected; with ±30s it survives.
+      vi.setSystemTime(base + 35_000);
+      expect(await verifyTotpToken({ secret, token })).toBe(true);
+    });
+
+    it('still rejects a code well outside the tolerance window', async () => {
+      const secret = await newMfaSecret();
+      const base = 1_700_000_000_000;
+      vi.useFakeTimers();
+      vi.setSystemTime(base);
+      const token = await generateTotpToken(secret);
+      // 5 minutes later — far beyond the ±30s window.
+      vi.setSystemTime(base + 5 * 60_000);
+      expect(await verifyTotpToken({ secret, token })).toBe(false);
+    });
   });
 
   it('buildOtpAuthUri returns an otpauth URI carrying the secret + issuer', async () => {

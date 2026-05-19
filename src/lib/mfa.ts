@@ -27,9 +27,30 @@ export async function generateTotpToken(secret: string): Promise<string> {
   return generate({ secret });
 }
 
+/**
+ * Tolerance window (seconds) for TOTP verification.
+ *
+ * otplib's `epochTolerance` defaults to 0 — meaning a code is valid for ONLY
+ * the exact 30-second step the server is currently in. That fails real users:
+ * a code read at second 29 and submitted at second 31 lands in the next step
+ * and is rejected even though it's "correct". It also fails on any clock skew
+ * between the authenticator device and the server.
+ *
+ * 30s symmetric tolerance accepts the current step ± 1 — the industry-standard
+ * window (Google Authenticator's own validation behaves the same way). It
+ * absorbs the read-then-type race and minor drift without meaningfully
+ * widening the replay surface (a TOTP code is already a 6-digit shared
+ * secret rotating every 30s; ±1 step does not change the threat model).
+ */
+const TOTP_EPOCH_TOLERANCE_SECONDS = 30;
+
 export async function verifyTotpToken(opts: { secret: string; token: string }): Promise<boolean> {
   if (!/^\d{6}$/.test(opts.token)) return false;
-  const r = await otpVerify({ secret: opts.secret, token: opts.token });
+  const r = await otpVerify({
+    secret: opts.secret,
+    token: opts.token,
+    epochTolerance: TOTP_EPOCH_TOLERANCE_SECONDS,
+  });
   return r.valid;
 }
 
