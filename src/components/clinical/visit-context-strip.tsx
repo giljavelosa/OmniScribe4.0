@@ -88,6 +88,11 @@ export function VisitContextStrip(props: Props) {
   // until the user explicitly picks a new one.
   useEffect(() => {
     let cancelled = false;
+    // Set loading true synchronously so the dropdown reads "Loading…" while we
+    // re-fetch on division change. React's set-state-in-effect rule flags this,
+    // but the deferred-microtask alternative leaves a visible flash of stale
+    // template names from the prior division.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setTemplateLoading(true);
     fetch(`/api/admin/templates?division=${division}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(r)))
@@ -253,8 +258,8 @@ export function VisitContextStrip(props: Props) {
           <StatusBanner variant="warning">
             <span className={cn('inline-flex items-center gap-2 text-sm')}>
               <AlertCircle className="size-4" aria-hidden="true" />
-              You're recording this visit as {DIVISION_LABELS[division]} but your profile is
-              set to {DIVISION_LABELS[typicalDivision!]}. That's fine if you're covering
+              You&apos;re recording this visit as {DIVISION_LABELS[division]} but your profile is
+              set to {DIVISION_LABELS[typicalDivision!]}. That&apos;s fine if you&apos;re covering
               cross-division today — just confirming.
             </span>
           </StatusBanner>
