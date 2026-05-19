@@ -19,7 +19,6 @@ import { loadExternalEhrContext } from '@/lib/fhir/project-ehr-context';
 import type { PriorContextBriefContent } from '@/types/brief';
 import { PasteTranscriptForm } from './_components/paste-transcript-form';
 import { UploadAudioForm } from './_components/upload-audio-form';
-import { VisitContextStrip } from '@/components/clinical/visit-context-strip';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Prepare visit' };
@@ -111,18 +110,6 @@ export default async function PreparePage({ params }: { params: Promise<{ noteId
   return (
     <div className="mx-auto max-w-4xl px-4 py-6 space-y-6">
       <PatientIdentityHeader patient={note.patient} />
-
-      <VisitContextStrip
-        noteId={note.id}
-        clinicianName={session.user.name ?? session.user.email}
-        clinicianEmail={session.user.email}
-        clinicianProfessionType={session.user.professionType}
-        clinicianFreeTextProfession={session.user.profession}
-        noteDivision={note.division}
-        noteTemplateId={note.templateId}
-        noteStyle={note.noteStyle}
-        locked={!isPreparing}
-      />
 
       {briefContent ? (
         <BriefCard content={briefContent} nowMs={nowMs} />
