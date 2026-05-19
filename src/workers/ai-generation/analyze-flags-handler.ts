@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma';
 import { writeAuditLog } from '@/lib/audit/log';
 import { FlagAnalyzer } from '@/services/review/FlagAnalyzer';
 import type { NoteSectionDef } from '@/lib/notes/build-prompt';
+import { projectPatientForPrompt } from '@/lib/notes/projections';
 import type { TranscriptClean } from '@/services/transcription';
 
 type AnalyzeFlagsJob = {
@@ -38,7 +39,7 @@ export async function handleAnalyzeFlags(job: Job<AnalyzeFlagsJob>) {
 
   const note = await prisma.note.findFirst({
     where: { id: noteId, orgId },
-    include: { template: true },
+    include: { template: true, patient: true },
   });
   if (!note) {
     console.warn(`[analyze-flags] note ${noteId} not found — dropping`);
@@ -61,6 +62,7 @@ export async function handleAnalyzeFlags(job: Job<AnalyzeFlagsJob>) {
   const draft =
     (note.draftJson as Record<string, { content: string }> | null) ?? {};
   const transcript = note.transcriptClean as TranscriptClean | null;
+  const patient = projectPatientForPrompt(note.patient);
   const analyzer = new FlagAnalyzer();
 
   let totalCreated = 0;
@@ -76,6 +78,7 @@ export async function handleAnalyzeFlags(job: Job<AnalyzeFlagsJob>) {
         sectionLabel: section.label,
         sectionContent: content,
         transcript,
+        patient,
         requestId: `${requestId}:${section.id}`,
       });
     } catch (err) {
