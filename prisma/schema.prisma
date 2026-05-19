@@ -980,6 +980,14 @@ model Note {
   isLateEntry      Boolean  @default(false)
   lateEntryDaysGap Int?
 
+  // Draft soft-delete. A clinician can discard an UNSIGNED note (status not
+  // SIGNED/TRANSFERRED); the row is retained for audit, the S3 audio is left
+  // intact (rule 7). Signed notes are immutable records and are never
+  // deletable. Deleted drafts are filtered out of the drafts queue + 404 on
+  // direct open.
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -999,6 +1007,7 @@ model Note {
   telehealthSession TelehealthSession?
 
   @@index([orgId, status])
+  @@index([orgId, isDeleted])
   @@index([patientId, createdAt])
   @@index([patientId, status])
 }

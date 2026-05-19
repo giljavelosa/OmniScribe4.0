@@ -359,4 +359,12 @@ export type AuditAction =
   // metadata is extended (no new action) to carry { isLateEntry,
   // lateEntryDaysGap, dateOfService } so a reviewer can prove the
   // attestation copy switch fired without joining tables.
-  | 'NOTE_LATE_ENTRY_CREATED';
+  | 'NOTE_LATE_ENTRY_CREATED'
+  // ---- Draft delete ----
+  // NOTE_DELETED fires when a clinician discards an unsigned draft via
+  // DELETE /api/notes/[id]. Soft-delete only — the row is retained and the
+  // S3 audio is never removed (rule 7). Metadata: { softDelete: true,
+  // statusAtDelete, captureMode, hadAudio }. PHI-free — no transcript or
+  // patient identifiers. Signed notes can never be deleted, so this action
+  // never appears for a SIGNED/TRANSFERRED note.
+  | 'NOTE_DELETED';
