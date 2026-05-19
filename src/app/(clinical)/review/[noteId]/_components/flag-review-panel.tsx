@@ -162,6 +162,7 @@ export function FlagReviewPanel({ noteId, sections, isSigned }: Props) {
                   labelById={labelById}
                   noteId={noteId}
                   isSigned={!!isSigned}
+                  isAnalyzing={analyzing}
                   onChanged={load}
                 />
               ) : null,
@@ -195,6 +196,7 @@ function SeveritySection({
   labelById,
   noteId,
   isSigned,
+  isAnalyzing,
   onChanged,
 }: {
   severity: Severity;
@@ -202,6 +204,7 @@ function SeveritySection({
   labelById: Record<string, string>;
   noteId: string;
   isSigned: boolean;
+  isAnalyzing: boolean;
   onChanged: () => void;
 }) {
   const cfg = severityVisual(severity);
@@ -218,6 +221,7 @@ function SeveritySection({
             sectionLabel={labelById[f.sectionId] ?? f.sectionId}
             noteId={noteId}
             isSigned={isSigned}
+            isAnalyzing={isAnalyzing}
             onChanged={onChanged}
           />
         ))}
@@ -231,12 +235,14 @@ function FlagRow({
   sectionLabel,
   noteId,
   isSigned,
+  isAnalyzing,
   onChanged,
 }: {
   flag: Flag;
   sectionLabel: string;
   noteId: string;
   isSigned: boolean;
+  isAnalyzing: boolean;
   onChanged: () => void;
 }) {
   const [dismissing, setDismissing] = useState(false);
@@ -252,6 +258,15 @@ function FlagRow({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
+      if (res.status === 404) {
+        // Concurrent re-analyze deleted this OPEN flag row and created a fresh
+        // one. Refetch + tell the clinician to re-confirm against the new flag.
+        setError('This flag was replaced by a re-analysis. Refreshing list — re-confirm on the new flag.');
+        setDismissing(false);
+        setNote('');
+        onChanged();
+        return;
+      }
       if (!res.ok) {
         const body = await res.json().catch(() => null);
         setError(body?.error?.message ?? `Update failed (${res.status}).`);
@@ -262,6 +277,8 @@ function FlagRow({
       onChanged();
     });
   }
+
+  const actionsDisabled = pending || isAnalyzing;
 
   const cfg = severityVisual(flag.severity);
 
@@ -299,7 +316,7 @@ function FlagRow({
             rows={2}
             maxLength={500}
             placeholder="Optional note explaining the dismissal."
-            disabled={pending}
+            disabled={actionsDisabled}
             autoFocus
           />
           {error && <p className="text-xs text-[var(--status-danger-fg)]">{error}</p>}
@@ -311,9 +328,9 @@ function FlagRow({
               type="button"
               size="sm"
               onClick={() => patch({ status: 'DISMISSED', resolutionAction: 'DISMISS_KEEP', resolutionNote: note.trim() || undefined })}
-              disabled={pending}
+              disabled={actionsDisabled}
             >
-              {pending ? 'Saving…' : 'Confirm dismiss'}
+              {pending ? 'Saving…' : isAnalyzing ? 'Re-analyzing…' : 'Confirm dismiss'}
             </Button>
           </div>
         </div>
@@ -326,7 +343,8 @@ function FlagRow({
                 variant="outline"
                 size="sm"
                 onClick={() => patch({ status: 'RESOLVED', resolutionAction: 'ACCEPT_EDIT' })}
-                disabled={pending}
+                disabled={actionsDisabled}
+                title={isAnalyzing ? 'Re-analysis in progress — actions disabled until it finishes' : undefined}
                 className="gap-1"
               >
                 <Check className="size-3" aria-hidden="true" />
@@ -337,7 +355,8 @@ function FlagRow({
                 variant="ghost"
                 size="sm"
                 onClick={() => setDismissing(true)}
-                disabled={pending}
+                disabled={actionsDisabled}
+                title={isAnalyzing ? 'Re-analysis in progress — actions disabled until it finishes' : undefined}
                 className="gap-1"
               >
                 <X className="size-3" aria-hidden="true" />
