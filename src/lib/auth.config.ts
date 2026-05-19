@@ -105,6 +105,7 @@ export const authConfig = {
           role: orgUser?.role ?? null,
           division: orgUser?.division ?? null,
           profession: orgUser?.profession ?? null,
+          professionType: orgUser?.professionType ?? null,
           mfaEnabled: user.mfaEnabled,
           mfaVerified: false, // always false at sign-in; toggled by /api/auth/mfa/verify
           platformRole: user.platformRole ?? PlatformRole.NONE,
@@ -123,6 +124,7 @@ export const authConfig = {
         token.role = user.role ?? null;
         token.division = user.division ?? null;
         token.profession = user.profession ?? null;
+        token.professionType = user.professionType ?? null;
         token.mfaEnabled = user.mfaEnabled;
         token.mfaVerified = user.mfaVerified;
         token.platformRole = user.platformRole;
@@ -163,6 +165,7 @@ export const authConfig = {
           token.role = ou?.role ?? null;
           token.division = ou?.division ?? null;
           token.profession = ou?.profession ?? null;
+          token.professionType = ou?.professionType ?? null;
         }
       }
 
@@ -189,6 +192,7 @@ export const authConfig = {
         role: token.role,
         division: token.division,
         profession: token.profession,
+        professionType: token.professionType,
         mfaEnabled: token.mfaEnabled,
         mfaVerified: token.mfaVerified,
         platformRole: token.platformRole,
