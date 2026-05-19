@@ -1,4 +1,4 @@
-import type { OrgRole, PlatformRole, Division } from '@prisma/client';
+import type { OrgRole, PlatformRole, Division, Profession } from '@prisma/client';
 import 'next-auth';
 import 'next-auth/jwt';
 
@@ -15,6 +15,7 @@ declare module 'next-auth' {
       role: OrgRole | null;
       division: Division | null;
       profession: string | null;
+      professionType: Profession | null;
       mfaEnabled: boolean;
       mfaVerified: boolean;
       platformRole: PlatformRole;
@@ -32,6 +33,7 @@ declare module 'next-auth' {
     role: OrgRole | null;
     division: Division | null;
     profession: string | null;
+    professionType: Profession | null;
     mfaEnabled: boolean;
     mfaVerified: boolean;
     platformRole: PlatformRole;
@@ -47,6 +49,7 @@ declare module 'next-auth/jwt' {
     role: OrgRole | null;
     division: Division | null;
     profession: string | null;
+    professionType: Profession | null;
     mfaEnabled: boolean;
     mfaVerified: boolean;
     platformRole: PlatformRole;

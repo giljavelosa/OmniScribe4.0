@@ -14,6 +14,7 @@ import {
   Division,
   OrgRole,
   PlatformRole,
+  Profession,
   SeatTier,
   NoteStyle,
   ComplianceProfile,
@@ -102,12 +103,13 @@ async function main() {
   });
 
   // ---------------- Users + OrgUsers + Seats ----------------
-  // Tuple shape: [email, OrgRole, Division, profession?, canManagePatients?, mfaEnabled?, platformRole?]
+  // Tuple shape: [email, OrgRole, Division, profession?, professionType?, canManagePatients?, mfaEnabled?, platformRole?]
   const users: Array<{
     email: string;
     role: OrgRole;
     division: Division;
     profession?: string;
+    professionType?: Profession;
     canManagePatients?: boolean;
     mfaEnabled: boolean;
     platformRole?: PlatformRole;
@@ -118,6 +120,7 @@ async function main() {
       role: OrgRole.CLINICIAN,
       division: Division.MEDICAL,
       profession: 'Family Medicine MD',
+      professionType: Profession.MD,
       canManagePatients: true,
       mfaEnabled: false,
     },
@@ -181,6 +184,7 @@ async function main() {
         role: u.role,
         division: u.division,
         profession: u.profession,
+        professionType: u.professionType,
         canManagePatients: u.canManagePatients ?? false,
         preferredNoteStyle: NoteStyle.HYBRID,
         isActive: true,
@@ -191,6 +195,7 @@ async function main() {
         role: u.role,
         division: u.division,
         profession: u.profession,
+        professionType: u.professionType,
         canManagePatients: u.canManagePatients ?? false,
         preferredNoteStyle: NoteStyle.HYBRID,
         isActive: true,

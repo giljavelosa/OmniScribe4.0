@@ -46,6 +46,25 @@ enum Division {
   MULTI
 }
 
+/// Clinician profession (drives default note format + downstream template
+/// selection). Free-text `OrgUser.profession` is preserved for sub-specialty
+/// detail ("Family Medicine MD"); this enum is the categorical anchor.
+enum Profession {
+  MD
+  DO
+  NP
+  PA
+  OT
+  PT
+  SLP
+  LCSW
+  LMFT
+  LPC
+  PSYCHOLOGIST
+  RN
+  OTHER
+}
+
 enum SeatTier {
   SOLO
   TEAM
@@ -161,6 +180,10 @@ model OrgUser {
   organization       Organization @relation(fields: [orgId], references: [id])
   role               OrgRole
   division           Division
+  /// Categorical profession (drives default note format). Required for the
+  /// /capture gate but nullable in DB so the column is additive — clinicians
+  /// without it set hit `/onboarding/profile` on next clinical-route load.
+  professionType     Profession?
   profession         String?
   canManagePatients  Boolean      @default(false)
   preferredNoteStyle NoteStyle    @default(HYBRID)
@@ -218,6 +241,7 @@ model Invite {
   organization      Organization @relation(fields: [orgId], references: [id])
   role              OrgRole
   division          Division
+  professionType    Profession?
   profession        String?
   canManagePatients Boolean      @default(false)
   token             String       @unique
