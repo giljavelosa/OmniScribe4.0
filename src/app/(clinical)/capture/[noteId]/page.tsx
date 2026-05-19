@@ -3,6 +3,7 @@ import { notFound, redirect } from 'next/navigation';
 
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+import { requiresProfileCompletion } from '@/lib/auth/profile-completion';
 import { StatusBadge } from '@/components/ui/status-badge';
 import type { PriorContextBriefContent } from '@/types/brief';
 import { CopilotShell } from '@/components/copilot/copilot-shell';
@@ -25,6 +26,10 @@ export default async function CapturePage({ params }: { params: Promise<{ noteId
   const { noteId } = await params;
   const session = await auth();
   if (!session?.user?.orgId) redirect('/login');
+  // Profile-completion gate: any role that ever records (CLINICIAN or
+  // admin acting as clinician) must declare division + professionType
+  // before reaching the recording surface.
+  if (requiresProfileCompletion(session.user)) redirect('/onboarding/profile');
 
   const note = await prisma.note.findFirst({
     where: { id: noteId, orgId: session.user.orgId },
