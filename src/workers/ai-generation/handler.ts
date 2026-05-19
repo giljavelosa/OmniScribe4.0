@@ -97,10 +97,19 @@ export async function handle(job: Job<AiGenerationJob>) {
   let template = note.template;
   let sectionSchema = template?.sectionSchema as { sections: NoteSectionDef[] } | null;
   if (!template || !sectionSchema?.sections?.length) {
-    const fallback = await prisma.noteTemplate.findFirst({
+    let fallback = await prisma.noteTemplate.findFirst({
       where: { isPreset: true, division: note.division, visibility: 'PUBLIC' },
       orderBy: { createdAt: 'asc' },
     });
+    if (!fallback && note.division === Division.MULTI) {
+      // MULTI is an org-aggregate division — no dedicated preset is seeded
+      // for it (and buildMasterPrompt already routes MULTI → MEDICAL).
+      // Mirror that mapping here so a MULTI note can still pick up a draft.
+      fallback = await prisma.noteTemplate.findFirst({
+        where: { isPreset: true, division: Division.MEDICAL, visibility: 'PUBLIC' },
+        orderBy: { createdAt: 'asc' },
+      });
+    }
     if (!fallback) {
       // No preset template for the division — mark the note INTERRUPTED so
       // /processing can surface this clearly to the clinician.
