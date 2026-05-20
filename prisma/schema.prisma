@@ -329,11 +329,38 @@ model Seat {
   organization Organization @relation(fields: [orgId], references: [id])
   tier         SeatTier
   expiresAt    DateTime
+  /// A seat is usable only when isActive AND expiresAt is in the future.
+  /// The Stripe webhook flips this to false on subscription downgrade/cancel
+  /// rather than hard-deleting the row, so its assignment + transfer history
+  /// survive for the audit trail.
+  isActive     Boolean      @default(true)
+  /// The Stripe Subscription (sub_…) that paid for this seat. Null for
+  /// seed/legacy seats with no Stripe origin. Seat reconciliation matches
+  /// DB rows to a Stripe subscription on this column.
+  stripeSubId  String?
   createdAt    DateTime     @default(now())
 
   assignedTo OrgUser?
+  transfers  SeatTransfer[]
 
   @@index([orgId])
+  @@index([orgId, stripeSubId])
+}
+
+/// Append-only audit trail of seat assignment changes (assign / reassign /
+/// revoke). One row per change. fromOrgUserId / toOrgUserId reference
+/// OrgUser.id; a null toOrgUserId means the seat was revoked back to the
+/// unassigned pool.
+model SeatTransfer {
+  id            String   @id @default(cuid())
+  seatId        String
+  seat          Seat     @relation(fields: [seatId], references: [id])
+  fromOrgUserId String?
+  toOrgUserId   String?
+  reason        String?
+  transferredAt DateTime @default(now())
+
+  @@index([seatId])
 }
 
 model UserSession {
