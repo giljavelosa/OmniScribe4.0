@@ -78,9 +78,6 @@ export function enqueueAiGenerationJob(payload: {
   type: AiGenerationJobType;
   requestId: string;
   sectionId?: string;
-  /** analyze-flags only: re-analyze every section, bypassing the
-   *  content-hash skip gate (clinician asked for a forced full pass). */
-  force?: boolean;
 }) {
   const id = payload.sectionId
     ? `ai-generation:${payload.noteId}:${payload.sectionId}:${payload.requestId}`

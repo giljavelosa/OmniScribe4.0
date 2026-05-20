@@ -79,24 +79,16 @@ export function FlagReviewPanel({ noteId, sections, isSigned }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [noteId]);
 
-  function analyze(force: boolean) {
+  function analyze() {
     setAnalyzeMessage(null);
     startAnalyzing(async () => {
-      const res = await fetch(`/api/notes/${noteId}/analyze-flags`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ force }),
-      });
+      const res = await fetch(`/api/notes/${noteId}/analyze-flags`, { method: 'POST' });
       if (!res.ok) {
         const body = await res.json().catch(() => null);
         setAnalyzeMessage(body?.error?.message ?? `Analyze failed (${res.status}).`);
         return;
       }
-      setAnalyzeMessage(
-        force
-          ? 'Re-analyzing every section — checking for updated flags…'
-          : 'Analyzing — checking for new flags every few seconds…',
-      );
+      setAnalyzeMessage('Analyzing — checking for new flags every few seconds…');
       setIsPolling(true);
       // Bedrock per-section can take 10–30s on a multi-section note, so
       // poll repeatedly until flags appear OR we hit max attempts. Clears
@@ -159,30 +151,10 @@ export function FlagReviewPanel({ noteId, sections, isSigned }: Props) {
           </CardDescription>
         </div>
         {!isSigned && (
-          <div className="flex items-center gap-2 shrink-0">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => analyze(false)}
-              disabled={analyzing}
-            >
-              <Eye className={cn('size-3', analyzing && 'animate-pulse')} aria-hidden="true" />
-              {analyzing ? 'Analyzing…' : flags.length > 0 ? 'Re-analyze' : 'Analyze for flags'}
-            </Button>
-            {flags.length > 0 && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => analyze(true)}
-                disabled={analyzing}
-                title="Re-check every section, including ones you have not edited"
-              >
-                Re-analyze all
-              </Button>
-            )}
-          </div>
+          <Button type="button" variant="outline" size="sm" onClick={analyze} disabled={analyzing}>
+            <Eye className={cn('size-3', analyzing && 'animate-pulse')} aria-hidden="true" />
+            {analyzing ? 'Analyzing…' : flags.length > 0 ? 'Re-analyze' : 'Analyze for flags'}
+          </Button>
         )}
       </CardHeader>
       <CardContent className="space-y-3">
@@ -196,22 +168,6 @@ export function FlagReviewPanel({ noteId, sections, isSigned }: Props) {
               <span className={isPolling ? 'animate-pulse' : ''}>{analyzeMessage}</span>
             </span>
           </StatusBanner>
-        )}
-
-        {!isSigned && (
-          <p className="text-xs text-muted-foreground">
-            AI-assisted check — it can miss issues and does not replace your own review.
-            {flags.length > 0 && (
-              <>
-                {' '}
-                <span className="font-medium text-foreground">Re-analyze</span> re-checks only
-                sections you edited since the last run;{' '}
-                <span className="font-medium text-foreground">Re-analyze all</span> re-checks
-                every section and, because the analysis is not deterministic, may surface
-                different findings.
-              </>
-            )}
-          </p>
         )}
 
         <div className="grid grid-cols-3 gap-2">

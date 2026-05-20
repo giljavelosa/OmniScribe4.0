@@ -20,9 +20,6 @@ type AnalyzeFlagsJob = {
   orgId: string;
   type: 'analyze-flags';
   requestId: string;
-  /** Bypass the content-hash skip gate — re-analyze every section even if
-   *  its text is unchanged. Set when the clinician clicks "Re-analyze all". */
-  force?: boolean;
 };
 
 /**
@@ -44,15 +41,13 @@ type AnalyzeFlagsJob = {
  *     the LLM entirely for sections whose text is byte-identical to the
  *     last run — re-running the model on unchanged content only lets its
  *     non-determinism flip flags between runs. Existing flags are kept.
- *     `job.data.force` (the "Re-analyze all" action) bypasses the gate and
- *     re-analyzes every section regardless.
  *
  * Refuses if note.status === SIGNED (rule 3 — no analysis of immutable
  * artifacts; signed notes' compliance posture is whatever was decided
  * at sign time).
  */
 export async function handleAnalyzeFlags(job: Job<AnalyzeFlagsJob>) {
-  const { noteId, orgId, requestId, force } = job.data;
+  const { noteId, orgId, requestId } = job.data;
 
   const note = await prisma.note.findFirst({
     where: { id: noteId, orgId },
@@ -98,9 +93,7 @@ export async function handleAnalyzeFlags(job: Job<AnalyzeFlagsJob>) {
     if (!content) continue;
 
     const contentHash = createHash('sha256').update(content).digest('hex');
-    // `force` (the "Re-analyze all" action) bypasses the skip gate — every
-    // section is re-analyzed even when its text is byte-identical.
-    if (!force && priorAnalysis[section.id]?.contentHash === contentHash) {
+    if (priorAnalysis[section.id]?.contentHash === contentHash) {
       sectionsSkipped += 1;
       continue;
     }
@@ -180,7 +173,6 @@ export async function handleAnalyzeFlags(job: Job<AnalyzeFlagsJob>) {
     resourceId: noteId,
     metadata: {
       requestId,
-      force: !!force,
       sectionsAnalyzed,
       sectionsSkipped,
       totalFlagsCreated: totalCreated,

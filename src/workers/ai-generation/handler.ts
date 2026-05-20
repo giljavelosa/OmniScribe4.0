@@ -36,7 +36,6 @@ type AnalyzeFlagsJob = {
   orgId: string;
   type: 'analyze-flags';
   requestId: string;
-  force?: boolean;
 };
 
 type AiGenerationJob = GenerateNoteJob | RegenerateSectionJob | AnalyzeFlagsJob;

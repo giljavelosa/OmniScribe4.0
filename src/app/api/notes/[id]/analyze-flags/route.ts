@@ -15,10 +15,6 @@ export const runtime = 'nodejs';
  * Refuses 409 if note is SIGNED (rule 3) or in non-DRAFT/REVIEWING state.
  * Returns the enqueued job's requestId so the client SSE channel can
  * correlate when the FLAGS_ANALYZED event arrives.
- *
- * Body (optional): { force?: boolean }. force=true re-analyzes every
- * section, bypassing the worker's content-hash skip gate. A normal
- * "Re-analyze" omits it, so only edited sections get re-checked.
  */
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const guard = await requireFeatureAccess('NOTE_REVIEW', req);
@@ -45,16 +41,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     );
   }
 
-  const body = (await req.json().catch(() => null)) as { force?: unknown } | null;
-  const force = body?.force === true;
-
   const requestId = randomBytes(8).toString('hex');
   await enqueueAiGenerationJob({
     noteId: id,
     orgId: authorizationUser.orgId,
     type: 'analyze-flags',
     requestId,
-    force,
   });
 
   await writeAuditLog({
@@ -63,7 +55,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     action: 'FLAGS_ANALYZER_ENQUEUED',
     resourceType: 'Note',
     resourceId: id,
-    metadata: { requestId, force },
+    metadata: { requestId },
   });
 
   return NextResponse.json({ data: { requestId, ok: true } }, { status: 202 });
