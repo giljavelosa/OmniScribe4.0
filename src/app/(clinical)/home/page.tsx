@@ -18,6 +18,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { SchedulingCard } from '@/components/clinical/scheduling-card';
 import { HomeSearchForm } from './_components/home-search-form';
+import { DraftRow } from './_components/draft-row';
 
 const ADMIN_ROLES: OrgRole[] = ['ORG_ADMIN', 'SITE_ADMIN'];
 
@@ -121,6 +122,7 @@ export default async function HomePage({
         orgId,
         clinicianOrgUserId,
         status: { in: ['DRAFT', 'REVIEWING', 'PENDING_REVIEW'] },
+        isDeleted: false,
       },
       orderBy: { updatedAt: 'desc' },
       take: 10,
@@ -336,27 +338,19 @@ export default async function HomePage({
             </p>
           ) : (
             drafts.map((d) => (
-              <Link
+              <DraftRow
                 key={d.id}
-                href={`/review/${d.id}`}
-                className="flex items-center justify-between rounded-md border border-border px-3 py-2 hover:bg-muted/40"
-              >
-                <div className="flex items-center gap-2 text-sm">
-                  <Sparkles className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
-                  <span className="font-medium">
-                    {d.patient.lastName}, {d.patient.firstName}
-                  </span>
-                  <span className="text-muted-foreground text-xs">{d.patient.mrn}</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <StatusBadge variant="neutral" noIcon className="text-[10px]">
-                    {d.status}
-                  </StatusBadge>
-                  <span className="text-[11px] text-muted-foreground">
-                    {d.updatedAt.toLocaleDateString()}
-                  </span>
-                </div>
-              </Link>
+                draft={{
+                  id: d.id,
+                  status: d.status,
+                  updatedAt: d.updatedAt.toISOString(),
+                  patient: {
+                    firstName: d.patient.firstName,
+                    lastName: d.patient.lastName,
+                    mrn: d.patient.mrn,
+                  },
+                }}
+              />
             ))
           )}
         </CardContent>

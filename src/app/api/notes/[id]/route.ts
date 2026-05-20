@@ -24,7 +24,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
   const { id } = await params;
   const note = await prisma.note.findFirst({
-    where: { id, orgId: authorizationUser.orgId },
+    where: { id, orgId: authorizationUser.orgId, isDeleted: false },
     include: {
       template: true,
       patient: {
@@ -125,4 +125,78 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       interruptedAt: note.interruptedAt,
     },
   });
+}
+
+/**
+ * DELETE /api/notes/[id] — discard an unsigned draft.
+ *
+ * Soft-delete only: sets isDeleted + deletedAt. The row is retained for
+ * audit and the S3 audio is left untouched (anti-regression rule 7).
+ *
+ * Refuses SIGNED / TRANSFERRED — a signed note is an immutable record of
+ * care (rule 3) and can never be deleted; addenda are the supported path
+ * for post-sign change. Returns 409 in that case.
+ */
+export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const guard = await requireFeatureAccess('NOTE_EDIT', req);
+  if ('error' in guard) return guard.error;
+  const { user, authorizationUser, orgUser } = guard;
+
+  const { id } = await params;
+  const note = await prisma.note.findFirst({
+    where: { id, orgId: authorizationUser.orgId, isDeleted: false },
+    select: {
+      id: true,
+      orgId: true,
+      status: true,
+      captureMode: true,
+      audioFileKey: true,
+      clinicianOrgUserId: true,
+    },
+  });
+  if (!note) return NextResponse.json({ error: { code: 'not_found' } }, { status: 404 });
+  assertOrgScoped(note.orgId, authorizationUser.orgId);
+
+  // Only the assigned clinician or an org admin may discard the draft.
+  if (
+    note.clinicianOrgUserId !== authorizationUser.orgUserId &&
+    authorizationUser.role !== 'ORG_ADMIN'
+  ) {
+    return NextResponse.json({ error: { code: 'forbidden' } }, { status: 403 });
+  }
+
+  // Signed notes are immutable records — never deletable.
+  if (note.status === 'SIGNED' || note.status === 'TRANSFERRED') {
+    return NextResponse.json(
+      {
+        error: {
+          code: 'note_signed',
+          message: 'A signed note is a permanent record and cannot be deleted. Use an addendum instead.',
+        },
+      },
+      { status: 409 },
+    );
+  }
+
+  await prisma.note.update({
+    where: { id },
+    data: { isDeleted: true, deletedAt: new Date() },
+  });
+
+  await writeAuditLog({
+    userId: user.id,
+    orgId: orgUser.orgId,
+    action: 'NOTE_DELETED',
+    resourceType: 'Note',
+    resourceId: id,
+    // PHI-free: structural metadata only — no transcript / patient identifiers.
+    metadata: {
+      softDelete: true,
+      statusAtDelete: note.status,
+      captureMode: note.captureMode,
+      hadAudio: !!note.audioFileKey,
+    },
+  });
+
+  return NextResponse.json({ data: { ok: true } });
 }

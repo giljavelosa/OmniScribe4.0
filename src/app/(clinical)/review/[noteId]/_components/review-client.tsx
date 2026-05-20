@@ -1,12 +1,22 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Copy, Check, ArrowLeft } from 'lucide-react';
+import { Copy, Check, ArrowLeft, Trash2 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { StatusBanner } from '@/components/ui/status-banner';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { PatientIdentityHeader } from '@/components/patients/patient-identity-header';
 import { SectionProgressStrip } from '@/components/notes/section-progress-strip';
 import { OpenFollowUpsCard, type CopilotFollowUp } from '@/components/copilot/cards/open-followups-card';
@@ -116,6 +126,27 @@ export function ReviewClient({ noteId, initial, copilotFollowUps }: Props) {
   const progress: ProgressStripCell[] = deriveProgressStrip(snap.sections, snap.sectionStatus);
   const readyForSign = isReadyForSign(progress);
   const isSigned = snap.status === 'SIGNED';
+
+  // Discard-draft. Only offered for unsigned notes — a signed note is a
+  // permanent record (the server also hard-refuses it). Soft-delete via
+  // DELETE /api/notes/[id]; on success route back to /home.
+  const [discardOpen, setDiscardOpen] = useState(false);
+  const [discardError, setDiscardError] = useState<string | null>(null);
+  const [discarding, startDiscard] = useTransition();
+  function discardDraft() {
+    setDiscardError(null);
+    startDiscard(async () => {
+      const res = await fetch(`/api/notes/${noteId}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        setDiscardError(body?.error?.message ?? `Couldn't delete the draft (${res.status}).`);
+        return;
+      }
+      setDiscardOpen(false);
+      router.push('/home');
+      router.refresh();
+    });
+  }
   // finalJson is the canonical wrapper { sections: [{id,label,content}], signedAt, schemaVersion },
   // NOT the flat {[id]: {content}} map draftJson uses. Normalize so SectionAccordion's
   // [section.id] lookup works the same for both DRAFT and SIGNED notes.
@@ -133,13 +164,54 @@ export function ReviewClient({ noteId, initial, copilotFollowUps }: Props) {
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-6 space-y-6">
-      <Link
-        href={`/patients/${snap.patient.id}`}
-        className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
-      >
-        <ArrowLeft className="h-3 w-3" aria-hidden />
-        Back to patient chart
-      </Link>
+      <div className="flex items-center justify-between gap-3">
+        <Link
+          href={`/patients/${snap.patient.id}`}
+          className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+        >
+          <ArrowLeft className="h-3 w-3" aria-hidden />
+          Back to patient chart
+        </Link>
+        {!isSigned && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => setDiscardOpen(true)}
+            className="gap-1.5 text-muted-foreground hover:text-[var(--status-danger-fg)]"
+          >
+            <Trash2 className="size-3.5" aria-hidden />
+            Discard draft
+          </Button>
+        )}
+      </div>
+
+      <AlertDialog open={discardOpen} onOpenChange={(o) => !o && setDiscardOpen(false)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Discard this draft?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This note is removed from your drafts queue. Any recorded audio is kept and
+              the deletion is audited. A signed note can never be discarded — only an
+              unsigned draft like this one.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {discardError && <StatusBanner variant="danger">{discardError}</StatusBanner>}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={discarding}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                discardDraft();
+              }}
+              disabled={discarding}
+              className="bg-destructive text-white hover:bg-destructive/90"
+            >
+              {discarding ? 'Discarding…' : 'Discard draft'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <PatientIdentityHeader
         patient={{
           firstName: snap.patient.firstName,

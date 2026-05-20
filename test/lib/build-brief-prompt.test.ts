@@ -95,6 +95,8 @@ const buildPriorNote = (id: string, dateIso: string, content: string) =>
       dateOfService: new Date(dateIso),
       isLateEntry: false,
       lateEntryDaysGap: null,
+      isDeleted: false,
+      deletedAt: null,
       createdAt: new Date(dateIso),
       updatedAt: new Date(dateIso),
       template: { name: 'PT Progress Note' },
