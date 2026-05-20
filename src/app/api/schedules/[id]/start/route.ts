@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
 import { requireFeatureAccess } from '@/lib/authz/server';
 import { canActAtSite, getClinicianSiteIds } from '@/lib/authz/site-scope';
+import { checkClinicianSeat, seatRequiredResponse } from '@/lib/authz/seat';
 import { writeAuditLog } from '@/lib/audit/log';
 import { startVisit, type PickerSource } from '@/lib/encounters/start';
 import { DivisionResolutionError } from '@/lib/divisions/resolve';
@@ -63,6 +64,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     where: { id, orgId: authorizationUser.orgId },
   });
   if (!schedule) return NextResponse.json({ error: { code: 'not_found' } }, { status: 404 });
+
+  // Seat gate — the visit's clinician needs an assigned seat to record. Inert
+  // when Stripe billing isn't configured; org admins bypass.
+  const seatGate = await checkClinicianSeat(schedule.clinicianOrgUserId);
+  if (!seatGate.ok) return seatRequiredResponse();
 
   // Multi-site enrollment guard — the schedule.siteId must be in the caller's
   // scope. Org-wide roles bypass via scope 'all'. Cross-coverage exception is
