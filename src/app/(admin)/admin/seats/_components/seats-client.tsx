@@ -1,13 +1,19 @@
 'use client';
 
-import { useEffect, useState, useTransition } from 'react';
-import { Plus, Trash2 } from 'lucide-react';
+import { useEffect, useMemo, useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
+import { Check, UserPlus, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { StatusBanner } from '@/components/ui/status-banner';
 import {
@@ -24,32 +30,51 @@ import {
 type Seat = {
   id: string;
   tier: 'SOLO' | 'TEAM' | 'ENTERPRISE';
+  isActive: boolean;
   expiresAt: string;
   createdAt: string;
   assignedToOrgUserId: string | null;
+  assignedToName: string | null;
   assignedToEmail: string | null;
+};
+
+type AssignableUser = {
+  orgUserId: string;
+  name: string;
+  email: string;
+  role: string;
 };
 
 type Summary = {
   totalSeats: number;
+  activeSeats: number;
   assignedSeats: number;
   byTier: Record<string, number>;
 };
 
-type Props = {
-  /** When true, hides the "Allocate seats" button. /admin/seats sees the
-   *  list but only the owner console allocates new seats. */
-  readOnly?: boolean;
+type SeatsResponse = {
+  data: Seat[];
+  assignableUsers: AssignableUser[];
+  summary: Summary;
+  stripeConfigured: boolean;
+  stripeCustomerLinked: boolean;
 };
 
-export function SeatsClient({ readOnly = false }: Props) {
+/**
+ * SeatsClient — the org-admin seat-management surface. Lists provisioned
+ * seats and lets the admin assign each one to a clinician (or revoke it).
+ * Seats are CREATED by the Stripe webhook, not here — purchasing capacity
+ * happens on /admin/billing.
+ */
+export function SeatsClient() {
+  const router = useRouter();
   const [seats, setSeats] = useState<Seat[]>([]);
+  const [assignable, setAssignable] = useState<AssignableUser[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
-  const [stripeStubMode, setStripeStubMode] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, startLoading] = useTransition();
-  const [allocating, setAllocating] = useState(false);
-  const [revokeId, setRevokeId] = useState<string | null>(null);
+  const [assignSeatId, setAssignSeatId] = useState<string | null>(null);
+  const [revokeSeatId, setRevokeSeatId] = useState<string | null>(null);
 
   function load() {
     setError(null);
@@ -59,14 +84,10 @@ export function SeatsClient({ readOnly = false }: Props) {
         setError('Failed to load seats.');
         return;
       }
-      const json = (await res.json()) as {
-        data: Seat[];
-        summary: Summary;
-        stripeStubMode: boolean;
-      };
+      const json = (await res.json()) as SeatsResponse;
       setSeats(json.data);
+      setAssignable(json.assignableUsers);
       setSummary(json.summary);
-      setStripeStubMode(json.stripeStubMode);
     });
   }
 
@@ -74,6 +95,11 @@ export function SeatsClient({ readOnly = false }: Props) {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     load();
   }, []);
+
+  const revokeSeat = useMemo(
+    () => seats.find((s) => s.id === revokeSeatId) ?? null,
+    [seats, revokeSeatId],
+  );
 
   return (
     <>
@@ -83,27 +109,29 @@ export function SeatsClient({ readOnly = false }: Props) {
             <CardTitle className="text-md">Seats</CardTitle>
             <CardDescription>
               {summary
-                ? `${summary.totalSeats} total · ${summary.assignedSeats} assigned`
+                ? `${summary.activeSeats} active · ${summary.assignedSeats} assigned`
                 : 'Loading…'}
             </CardDescription>
           </div>
-          {!readOnly && (
-            <Button onClick={() => setAllocating(true)} disabled={loading}>
-              <Plus className="size-4" aria-hidden="true" />
-              Allocate seats
-            </Button>
-          )}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => router.push('/admin/billing')}
+          >
+            Manage subscription
+          </Button>
         </CardHeader>
         <CardContent className="space-y-3">
-          {stripeStubMode && (
-            <StatusBanner variant="info">
-              Stripe is in stub mode (no STRIPE_SECRET_KEY). Seat allocations are persisted
-              and audited, but the real billing subscription update is deferred until the
-              integration lands.
-            </StatusBanner>
-          )}
           {error && <StatusBanner variant="danger">{error}</StatusBanner>}
-          {summary && (
+
+          <p className="text-xs text-muted-foreground">
+            A clinician needs an assigned seat to record and create notes. Seats come from your
+            subscription — buy capacity on the billing page, then assign a seat to each
+            clinician here. Org admins always have full access and never consume a seat.
+          </p>
+
+          {summary && seats.length > 0 && (
             <div className="flex flex-wrap gap-2 text-xs">
               {Object.entries(summary.byTier).map(([tier, count]) => (
                 <StatusBadge key={tier} variant="neutral" noIcon>
@@ -113,130 +141,200 @@ export function SeatsClient({ readOnly = false }: Props) {
             </div>
           )}
 
-          <div className="overflow-x-auto rounded-md border border-border">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b border-border bg-muted/30 text-[10px] uppercase tracking-wide text-muted-foreground">
-                  <th className="text-left px-3 py-2 font-medium">Tier</th>
-                  <th className="text-left px-3 py-2 font-medium">Assigned to</th>
-                  <th className="text-left px-3 py-2 font-medium">Expires</th>
-                  <th className="text-left px-3 py-2 font-medium">Created</th>
-                  <th className="px-3 py-2" />
-                </tr>
-              </thead>
-              <tbody>
-                {seats.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="px-3 py-6 text-center text-muted-foreground">
-                      {loading ? 'Loading…' : 'No seats allocated yet.'}
-                    </td>
+          {seats.length === 0 ? (
+            <p className="text-sm text-muted-foreground italic">
+              {loading
+                ? 'Loading seats…'
+                : 'No seats yet — start a subscription on the billing page to provision seats.'}
+            </p>
+          ) : (
+            <div className="overflow-x-auto rounded-md border border-border">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-border bg-muted/30 text-[10px] uppercase tracking-wide text-muted-foreground">
+                    <th className="text-left px-3 py-2 font-medium">Tier</th>
+                    <th className="text-left px-3 py-2 font-medium">Status</th>
+                    <th className="text-left px-3 py-2 font-medium">Assigned to</th>
+                    <th className="text-left px-3 py-2 font-medium">Expires</th>
+                    <th className="px-3 py-2" />
                   </tr>
-                ) : (
-                  seats.map((s) => (
+                </thead>
+                <tbody>
+                  {seats.map((s) => (
                     <tr key={s.id} className="border-b border-border last:border-b-0">
-                      <td className="px-3 py-2"><StatusBadge variant="neutral" noIcon>{s.tier}</StatusBadge></td>
-                      <td className="px-3 py-2 font-mono text-[11px]">{s.assignedToEmail ?? <span className="text-muted-foreground italic">unassigned</span>}</td>
-                      <td className="px-3 py-2 text-muted-foreground">{new Date(s.expiresAt).toLocaleDateString()}</td>
-                      <td className="px-3 py-2 text-muted-foreground">{new Date(s.createdAt).toLocaleDateString()}</td>
+                      <td className="px-3 py-2">
+                        <StatusBadge variant="neutral" noIcon>
+                          {s.tier}
+                        </StatusBadge>
+                      </td>
+                      <td className="px-3 py-2">
+                        {s.isActive ? (
+                          <span className="text-[var(--status-success-fg)]">Active</span>
+                        ) : (
+                          <span className="text-muted-foreground">Inactive</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2">
+                        {s.assignedToOrgUserId ? (
+                          <span>
+                            {s.assignedToName ?? s.assignedToEmail}
+                            {s.assignedToName && s.assignedToEmail && (
+                              <span className="text-muted-foreground"> · {s.assignedToEmail}</span>
+                            )}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground italic">Unassigned</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-muted-foreground">
+                        {new Date(s.expiresAt).toLocaleDateString()}
+                      </td>
                       <td className="px-3 py-2 text-right">
-                        {!readOnly && (
+                        {s.assignedToOrgUserId ? (
                           <Button
                             type="button"
                             variant="ghost"
                             size="sm"
-                            onClick={() => setRevokeId(s.id)}
+                            onClick={() => setRevokeSeatId(s.id)}
                             disabled={loading}
-                            aria-label={`Revoke seat ${s.id}`}
+                            className="gap-1"
                           >
-                            <Trash2 className="size-4 text-[var(--status-danger-fg)]" aria-hidden="true" />
+                            <X className="size-3" aria-hidden="true" />
+                            Revoke
                           </Button>
-                        )}
+                        ) : s.isActive ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setAssignSeatId(s.id)}
+                            disabled={loading}
+                            className="gap-1"
+                          >
+                            <UserPlus className="size-3" aria-hidden="true" />
+                            Assign
+                          </Button>
+                        ) : null}
                       </td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </CardContent>
       </Card>
 
-      {allocating && !readOnly && (
-        <AllocateSheet onClose={() => setAllocating(false)} onAllocated={() => { setAllocating(false); load(); }} />
+      {assignSeatId && (
+        <AssignModal
+          seatId={assignSeatId}
+          users={assignable}
+          onClose={() => setAssignSeatId(null)}
+          onAssigned={() => {
+            setAssignSeatId(null);
+            load();
+          }}
+        />
       )}
+
       <RevokeConfirm
-        id={revokeId}
-        onCancel={() => setRevokeId(null)}
-        onRevoked={() => { setRevokeId(null); load(); }}
+        seat={revokeSeat}
+        onCancel={() => setRevokeSeatId(null)}
+        onRevoked={() => {
+          setRevokeSeatId(null);
+          load();
+        }}
       />
     </>
   );
 }
 
-function AllocateSheet({ onClose, onAllocated }: { onClose: () => void; onAllocated: () => void }) {
-  const [tier, setTier] = useState<'SOLO' | 'TEAM' | 'ENTERPRISE'>('TEAM');
-  const [count, setCount] = useState(1);
-  const [expiresAt, setExpiresAt] = useState(() => {
-    const d = new Date();
-    d.setFullYear(d.getFullYear() + 1);
-    return d.toISOString().slice(0, 10);
-  });
+function AssignModal({
+  seatId,
+  users,
+  onClose,
+  onAssigned,
+}: {
+  seatId: string;
+  users: AssignableUser[];
+  onClose: () => void;
+  onAssigned: () => void;
+}) {
+  const [orgUserId, setOrgUserId] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
   function submit() {
+    if (!orgUserId) {
+      setError('Pick a team member to assign this seat to.');
+      return;
+    }
     setError(null);
     startTransition(async () => {
       const res = await fetch('/api/admin/seats', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          tier,
-          count,
-          expiresAt: new Date(expiresAt).toISOString(),
-        }),
+        body: JSON.stringify({ action: 'assign', seatId, orgUserId }),
       });
       if (!res.ok) {
-        const payload = await res.json().catch(() => null);
-        setError(payload?.error?.message ?? `Allocate failed (${res.status}).`);
+        const payload = (await res.json().catch(() => null)) as
+          | { error?: { message?: string } }
+          | null;
+        setError(payload?.error?.message ?? `Assign failed (${res.status}).`);
         return;
       }
-      onAllocated();
+      onAssigned();
     });
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
+      onClick={onClose}
+    >
       <Card className="w-full max-w-md" onClick={(e) => e.stopPropagation()}>
         <CardHeader>
-          <CardTitle className="text-md">Allocate seats</CardTitle>
-          <CardDescription>Subscription will recalculate to match the new total.</CardDescription>
+          <CardTitle className="text-md">Assign seat</CardTitle>
+          <CardDescription>
+            The selected clinician can record and create notes as soon as the seat is assigned.
+          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
-          <div className="space-y-1.5">
-            <Label>Tier</Label>
-            <Select value={tier} onValueChange={(v) => setTier(v as 'SOLO' | 'TEAM' | 'ENTERPRISE')}>
-              <SelectTrigger disabled={pending}><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="SOLO">Solo</SelectItem>
-                <SelectItem value="TEAM">Team</SelectItem>
-                <SelectItem value="ENTERPRISE">Enterprise</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="seat-count">Count</Label>
-            <Input id="seat-count" type="number" min={1} max={500} value={count} onChange={(e) => setCount(Math.max(1, Math.min(500, Number(e.target.value) || 1)))} disabled={pending} />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="seat-expires">Expires</Label>
-            <Input id="seat-expires" type="date" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} disabled={pending} />
-          </div>
+          {users.length === 0 ? (
+            <StatusBanner variant="info">
+              Every non-admin member already holds a seat. Invite more teammates from the Users
+              page, then come back to assign them.
+            </StatusBanner>
+          ) : (
+            <div className="space-y-1.5">
+              <Label>Team member</Label>
+              <Select value={orgUserId} onValueChange={setOrgUserId}>
+                <SelectTrigger disabled={pending}>
+                  <SelectValue placeholder="Choose a member…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {users.map((u) => (
+                    <SelectItem key={u.orgUserId} value={u.orgUserId}>
+                      {u.name} · {u.email}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           {error && <StatusBanner variant="danger">{error}</StatusBanner>}
           <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="ghost" onClick={onClose} disabled={pending}>Cancel</Button>
-            <Button type="button" onClick={submit} disabled={pending}>
-              {pending ? 'Allocating…' : `Allocate ${count} seat${count === 1 ? '' : 's'}`}
+            <Button type="button" variant="ghost" onClick={onClose} disabled={pending}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={submit}
+              disabled={pending || users.length === 0}
+              className="gap-1"
+            >
+              <Check className="size-3" aria-hidden="true" />
+              {pending ? 'Assigning…' : 'Assign seat'}
             </Button>
           </div>
         </CardContent>
@@ -246,11 +344,11 @@ function AllocateSheet({ onClose, onAllocated }: { onClose: () => void; onAlloca
 }
 
 function RevokeConfirm({
-  id,
+  seat,
   onCancel,
   onRevoked,
 }: {
-  id: string | null;
+  seat: Seat | null;
   onCancel: () => void;
   onRevoked: () => void;
 }) {
@@ -258,12 +356,18 @@ function RevokeConfirm({
   const [error, setError] = useState<string | null>(null);
 
   function confirm() {
-    if (!id) return;
+    if (!seat) return;
     setError(null);
     startTransition(async () => {
-      const res = await fetch(`/api/admin/seats/${id}`, { method: 'DELETE' });
+      const res = await fetch('/api/admin/seats', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'revoke', seatId: seat.id }),
+      });
       if (!res.ok) {
-        const payload = await res.json().catch(() => null);
+        const payload = (await res.json().catch(() => null)) as
+          | { error?: { message?: string } }
+          | null;
         setError(payload?.error?.message ?? `Revoke failed (${res.status}).`);
         return;
       }
@@ -272,19 +376,24 @@ function RevokeConfirm({
   }
 
   return (
-    <AlertDialog open={!!id} onOpenChange={(o) => !o && onCancel()}>
+    <AlertDialog open={!!seat} onOpenChange={(o) => !o && onCancel()}>
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>Revoke this seat?</AlertDialogTitle>
           <AlertDialogDescription>
-            If the seat is currently assigned, the assignee loses their seat. The action is
-            audited.
+            {seat?.assignedToName ?? seat?.assignedToEmail ?? 'The current holder'} loses the
+            ability to record and create notes. The seat returns to the unassigned pool — your
+            subscription and billing are unchanged. The action is audited.
           </AlertDialogDescription>
         </AlertDialogHeader>
         {error && <StatusBanner variant="danger">{error}</StatusBanner>}
         <AlertDialogFooter>
           <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
-          <AlertDialogAction onClick={confirm} disabled={pending} className="bg-destructive text-white hover:bg-destructive/90">
+          <AlertDialogAction
+            onClick={confirm}
+            disabled={pending}
+            className="bg-destructive text-white hover:bg-destructive/90"
+          >
             {pending ? 'Revoking…' : 'Revoke seat'}
           </AlertDialogAction>
         </AlertDialogFooter>
