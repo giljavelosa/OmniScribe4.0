@@ -9,9 +9,7 @@ export default function AdminSeatsPage() {
   return (
     <div className="space-y-4">
       <h1 className="text-2lg font-semibold">Seats</h1>
-      {/* /admin/seats is the org-admin surface: read-only listing only.
-          Seat allocation + revoke live in the owner console. */}
-      <SeatsClient readOnly />
+      <SeatsClient />
     </div>
   );
 }
