@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import type { Job } from 'bullmq';
 import { NoteStatus, ReviewFlagSeverity, ReviewFlagStatus } from '@prisma/client';
 
@@ -6,6 +8,11 @@ import { writeAuditLog } from '@/lib/audit/log';
 import { FlagAnalyzer } from '@/services/review/FlagAnalyzer';
 import type { NoteSectionDef } from '@/lib/notes/build-prompt';
 import { projectPatientForPrompt } from '@/lib/notes/projections';
+import {
+  readInferenceLog,
+  recordFlagAnalyses,
+  type FlagAnalysisEntry,
+} from '@/lib/notes/section-status';
 import type { TranscriptClean } from '@/services/transcription';
 
 type AnalyzeFlagsJob = {
@@ -29,6 +36,11 @@ type AnalyzeFlagsJob = {
  *   - Before analysis, deletes any existing OPEN flags for this
  *     (noteId, sectionId) so a re-analyze doesn't duplicate the same
  *     finding. RESOLVED + DISMISSED rows are preserved.
+ *   - Content-hash gate: each analyzed section is stamped with a SHA-256
+ *     of its draft text in inferenceLog._flagAnalysis. A re-analyze skips
+ *     the LLM entirely for sections whose text is byte-identical to the
+ *     last run — re-running the model on unchanged content only lets its
+ *     non-determinism flip flags between runs. Existing flags are kept.
  *
  * Refuses if note.status === SIGNED (rule 3 — no analysis of immutable
  * artifacts; signed notes' compliance posture is whatever was decided
@@ -56,7 +68,7 @@ export async function handleAnalyzeFlags(job: Job<AnalyzeFlagsJob>) {
   const sections =
     (note.template.sectionSchema as { sections: NoteSectionDef[] } | null)?.sections ?? [];
   if (sections.length === 0) {
-    return { ok: true, sectionsAnalyzed: 0, flagsCreated: 0 };
+    return { ok: true, sectionsAnalyzed: 0, sectionsSkipped: 0, flagsCreated: 0 };
   }
 
   const draft =
@@ -65,12 +77,26 @@ export async function handleAnalyzeFlags(job: Job<AnalyzeFlagsJob>) {
   const patient = projectPatientForPrompt(note.patient);
   const analyzer = new FlagAnalyzer();
 
+  // Content-hash gate: the prior run stamped each analyzed section with a
+  // SHA-256 of its draft text. A section whose text is byte-identical to
+  // last time is skipped — the LLM's non-determinism would otherwise flip
+  // its flags on a no-op re-analyze. The section's existing flags already
+  // reflect this exact text, so they're left untouched.
+  const priorAnalysis = readInferenceLog(note.inferenceLog)._flagAnalysis ?? {};
+  const nextAnalysis: Record<string, FlagAnalysisEntry> = { ...priorAnalysis };
+
   let totalCreated = 0;
   let sectionsAnalyzed = 0;
+  let sectionsSkipped = 0;
   for (const section of sections) {
     const content = draft[section.id]?.content?.trim();
     if (!content) continue;
-    sectionsAnalyzed += 1;
+
+    const contentHash = createHash('sha256').update(content).digest('hex');
+    if (priorAnalysis[section.id]?.contentHash === contentHash) {
+      sectionsSkipped += 1;
+      continue;
+    }
 
     let flags: Awaited<ReturnType<typeof analyzer.analyzeSection>>;
     try {
@@ -124,6 +150,20 @@ export async function handleAnalyzeFlags(job: Job<AnalyzeFlagsJob>) {
       );
     });
     totalCreated += created.length;
+    sectionsAnalyzed += 1;
+    // Stamp the fingerprint only after the flags are committed, so a future
+    // re-analyze can trust "hash matches" == "flags already reflect this".
+    nextAnalysis[section.id] = {
+      contentHash,
+      analyzedAt: new Date().toISOString(),
+    };
+  }
+
+  // Persist the fingerprints so the next re-analyze can skip unchanged
+  // sections. Only write when something was re-analyzed — an all-skipped
+  // run leaves inferenceLog untouched.
+  if (sectionsAnalyzed > 0) {
+    await recordFlagAnalyses(noteId, nextAnalysis);
   }
 
   await writeAuditLog({
@@ -134,9 +174,10 @@ export async function handleAnalyzeFlags(job: Job<AnalyzeFlagsJob>) {
     metadata: {
       requestId,
       sectionsAnalyzed,
+      sectionsSkipped,
       totalFlagsCreated: totalCreated,
     },
   });
 
-  return { ok: true, sectionsAnalyzed, flagsCreated: totalCreated };
+  return { ok: true, sectionsAnalyzed, sectionsSkipped, flagsCreated: totalCreated };
 }
