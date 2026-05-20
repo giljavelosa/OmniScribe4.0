@@ -74,9 +74,15 @@ function makeNote(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function run() {
+function run(opts: { force?: boolean } = {}) {
   return handleAnalyzeFlags({
-    data: { noteId: 'note_1', orgId: 'org_1', type: 'analyze-flags', requestId: 'req_1' },
+    data: {
+      noteId: 'note_1',
+      orgId: 'org_1',
+      type: 'analyze-flags',
+      requestId: 'req_1',
+      ...(opts.force !== undefined ? { force: opts.force } : {}),
+    },
   } as unknown as Parameters<typeof handleAnalyzeFlags>[0]);
 }
 
@@ -280,6 +286,49 @@ describe('analyze-flags handler — content-hash gate', () => {
     // overwritten, but also not advanced: the next re-analyze still mismatches
     // (stale-hash !== hashOf(current)) and retries the section.
     expect(noteUpdate).not.toHaveBeenCalled();
+  });
+
+  it('force=true re-analyzes a section the hash gate would otherwise skip', async () => {
+    noteFindFirst.mockResolvedValueOnce(
+      makeNote({
+        inferenceLog: {
+          _flagAnalysis: {
+            s1: { contentHash: hashOf(S1_CONTENT), analyzedAt: '2026-05-01T00:00:00.000Z' },
+          },
+        },
+      }),
+    );
+    analyzeSection.mockResolvedValueOnce({
+      flags: [{ severity: 'RED', claim: 'unsupported', rationale: 'no transcript evidence' }],
+    });
+    noteFindUnique.mockResolvedValueOnce({
+      inferenceLog: {
+        _flagAnalysis: {
+          s1: { contentHash: hashOf(S1_CONTENT), analyzedAt: '2026-05-01T00:00:00.000Z' },
+        },
+      },
+    });
+
+    // Content is byte-identical to the last run — a normal re-analyze skips it.
+    const result = await run({ force: true });
+
+    expect(analyzeSection).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({
+      ok: true,
+      sectionsAnalyzed: 1,
+      sectionsSkipped: 0,
+      flagsCreated: 1,
+    });
+    expect(writeAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'FLAGS_ANALYZED',
+        metadata: expect.objectContaining({
+          force: true,
+          sectionsAnalyzed: 1,
+          sectionsSkipped: 0,
+        }),
+      }),
+    );
   });
 
   it('refuses a SIGNED note (rule 3) before any analysis', async () => {
