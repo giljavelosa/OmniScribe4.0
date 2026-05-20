@@ -182,6 +182,11 @@ export type AuditAction =
   | 'SEAT_REVOKED'
   | 'STRIPE_SUBSCRIPTION_UPDATED'
   | 'STRIPE_SUBSCRIPTION_STUB'
+  // ---- Subscriptions: Stripe checkout + webhook pipeline ----
+  | 'STRIPE_CHECKOUT_STARTED'
+  | 'STRIPE_SUBSCRIPTION_CANCELED'
+  | 'STRIPE_PAYMENT_FAILED'
+  | 'STRIPE_BILLING_PORTAL_OPENED'
   // ---- Unit 10: Section-regenerate UX maturity ----
   | 'SECTION_DIFF_VIEWED'
   | 'SECTION_REGEN_RETRY_BATCH'
