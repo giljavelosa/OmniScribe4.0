@@ -78,10 +78,24 @@ export type SectionStats = {
   recentLatenciesMs: number[];
 };
 
+/**
+ * Per-section content fingerprint from the last analyze-flags run. Lets the
+ * "Re-analyze" action skip sections whose draft text is byte-identical to
+ * what was already analyzed — re-running the LLM on unchanged text only
+ * invites non-determinism to flip flags between runs. PHI-free: a SHA-256
+ * hash of the section content, never the content itself.
+ */
+export type FlagAnalysisEntry = {
+  contentHash: string;
+  analyzedAt: string;
+};
+
 export type InferenceLog = {
   _sectionStatus?: Record<string, SectionStatusEntry>;
   _regenerations?: RegenerationEntry[];
   _sectionStats?: SectionStats;
+  /** Keyed by sectionId — see FlagAnalysisEntry. */
+  _flagAnalysis?: Record<string, FlagAnalysisEntry>;
 };
 
 /** Rolling-window cap for recentLatenciesMs. 50 attempts is enough for
@@ -195,6 +209,29 @@ export async function recordSectionAttempt(
   await prisma.note.update({
     where: { id: noteId },
     data: { inferenceLog: merged as unknown as Prisma.InputJsonValue },
+  });
+}
+
+/**
+ * Persist the per-section content fingerprints produced by an analyze-flags
+ * run. Read-modify-write against a FRESH inferenceLog read (same pattern as
+ * markSectionStatus) so a concurrent _sectionStatus / _regenerations write
+ * isn't clobbered. Callers pass the full next _flagAnalysis map.
+ */
+export async function recordFlagAnalyses(
+  noteId: string,
+  analyses: Record<string, FlagAnalysisEntry>,
+): Promise<void> {
+  const note = await prisma.note.findUnique({
+    where: { id: noteId },
+    select: { inferenceLog: true },
+  });
+  if (!note) throw new Error(`recordFlagAnalyses: note ${noteId} not found`);
+  const log = readInferenceLog(note.inferenceLog);
+  const next: InferenceLog = { ...log, _flagAnalysis: analyses };
+  await prisma.note.update({
+    where: { id: noteId },
+    data: { inferenceLog: next as unknown as Prisma.InputJsonValue },
   });
 }
 
