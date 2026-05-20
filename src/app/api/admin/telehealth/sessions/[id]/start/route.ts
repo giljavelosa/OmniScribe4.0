@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 
 import { prisma } from '@/lib/prisma';
 import { requireFeatureAccess } from '@/lib/authz/server';
+import { checkClinicianSeat, seatRequiredResponse } from '@/lib/authz/seat';
 import { writeAuditLog } from '@/lib/audit/log';
 import { assertOrgScoped } from '@/lib/phi-access';
 import { createRoom, dailyConfig } from '@/services/telehealth/daily';
@@ -55,6 +56,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       },
     });
   }
+
+  // Seat gate — the visit's clinician needs an assigned seat to record. Inert
+  // when Stripe billing isn't configured; org admins bypass.
+  const seatGate = await checkClinicianSeat(session.schedule.clinicianOrgUserId);
+  if (!seatGate.ok) return seatRequiredResponse();
 
   if (session.status !== 'CONSENT_CAPTURED') {
     // CONSENT_CAPTURED is the only acceptable prerequisite — the state

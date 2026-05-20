@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
 import { requireFeatureAccess } from '@/lib/authz/server';
 import { canActAtSite, getClinicianSiteIds } from '@/lib/authz/site-scope';
+import { checkClinicianSeat, seatRequiredResponse } from '@/lib/authz/seat';
 import { startVisit } from '@/lib/encounters/start';
 import { DivisionResolutionError } from '@/lib/divisions/resolve';
 import {
@@ -45,6 +46,11 @@ export async function POST(req: Request) {
   const guard = await requireFeatureAccess('VISITS_CREATE', req);
   if ('error' in guard) return guard.error;
   const { user, authorizationUser } = guard;
+
+  // Seat gate — a clinician needs an assigned seat to record. Inert when
+  // Stripe billing isn't configured; org admins bypass.
+  const seatGate = await checkClinicianSeat(authorizationUser.orgUserId);
+  if (!seatGate.ok) return seatRequiredResponse();
 
   const parsed = bodySchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
