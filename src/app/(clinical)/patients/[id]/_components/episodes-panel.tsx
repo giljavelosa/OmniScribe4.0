@@ -88,6 +88,7 @@ export function EpisodesPanel({
               key={ep.id}
               patientId={patientId}
               episode={ep}
+              defaultExpanded={episodes.length === 1}
             />
           ))
         )}
@@ -99,12 +100,14 @@ export function EpisodesPanel({
 function EpisodeCard({
   patientId,
   episode,
+  defaultExpanded,
 }: {
   patientId: string;
   episode: Episode;
+  defaultExpanded: boolean;
 }) {
   const router = useRouter();
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(defaultExpanded);
   const [closeOpen, setCloseOpen] = useState(false);
   const [reopenOpen, setReopenOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);

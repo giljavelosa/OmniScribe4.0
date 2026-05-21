@@ -15,6 +15,13 @@
 
 ## Completed
 
+- **2026-05-21 — Dense mobile patient rows + collapsed-by-default episode cards** (`feat(patients): dense mobile list rows + collapsed episode cards`).
+  - **Why**: Two clinical surfaces broke the "don't lose context to a marathon scroll" principle the new visit viewer follows. `/patients` rendered each patient as a ~5-row card (3-line identity + site/status row + a row of two full-width buttons); the chart's Episodes tab opened every episode expanded, so a 4-episode patient was an endless scroll.
+  - **Patient list (`patients/page.tsx`)**: the `lg:hidden` mobile branch goes from fat cards to single-tap dense rows — avatar + name (+ Active badge) + one `age/sex · MRN · last visit` line + chevron, whole row links to the chart. The "Open chart" / "Start note" buttons are removed: both already navigated to `/patients/[id]`, so the tappable row replaces them with no path lost. Unused `Button` import dropped. Desktop registry table untouched (already dense). Site name dropped from the mobile row to keep it to two clean lines.
+  - **Episode cards (`episodes-panel.tsx`)**: `EpisodeCard` gains a `defaultExpanded` prop; `EpisodesPanel` passes `episodes.length === 1` — a lone episode stays open, 2+ collapse to header-only. The status badge (incl. `RECERT_DUE`) stays visible while collapsed, so the attention signal isn't buried.
+  - **Verify**: `npm run typecheck` + `eslint` clean for both files (2 pre-existing `prisma/seed-corpus` module errors are unrelated). No tests referenced the changed markup.
+  - **Three-lens**: Clinician — more patients per screen, one tap into a chart, Episodes tab reads as an overview. Compliance — purely presentational; recorded data and shown care-state unchanged (Active badge + episode status preserved). Auditor — no data-path change.
+
 - **2026-05-19 — Stripe-backed seat-licensing / subscriptions — Wave 7 Unit 38** (4-PR stack — `feat(billing): …`).
   - **Why**: 4.0 had a vestigial `Seat` model + a stub Stripe path but no real subscription flow — an org admin could neither buy seats nor assign them to clinicians. This is the real feature, ported from the OmniscribeThree design: one Stripe subscription per org, its line-item `quantity` = seat count, seats materialized by a webhook and assigned in-app.
   - **Schema (PR A)**: `Seat` gains `isActive` (the webhook soft-deactivates on downgrade/cancel — never hard-deletes) + `stripeSubId` (reconciliation key); new `SeatTransfer` model (append-only assign/reassign/revoke trail). Migration `20260519150000_seat_subscription_fields` — additive only. `src/lib/stripe/{env,client}.ts`; `stripe@22` dependency.

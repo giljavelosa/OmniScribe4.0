@@ -1,12 +1,12 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { ChevronRight } from 'lucide-react';
 
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { Prisma } from '@prisma/client';
 import { getClinicianSiteIds } from '@/lib/authz/site-scope';
 import { UserAvatar } from '@/components/ui/user-avatar';
-import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { PatientsSearchForm } from './_components/patients-search-form';
@@ -163,8 +163,8 @@ export default async function PatientsPage({
           {total} patient{total === 1 ? '' : 's'}
         </p>
 
-        {/* ── MOBILE: card list (hidden on lg+) ────────────────────────── */}
-        <div className="lg:hidden space-y-3">
+        {/* ── MOBILE: dense patient rows (hidden on lg+) ───────────────── */}
+        <div className="lg:hidden space-y-2">
           {patients.length === 0 ? (
             <EmptyState query={rawQuery} />
           ) : (
@@ -175,48 +175,34 @@ export default async function PatientsPage({
                 ? p.encounters[0].startedAt.toLocaleDateString()
                 : '—';
               return (
-                <div
+                <Link
                   key={p.id}
-                  className="rounded-xl border border-border bg-card shadow-sm p-4 space-y-3"
+                  href={`/patients/${p.id}`}
+                  className="flex items-center gap-3 rounded-lg border border-border bg-card shadow-sm px-3 py-2.5 transition-colors hover:bg-muted/40 min-h-[var(--touch-min)]"
                 >
-                  {/* Identity row */}
-                  <div className="flex items-center gap-3">
-                    <UserAvatar firstName={p.firstName} lastName={p.lastName} size="md" className="shrink-0" />
-                    <div className="min-w-0 flex-1">
-                      <p className="font-semibold text-sm leading-tight">
+                  <UserAvatar
+                    firstName={p.firstName}
+                    lastName={p.lastName}
+                    size="sm"
+                    className="shrink-0"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <p className="font-medium text-sm truncate">
                         {p.lastName}, {p.firstName}
                       </p>
-                      <p className="text-xs text-muted-foreground">
-                        {age}y {p.sex} · MRN {p.mrn}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        Last visit: {lastVisit}
-                      </p>
+                      {isActive && (
+                        <StatusBadge variant="success" noIcon className="text-[10px] shrink-0">
+                          Active
+                        </StatusBadge>
+                      )}
                     </div>
+                    <p className="text-xs text-muted-foreground truncate">
+                      {age}y {p.sex} · MRN {p.mrn ?? '—'} · Last visit {lastVisit}
+                    </p>
                   </div>
-
-                  {/* Site + status row */}
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {p.site && (
-                      <span className="text-xs text-muted-foreground">{p.site.name}</span>
-                    )}
-                    {isActive ? (
-                      <StatusBadge variant="success" noIcon className="text-[10px]">Active</StatusBadge>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">No active care</span>
-                    )}
-                  </div>
-
-                  {/* Action buttons */}
-                  <div className="flex gap-2">
-                    <Button asChild variant="outline" size="sm" className="flex-1">
-                      <Link href={`/patients/${p.id}`}>Open chart</Link>
-                    </Button>
-                    <Button asChild size="sm" className="flex-1">
-                      <Link href={`/patients/${p.id}`}>Start note</Link>
-                    </Button>
-                  </div>
-                </div>
+                  <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                </Link>
               );
             })
           )}
