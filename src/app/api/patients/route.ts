@@ -21,7 +21,9 @@ const createSchema = z.object({
     .string()
     .min(1)
     .refine(isValidPersonName, { message: 'invalid characters in last name' }),
-  mrn: z.string().min(1),
+  // MRN is optional — OmniScribe generates an internal patient ID automatically.
+  // Require DOB for safer matching when MRN is absent.
+  mrn: z.string().min(1).optional(),
   dob: z.string().min(1),
   sex: z.enum(PatientSex),
   // Optional default site. The site of record for a specific visit is set
@@ -128,12 +130,14 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: { code: 'bad_request', message: 'Invalid DOB.' } }, { status: 400 });
   }
 
-  // Enforce @@unique([orgId, mrn]) at the application layer with a friendlier error.
-  const dupe = await prisma.patient.findFirst({
-    where: { orgId: authorizationUser.orgId, mrn: data.mrn },
-  });
-  if (dupe) {
-    return NextResponse.json({ error: { code: 'duplicate_mrn' } }, { status: 409 });
+  // MRN uniqueness check — only when MRN is provided.
+  if (data.mrn) {
+    const dupe = await prisma.patient.findFirst({
+      where: { orgId: authorizationUser.orgId, mrn: data.mrn },
+    });
+    if (dupe) {
+      return NextResponse.json({ error: { code: 'duplicate_mrn' } }, { status: 409 });
+    }
   }
 
   // When a default site is supplied, validate it: (a) exists in this org
@@ -166,7 +170,7 @@ export async function POST(req: Request) {
         siteId: data.siteId,
         firstName: data.firstName,
         lastName: data.lastName,
-        mrn: data.mrn,
+        mrn: data.mrn ?? null,
         dob,
         sex: data.sex,
         phone: data.phone,

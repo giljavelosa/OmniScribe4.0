@@ -1,9 +1,10 @@
 'use client';
 
 import { useEffect, useState, useTransition } from 'react';
-import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import QRCode from 'qrcode';
+
+import { completeMfaNavigation } from '@/lib/auth/complete-mfa-navigation';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -13,7 +14,6 @@ import { StatusBanner } from '@/components/ui/status-banner';
 type Stage = 'load' | 'scan' | 'codes' | 'done';
 
 export function MfaSetupWizard() {
-  const router = useRouter();
   const { update } = useSession();
   const [stage, setStage] = useState<Stage>('load');
   const [secret, setSecret] = useState<string | null>(null);
@@ -73,13 +73,15 @@ export function MfaSetupWizard() {
   }
 
   async function finish() {
-    await update({ mfaEnabled: true, mfaVerified: true });
     setStage('done');
     // Multi-site enrollment — the /onboarding-sites page short-circuits
     // straight to /home for org-wide-admins and anyone already enrolled,
-    // so unconditional push here keeps the redirect logic in one place.
-    router.push('/onboarding-sites');
-    router.refresh();
+    // so unconditional hard-nav here keeps the redirect logic in one place.
+    await completeMfaNavigation(
+      update,
+      { mfaEnabled: true, mfaVerified: true },
+      '/onboarding-sites',
+    );
   }
 
   if (stage === 'load') {

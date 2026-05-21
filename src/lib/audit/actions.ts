@@ -72,6 +72,8 @@ export type AuditAction =
   | 'VOICE_ID_MATCHED'
   | 'VOICE_ID_SKIPPED'
   | 'VOICE_ID_FAILED'
+  // ---- Sprint 0.7: dedicated visit viewer ----
+  | 'NOTE_AUDIO_URL_GENERATED'
   // ---- Unit 05: Note Generation & Sign ----
   | 'NOTE_GENERATION_STARTED'
   | 'NOTE_GENERATION_COMPLETED'

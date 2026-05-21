@@ -650,7 +650,7 @@ model Patient {
   site              Site?        @relation(fields: [siteId], references: [id])
   firstName         String
   lastName          String
-  mrn               String
+  mrn               String?
   dob               DateTime
   sex               PatientSex
   phone             String?

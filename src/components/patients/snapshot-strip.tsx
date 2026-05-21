@@ -186,7 +186,7 @@ function SnapshotCard({
           <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
             {measure.source === 'extracted' && measure.extractedFromNoteId && (
               <Link
-                href={`/review/${measure.extractedFromNoteId}`}
+                href={`/visits/${measure.extractedFromNoteId}`}
                 className="hover:underline truncate"
               >
                 source ↗

@@ -4,15 +4,18 @@
 
 ## Current Phase
 
-- **🎉 37-unit build plan CLOSED.** PR #38 ships Unit 37 (Public signup + self-serve org creation), the final unit. Account lockout (`User.failedLoginCount` + `User.lockedUntil`; 5-attempt threshold → 15-minute auto-lock; gates `auth.config.ts` `authorize()` BEFORE `bcrypt.compare` so locked accounts return null with no timing artifact); signup rate-limit (15-min × 5-attempt per-IP window; Redis-first with in-memory fallback; 429 + Retry-After); Cloudflare Turnstile CAPTCHA verification (active when env vars set; skipped in dev); `POST /api/auth/signup` (atomic Organization + User + OrgUser(SUPER_ADMIN) + Seat(SOLO) transaction); public landing page replacing the previous `/login` redirect; `/signup` form with full error mapping; `scripts/invite-sweep.mjs` cron-friendly housekeeping; 4 new audit actions (ORG_SELF_PROVISIONED, USER_LOCKED, USER_UNLOCKED, INVITE_EXPIRED_SWEPT). IP HASHED in audit metadata (SHA prefix + last-3-chars; raw IPs never stored).
+- **⏸ Waves 7 & 8 paused — Polish gate (Waves 0–6).** Units 01–37 capability shipped; deferred stubs, touch targets, telehealth real-mode, voice-ID, FHIR sweeper, PWA icons, and announcement banners must land before Wave 7 Unit 41 or Wave 8 Unit 42. **Canonical checklist:** [`context/specs/polish-waves-0-6.md`](specs/polish-waves-0-6.md).
+- **🔧 Sprint 0 in progress — Login & session trust (P0).** MFA redirect loops are the first-reported production bug. Fixing the JWT cookie propagation race and hardening the D2 chain before Sprint A clinical work. **Spec:** [`context/specs/sprint-0-login-first.md`](specs/sprint-0-login-first.md).
 
 ## Current Goal
 
-- **No next unit — 37/37 complete.** Next steps are GA-readiness work outside the build plan: CDK infra stacks, deployment automation, monitoring + alerting wiring, brand-asset finalization (PWA icons, marketing surfaces), and polish PRs against any of the follow-up flags surfaced through the build (3 touch-target findings, scoped impersonation mutations, background BullMQ rollup jobs, etc).
+- **Sprint 0 first:** Fix MFA setup/challenge redirect loops, login getSession race, onboarding-sites MFA gate, home blank guard. Exit criteria in sprint-0 spec.
+- **Then Sprint A:** W0-01/02 voice-ID, W3-01 Daily.co, W0-03 provider checklist. Full FE/BE scope in [`context/specs/sprint-a-fe-be.md`](specs/sprint-a-fe-be.md).
+- Wave 7/8 specs remain indexed but **not in progress**.
 
 ## Completed
 
-- **2026-05-19 — Stripe-backed seat-licensing / subscriptions** (4-PR stack — `feat(billing): …`).
+- **2026-05-19 — Stripe-backed seat-licensing / subscriptions — Wave 7 Unit 38** (4-PR stack — `feat(billing): …`).
   - **Why**: 4.0 had a vestigial `Seat` model + a stub Stripe path but no real subscription flow — an org admin could neither buy seats nor assign them to clinicians. This is the real feature, ported from the OmniscribeThree design: one Stripe subscription per org, its line-item `quantity` = seat count, seats materialized by a webhook and assigned in-app.
   - **Schema (PR A)**: `Seat` gains `isActive` (the webhook soft-deactivates on downgrade/cancel — never hard-deletes) + `stripeSubId` (reconciliation key); new `SeatTransfer` model (append-only assign/reassign/revoke trail). Migration `20260519150000_seat_subscription_fields` — additive only. `src/lib/stripe/{env,client}.ts`; `stripe@22` dependency.
   - **Pipeline (PR B)**: `POST /api/billing/checkout` opens a Stripe Checkout Session stamped with `subscription_data.metadata.orgId`; `POST /api/webhooks/stripe` is the signature-verified sink and the ONLY path that creates `Seat` rows — `reconcileSeats` diffs subscription `quantity` against active seats and converges (create / reactivate / deactivate, never touching an assigned seat on downgrade); `POST /api/billing/portal` is the customer-portal redirect.
@@ -545,23 +548,65 @@
   - 379 tests pass (was 353, +26); build/lint/typecheck clean. New: 10 lockout integration tests + 4 rate-limit integration tests + 12 turnstile unit tests. Build adds 3 new routes: `/` (static prerender; replaces redirect), `/signup` (dynamic), `/api/auth/signup` (dynamic).
   - **🎉 The 37-unit build plan is CLOSED. Next steps move outside the plan: CDK infra, deployment automation, brand assets, polish PRs against the surfaced follow-up flags.**
 
+## Wave 7 — Billing & subscriptions (canonical index)
+
+All billing, seats, Stripe, and subscription work lives here. Prerequisites §01 and §09 shipped inside Waves 0 and 1 before Wave 7 was named.
+
+| Unit | Name | Status |
+|------|------|--------|
+| §01 | Seat model foundation | ✅ complete (Wave 0 / Unit 01) |
+| §09 | Owner billing surfaces + Stripe stub | ✅ complete (Wave 1 / Unit 09) |
+| 38 | Stripe live pipeline (checkout, webhook, portal, assign/revoke) | ✅ complete (2026-05-19) |
+| 39 | Subscription plan governance | ✅ complete (built as Unit 32) |
+| 40 | Self-serve commercial onboarding (signup + SOLO seat) | ✅ complete (built as Unit 37) |
+| 41 | Usage-based billing & plan-tier flags | planned ⏸ |
+
+Spec: [`context/specs/38-stripe-subscriptions.md`](specs/38-stripe-subscriptions.md). Build plan: [`context/specs/00-build-plan.md`](specs/00-build-plan.md) Wave 7. **Paused until polish gate.**
+
+## Wave 8 — Copilot maturity port / Miss Cleo (canonical index)
+
+Wave 5 (Units 25–31) shipped capabilities; Wave 8 ports OmniScribeThree maturity: persona, streaming, beacon UX, reasoning depth, deep research, DB persistence. **⏸ Paused until polish gate.**
+
+| Unit | Name | Status |
+|------|------|--------|
+| 42 | Copilot persona — Miss Cleo | paused (spec authored) |
+| 43 | SSE streaming — Ask + Research | paused |
+| 44 | Beacon UX maturity | paused |
+| 45 | Reasoning engine depth | paused |
+| 46 | Deep research mode | paused |
+| 47 | Conversation persistence + query routing | paused |
+
+Spec (Unit 42): [`context/specs/42-copilot-persona-miss-cleo.md`](specs/42-copilot-persona-miss-cleo.md). Build plan: [`context/specs/00-build-plan.md`](specs/00-build-plan.md) Wave 8.
+
+## Polish — Waves 0–6 (active)
+
+**Gate before Wave 7/8.** Full checklist: [`context/specs/polish-waves-0-6.md`](specs/polish-waves-0-6.md).
+
+| Sprint | Focus | Key IDs |
+|--------|-------|---------|
+| A (P0) | Trust & providers | W0-01 voice-ID, W3-01 Daily.co real, W0-03 provider checklist |
+| B (P1) | Clinical daily | W2-01 touch targets, W2-02 iPad layouts, W3-03 telehealth CTA, W6-01 PWA icons, W1-01 announcement banner |
+| C (P1) | EHR + research stubs | W4-01 NextGen live, W4-02 staleness sweeper, W5-01 PMC real |
+| D (P2) | Backlog | Remaining rows in polish spec |
+
 ## In Progress
 
-None.
+- **Polish gate (Waves 0–6)** — planning complete; implementation not started. Pick Sprint A item to begin.
 
 ## Next Up
 
-No more units. The 37-unit build plan is complete. Post-GA work lives outside this tracker:
+1. **Polish Sprint A (P0)** — see [`context/specs/polish-waves-0-6.md`](specs/polish-waves-0-6.md): voice-ID/TitaNet, Daily.co real SDK, production provider checklist.
+2. **Polish Sprint B (P1)** — touch targets, iPad layouts, telehealth CTA, PWA icons, announcement banner.
+3. **Wave 7 Unit 41** — ⏸ paused until polish gate.
+4. **Wave 8 Unit 42** — ⏸ paused until polish gate.
+5. **GA-readiness** (parallel where possible):
 - Infra: ~~CDK data plane (RDS Postgres 16 + ElastiCache Redis 7.1 + S3 audio bucket + Secrets Manager)~~ ✅ (PR #42 polish/cdk-infra-skeleton — `infra/` workspace with TS-based CDK v2 stack; per-env (`dev`/`staging`/`prod`) via context flag; deletion-protection + autoDeleteObjects driven by envName; placeholder secrets for Bedrock/Soniox/Resend); compute stack (App Runner vs ECS Fargate vs EKS), CloudFront + WAF, Bedrock IAM role, cross-region DR still TBD
 - Deployment automation: GitHub Actions → AWS pipeline
 - Monitoring: CloudWatch dashboards + alarms; per-org cost projections
 - Brand: 192/512 PWA icon PNGs; marketing surfaces beyond `/`
-- Polish: ~~3 touch-target audit follow-ups~~ ✅ (PR #39), ~~BullMQ background aggregation jobs~~ ✅ (PR #40 — shipped as cron CLI; BullMQ promotion still on the table when sub-daily refresh is demanded), ~~assertNotImpersonating audit-fidelity sweep~~ ✅ (PR #41 polish/impersonation-audit-sweep — extended `requireFeatureAccess(featureKey, req?)` chokepoint; migrated 60 mutation routes via a one-shot script; full audit fidelity for IMPERSONATION_BLOCKED_MUTATION across all feature-gated mutations), ~~CDK data-plane skeleton~~ ✅ (PR #42), ~~smoke-test findings (name validator + /home refresh + SEED_CREDENTIALS CLI snippet)~~ ✅ (PR #43 polish/smoke-test-findings — investigated the `G\il` backslash and confirmed it was literal user input, not an escape leak; added defensive name validator; /home now surfaces real drafts + open follow-ups; SEED_CREDENTIALS gained a CLI fallback snippet for devs without an authenticator app), scoped impersonation mutations (v2), deeper Watch v2 patterns, chip-style touch targets (audit skip needs visual-design follow-up), etc.
-3. **Unit 35 — Per-org LLM cost rollup.** Track token usage per org per day; expose in owner console; alert thresholds; cost-per-note metric. Depends on Unit 32.
-4. **Unit 36 — Mobile / PWA polish.** next-pwa offline UX; iPad-specific layout audit; touch-target audit; reduced-motion audit. Depends on Unit 03.
-5. **Unit 37 — Public signup + self-serve org creation.** Public landing → signup → org provisioning; account lockout fields on User; invite-token expiration enforcement; rate-limit; CAPTCHA. Depends on Unit 08.
+- Polish: scoped impersonation mutations (v2), deeper Watch v2 patterns, chip-style touch targets, etc.
 
-Follow-up (out of scope for Unit 32):
+Follow-up (platform polish, not Wave 7):
 - Migrate existing units 1-31 mutation routes to invoke `assertNotImpersonating` so the IMPERSONATION_BLOCKED_MUTATION audit row fires consistently (middleware blocks structurally; helper adds audit fidelity).
 - Background BullMQ job for OrgUsageDaily aggregation (currently on-demand only).
 - Scoped mutations during impersonation (v2; v1 is fully read-only).
@@ -605,9 +650,22 @@ These need user/PM decision before the depending unit can ship. Quote the source
 
 7. ~~**Customer self-onboarding wizard placement**~~ — RESOLVED in Unit 01 (single 4-step wizard, password → MFA → done → auto sign-in) and verified end-to-end in Unit 08 (expired-invite returns 410 Gone via test/api/onboarding-expired-invite.test.ts).
 
-8. **Public signup** — confirm out of scope for v1 (invite-only). If/when added later, requires `User.failedLoginAttempts` + `User.lockedUntil` fields + lockout policy.
+8. **Public signup** — RESOLVED in Unit 37 (Wave 7 Unit 40).
+
+9. **Unit 43 — SSE streaming dispatch** — native Bedrock Converse tool-use vs prompt-engineered JSON loop (Unit 27). Decide at Unit 43 spec time; build plan default = keep JSON dispatch unless streaming forces Converse.
 
 ## Architecture Decisions
+
+### Wave 7 billing consolidation (2026-05-20)
+
+- **D-W7-1 — Wave 7 is the canonical category for all billing, seats, Stripe, and subscription work.** Previously scattered across Wave 0 (Seat model), Wave 1 Unit 09 (stub), Wave 6 Units 32/37 (plan metadata + signup seat), and an unnumbered post-plan Stripe PR. Reorganized in `00-build-plan.md` Wave 7 table: §01, §09, Units 38–41. Agents and specs MUST reference Wave 7 for billing scope — not Wave 1 "commercial-ready" or Wave 6 platform units.
+- **D-W7-2 — Unit numbers 01–37 are frozen (build order).** Wave 7 uses §-prefix for prerequisites that shipped in earlier waves, plus new units 38+ for billing-specific work. Unit 38 retroactively documents the 2026-05-19 Stripe live pipeline. Unit 41 reserved for usage-based billing flags (formerly orphaned "Wave 7" mention in Unit 32 out-of-scope).
+
+### Wave 8 copilot port (2026-05-20)
+
+- **D-W8-1 — Wave 8 is the canonical category for copilot UX maturity (Miss Cleo port).** Wave 5 Units 25–31 shipped functional copilot capabilities; Wave 8 Units 42–47 port persona, SSE streaming, beacon UX, reasoning orchestration, deep web research, and DB conversation persistence from OmniScribeThree. Do not duplicate Wave 5 tool registries — extend them.
+- **D-W8-2 — Wave numbering:** Wave 7 = billing (38–41). Wave 8 = copilot port (42–47). Future waves append at 48+.
+- **D-POLISH-1 — Polish gate (2026-05-20).** Waves 7 and 8 paused until [`polish-waves-0-6.md`](specs/polish-waves-0-6.md) P0 + P1 complete. Units 01–37 shipped features; stubs and deferred items (voice-ID, Daily.co real, touch targets, PWA icons, announcement banner, FHIR sweeper, PMC research) must land first.
 
 ### Unit 01 (2026-05-17) — locked in `/Users/gil/.claude/plans/we-will-not-use-twinkling-lovelace.md`
 

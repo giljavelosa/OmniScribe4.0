@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { useRouter } from 'next/navigation';
+import { useSession } from 'next-auth/react';
 import { Division, Profession } from '@prisma/client';
 
 import { Button } from '@/components/ui/button';
@@ -52,7 +52,7 @@ export function ProfileForm({
   const [profession, setProfession] = useState<string>(currentProfession ?? '');
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
-  const router = useRouter();
+  const { update } = useSession();
 
   function submit() {
     setError(null);
@@ -75,8 +75,11 @@ export function ProfileForm({
         setError(body?.error?.message ?? `Couldn't save (${res.status}). Try again.`);
         return;
       }
-      router.replace('/home');
-      router.refresh();
+      // Trigger a JWT refresh so the updated professionType/division reach
+      // the server before the next page render. The trigger:'update' path in
+      // auth.config.ts re-fetches the OrgUser row from DB automatically.
+      await update();
+      window.location.assign('/home');
     });
   }
 

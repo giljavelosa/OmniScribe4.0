@@ -36,7 +36,7 @@ type ReviewSnapshot = {
     id: string;
     firstName: string;
     lastName: string;
-    mrn: string;
+    mrn: string | null;
     dob: string;
     sex: string;
     preferredLanguage: string | null;

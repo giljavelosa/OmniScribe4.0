@@ -15,7 +15,7 @@ type Patient = {
   id: string;
   firstName: string;
   lastName: string;
-  mrn: string;
+  mrn: string | null;
   dob: string; // ISO
   sex: string;
   phone: string | null;
@@ -60,7 +60,7 @@ export function InlineDemographics({
   const [editing, setEditing] = useState(false);
   const [firstName, setFirstName] = useState(patient.firstName);
   const [lastName, setLastName] = useState(patient.lastName);
-  const [mrn, setMrn] = useState(patient.mrn);
+  const [mrn, setMrn] = useState(patient.mrn ?? '');
   const [dob, setDob] = useState(patient.dob.slice(0, 10));
   const [sex, setSex] = useState(patient.sex);
   const [phone, setPhone] = useState(patient.phone ?? '');
@@ -73,7 +73,7 @@ export function InlineDemographics({
   function cancel() {
     setFirstName(patient.firstName);
     setLastName(patient.lastName);
-    setMrn(patient.mrn);
+    setMrn(patient.mrn ?? '');
     setDob(patient.dob.slice(0, 10));
     setSex(patient.sex);
     setPhone(patient.phone ?? '');
@@ -132,7 +132,7 @@ export function InlineDemographics({
         {!editing ? (
           <dl className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
             <Field label="Name" value={`${patient.firstName} ${patient.lastName}`} />
-            <Field label="MRN" value={patient.mrn} mono />
+            <Field label="MRN" value={patient.mrn ?? '—'} mono />
             <Field label="DOB" value={new Date(patient.dob).toLocaleDateString()} />
             <Field label="Sex" value={patient.sex} />
             <Field label="Phone" value={patient.phone ?? '—'} mono />

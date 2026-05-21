@@ -2,7 +2,6 @@
 
 import { useState, useTransition } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { signIn, getSession } from 'next-auth/react';
 
 import { Button } from '@/components/ui/button';
@@ -12,7 +11,6 @@ import { StatusBanner } from '@/components/ui/status-banner';
 import { postSigninRedirect } from '@/lib/post-signin-redirect';
 
 export function LoginForm() {
-  const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -31,14 +29,19 @@ export function LoginForm() {
         setError('Invalid email or password.');
         return;
       }
-      // Pull the freshly-minted session to read mfaEnabled + mfaVerified.
-      const session = await getSession();
+      // getSession() may race the JWT cookie write immediately after signIn.
+      // Retry up to 3 times with a 150ms gap to let the cookie propagate,
+      // then hard-navigate so the server always reads the fresh token.
+      let session = await getSession();
+      for (let i = 0; i < 2 && !session?.user; i++) {
+        await new Promise((r) => setTimeout(r, 150));
+        session = await getSession();
+      }
       const target = postSigninRedirect({
         mfaEnabled: session?.user.mfaEnabled ?? false,
         mfaVerified: session?.user.mfaVerified ?? false,
       });
-      router.push(target);
-      router.refresh();
+      window.location.assign(target);
     });
   }
 

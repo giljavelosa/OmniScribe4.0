@@ -15,7 +15,7 @@ import { SignFollowUpSweep, type SweepFollowUp } from './sign-followup-sweep';
 type Props = {
   noteId: string;
   patientName: string;
-  mrn: string;
+  mrn: string | null;
   division: string;
   sections: Array<{ id: string; label: string; content: string; required: boolean }>;
   /** Late-entry charting (spec: context/specs/late-entry-charting.md). */

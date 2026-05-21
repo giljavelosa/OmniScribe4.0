@@ -66,14 +66,14 @@
 /* :root — light-mode tokens (OKLCH per ui-context.md "visual law")          */
 /* -------------------------------------------------------------------------- */
 :root {
-  --background: oklch(0.985 0.002 90);
+  --background: oklch(0.970 0.020 185);           /* soft aqua — #EAFBFA feel */
   --foreground: oklch(0.145 0.015 260);
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.145 0.015 260);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.145 0.015 260);
 
-  --primary: oklch(0.44 0.08 167);                /* deep teal */
+  --primary: oklch(0.44 0.11 185);                /* vibrant blue-teal; white text ≈ 5:1 contrast */
   --primary-foreground: oklch(0.99 0 0);
   --secondary: oklch(0.965 0.005 260);
   --secondary-foreground: oklch(0.145 0.015 260);
@@ -81,7 +81,7 @@
   --muted: oklch(0.965 0.005 260);
   --muted-foreground: oklch(0.35 0.01 260);
 
-  --accent: oklch(0.96 0.015 167);                /* faint teal tint */
+  --accent: oklch(0.960 0.020 185);               /* soft aqua tint — matches background hue */
   --accent-foreground: oklch(0.145 0.015 260);
 
   --destructive: oklch(0.577 0.245 27.325);       /* red */
@@ -89,7 +89,7 @@
 
   --border: oklch(0.925 0.005 260);
   --input: oklch(0.925 0.005 260);
-  --ring: oklch(0.44 0.08 167);
+  --ring: oklch(0.44 0.11 185);
 
   /* Status semantics — consumed only by <StatusBadge> / <StatusBanner> */
   --status-success-fg: oklch(0.55 0.15 145);
@@ -126,7 +126,7 @@
   --popover: oklch(0.205 0 0);
   --popover-foreground: oklch(0.985 0 0);
 
-  --primary: oklch(0.65 0.10 167);
+  --primary: oklch(0.65 0.11 185);
   --primary-foreground: oklch(0.145 0 0);
   --secondary: oklch(0.265 0 0);
   --secondary-foreground: oklch(0.985 0 0);
@@ -142,7 +142,7 @@
 
   --border: oklch(0.30 0 0);
   --input: oklch(0.30 0 0);
-  --ring: oklch(0.65 0.10 167);
+  --ring: oklch(0.65 0.11 185);
 
   /* Lift the fg L channel so status colors stay legible on dark bg */
   --status-success-fg: oklch(0.78 0.16 145);

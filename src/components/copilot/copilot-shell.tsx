@@ -1,35 +1,39 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Sparkles } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronUp, Minimize2, Send, Sparkles, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/cn';
 import { AskSurface } from './ask-surface';
 import { ResearchSurface } from './research-surface';
 
-export type CopilotSurface = 'prepare' | 'capture' | 'review';
+export type CopilotSurface = 'prepare' | 'capture' | 'review' | 'visit';
+
+type ViewMode = 'full' | 'compact';
 
 /**
- * CopilotShell — Unit 07 / Watch v0.
+ * CopilotShell — Unit 07 / Watch v0, Sprint 0.7 compact mode.
  *
- * One component owns both the floating Beacon (Sparkles, bottom-right,
- * always-visible) AND the Sheet (slides in from the right). Open/close
- * state lives in local useState; we deliberately do NOT pull in zustand
- * for a single boolean toggle (consistent with Unit 03's D — Context over
- * Zustand when one provider serves one piece of state). Future units may
- * extract a real store when the sheet needs cross-component coordination
- * (e.g., Unit 27 chat history persistence).
+ * One component owns the floating Beacon (Sparkles, bottom-right,
+ * always-visible) AND both the full Sheet view and the new compact
+ * strip. Open/close state lives in local useState; we deliberately do
+ * NOT pull in zustand for a single boolean toggle.
  *
- * The Beacon does NOT render on /sign, /admin/*, /owner/*, /login per
- * Unit 07 spec — gating is at the caller (each page decides whether to
- * mount this).
+ * Compact mode (Sprint 0.7) — a thin bottom-right strip that shows
+ * only the most-recent assistant message + a one-line input. Useful
+ * on screens where the full Sheet covers content the clinician wants
+ * to keep reading (capture transcript, visit viewer note body).
+ * Toggling between modes preserves the conversation; closing entirely
+ * still clears it (per-session in-memory state, consistent with the
+ * original Unit 27 contract).
  *
  * Audit semantics: open and close each POST a single client-side audit
- * row (COPILOT_BEACON_OPENED / _CLOSED) with { surface, noteId }. PHI-free
- * by the API contract (route only accepts the fenced shape).
+ * row (COPILOT_BEACON_OPENED / _CLOSED) with { surface, noteId }.
+ * Mode switches are NOT audited — they're local UX state.
  */
 export function CopilotShell({
   surface,
@@ -38,12 +42,10 @@ export function CopilotShell({
 }: {
   surface: CopilotSurface;
   noteId: string;
-  /** Unit 27 — required by AskSurface so the agent can scope tools. The
-   *  three call sites (prepare/capture/review) already have the patient
-   *  in scope via the Note lookup. */
   patientId: string;
 }) {
   const [open, setOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>('full');
   const lastOpenStateRef = useRef(false);
 
   const fireAudit = useCallback(
@@ -52,8 +54,6 @@ export function CopilotShell({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action, surface, noteId }),
-        // Audit POST is best-effort: a flaky network shouldn't break the
-        // sheet open/close UX. Errors here log to console only.
       }).catch(() => {});
     },
     [surface, noteId],
@@ -66,28 +66,72 @@ export function CopilotShell({
     fireAudit(open ? 'COPILOT_BEACON_OPENED' : 'COPILOT_BEACON_CLOSED');
   }, [open, fireAudit]);
 
+  function closeShell() {
+    setOpen(false);
+  }
+
+  function expand() {
+    setViewMode('full');
+  }
+
+  function collapse() {
+    setViewMode('compact');
+  }
+
+  // The beacon (sparkle button) only renders when the shell is closed
+  // OR in compact mode. Full mode renders the Sheet which has its own
+  // close affordance.
+  const showBeacon = !open;
+  const showFullSheet = open && viewMode === 'full';
+  const showCompactStrip = open && viewMode === 'compact';
+
   return (
     <>
-      <Button
-        type="button"
-        onClick={() => setOpen(true)}
-        aria-label="Open Co-Pilot"
-        size="icon"
-        className={cn(
-          'fixed bottom-6 right-6 z-50 size-12 rounded-full shadow-lg',
-          'focus-visible:outline-2 focus-visible:outline-offset-2',
-        )}
-      >
-        <Sparkles className="size-5" aria-hidden="true" />
-      </Button>
+      {showBeacon && (
+        <Button
+          type="button"
+          onClick={() => setOpen(true)}
+          aria-label="Open Co-Pilot"
+          size="icon"
+          className={cn(
+            'fixed bottom-6 right-6 z-50 size-12 rounded-full shadow-lg',
+            'focus-visible:outline-2 focus-visible:outline-offset-2',
+          )}
+        >
+          <Sparkles className="size-5" aria-hidden="true" />
+        </Button>
+      )}
 
-      <Sheet open={open} onOpenChange={setOpen}>
+      {showCompactStrip && (
+        <CompactStrip
+          patientId={patientId}
+          noteId={noteId}
+          onExpand={expand}
+          onClose={closeShell}
+        />
+      )}
+
+      <Sheet open={showFullSheet} onOpenChange={(v) => (v ? setOpen(true) : setOpen(false))}>
         <SheetContent side="right" className="sm:max-w-md p-0 flex flex-col">
           <SheetHeader className="border-b border-border px-4 py-3">
-            <SheetTitle className="flex items-center gap-2">
-              <Sparkles className="size-4" aria-hidden="true" />
-              Co-Pilot
-            </SheetTitle>
+            <div className="flex items-center justify-between gap-2">
+              <SheetTitle className="flex items-center gap-2">
+                <Sparkles className="size-4" aria-hidden="true" />
+                Co-Pilot
+              </SheetTitle>
+              <button
+                type="button"
+                onClick={collapse}
+                aria-label="Minimize Co-Pilot"
+                title="Minimize"
+                className={cn(
+                  'inline-flex items-center justify-center rounded-md',
+                  'h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors',
+                )}
+              >
+                <Minimize2 className="size-3.5" aria-hidden="true" />
+              </button>
+            </div>
           </SheetHeader>
           <Tabs defaultValue="chart" className="flex-1 min-h-0 flex flex-col">
             <TabsList className="mx-4 mt-3">
@@ -115,5 +159,168 @@ export function CopilotShell({
         </SheetContent>
       </Sheet>
     </>
+  );
+}
+
+/**
+ * Compact strip — fixed bottom-right pill that surfaces a minimal
+ * Co-Pilot affordance without taking over the screen. Reads the latest
+ * assistant answer from the AskSurface DOM (which keeps its own
+ * per-session state) is brittle, so the strip instead exposes its own
+ * minimal composer that submits via the same /api/copilot/ask endpoint
+ * the full surface uses — and shows a hint to expand to see history.
+ *
+ * Why no shared store: the existing AskSurface owns its conversation
+ * state internally. Cross-extracting that into a context just for the
+ * compact view would balloon the change. Compact mode is intentionally
+ * a "quick ping" surface; full conversations belong in the expanded view.
+ */
+function CompactStrip({
+  patientId,
+  noteId,
+  onExpand,
+  onClose,
+}: {
+  patientId: string;
+  noteId: string;
+  onExpand: () => void;
+  onClose: () => void;
+}) {
+  const [query, setQuery] = useState('');
+  const [pending, setPending] = useState(false);
+  const [latestAnswer, setLatestAnswer] = useState<string | null>(null);
+  const [hasRichContent, setHasRichContent] = useState(false);
+
+  const placeholder = useMemo(
+    () => (latestAnswer ? 'Ask another question…' : 'Ask Miss Cleo a question…'),
+    [latestAnswer],
+  );
+
+  async function submit() {
+    const q = query.trim();
+    if (!q || pending) return;
+    setPending(true);
+    setLatestAnswer(null);
+    setHasRichContent(false);
+    try {
+      const res = await fetch('/api/copilot/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          patientId,
+          noteId,
+          question: q,
+          history: [],
+        }),
+      });
+      if (!res.ok) {
+        setLatestAnswer('Could not reach Co-Pilot. Tap to expand and try again.');
+        setQuery('');
+        return;
+      }
+      const body = await res.json();
+      const answerText: string = body?.data?.answer?.text ?? '';
+      const sources = body?.data?.answer?.sources ?? [];
+      const drafts = body?.data?.drafts ?? [];
+      const steps = body?.data?.reasoningSteps ?? [];
+      setLatestAnswer(answerText || 'No response.');
+      setHasRichContent(
+        (Array.isArray(sources) && sources.length > 0) ||
+          (Array.isArray(drafts) && drafts.length > 0) ||
+          (Array.isArray(steps) && steps.length > 0),
+      );
+      setQuery('');
+    } catch {
+      setLatestAnswer('Could not reach Co-Pilot. Tap to expand and try again.');
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <div
+      className={cn(
+        'fixed z-50',
+        // Mobile: anchored above the bottom nav, full-width minus padding
+        'bottom-[5.5rem] left-4 right-4',
+        // Desktop: bottom-right corner, fixed width
+        'sm:left-auto sm:right-6 sm:bottom-6 sm:w-80',
+      )}
+    >
+      <div className="rounded-xl border border-border bg-card shadow-lg overflow-hidden">
+        {/* Header strip */}
+        <div className="flex items-center justify-between gap-2 px-3 py-1.5 bg-muted/30 border-b border-border">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <Sparkles className="size-3.5 text-primary shrink-0" aria-hidden />
+            <span className="text-xs font-medium truncate">Co-Pilot</span>
+          </div>
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={onExpand}
+              aria-label="Expand Co-Pilot"
+              title="Expand"
+              className="inline-flex items-center justify-center rounded-md h-6 w-6 text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
+            >
+              <ChevronUp className="size-3.5" aria-hidden />
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close Co-Pilot"
+              title="Close"
+              className="inline-flex items-center justify-center rounded-md h-6 w-6 text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
+            >
+              <X className="size-3.5" aria-hidden />
+            </button>
+          </div>
+        </div>
+
+        {/* Latest answer (truncated) */}
+        {latestAnswer && (
+          <div className="px-3 py-2 border-b border-border">
+            <p className="text-xs text-foreground line-clamp-2 whitespace-pre-wrap">
+              {latestAnswer}
+            </p>
+            {hasRichContent && (
+              <button
+                type="button"
+                onClick={onExpand}
+                className="mt-1 text-[10px] uppercase tracking-wide text-primary hover:underline"
+              >
+                Expand for details ↑
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Composer */}
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void submit();
+          }}
+          className="flex items-center gap-1.5 px-2 py-1.5"
+        >
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={placeholder}
+            disabled={pending}
+            className="h-8 text-xs"
+            aria-label="Ask Co-Pilot"
+          />
+          <Button
+            type="submit"
+            size="icon"
+            className="size-8 shrink-0"
+            disabled={pending || !query.trim()}
+            aria-label="Send"
+          >
+            <Send className="size-3.5" aria-hidden />
+          </Button>
+        </form>
+      </div>
+    </div>
   );
 }

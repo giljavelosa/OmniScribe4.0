@@ -4,24 +4,12 @@ import { notFound } from 'next/navigation';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { getClinicianSiteIds } from '@/lib/authz/site-scope';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { StatusBadge } from '@/components/ui/status-badge';
-import { StatusBanner } from '@/components/ui/status-banner';
-import { PatientIdentityHeader } from '@/components/patients/patient-identity-header';
-import { StartVisitButton } from './_components/start-visit-button';
-import { EpisodesPanel } from './_components/episodes-panel';
-import {
-  ExternalContextSection,
-  type ExternalContextSummary,
-} from './_components/external-context-section';
-import { PatientSnapshotStrip } from '@/components/patients/snapshot-strip';
-import { VisitHistoryList } from '@/components/patients/visit-history-list';
-import { InlineDemographics } from '@/components/patients/inline-demographics';
 import { EhrLinkPanel } from '@/components/fhir/ehr-link-panel';
 import { buildSnapshotStrip } from '@/lib/snapshots/build-snapshot-strip';
 import { deriveAssessmentSnippet } from '@/lib/notes/note-text';
 import type { FinalJsonShape } from '@/lib/notes/build-artifact-prompt';
 import { professionLabel } from '@/lib/professions';
+import { PatientChartTabs } from './_components/patient-chart-tabs';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Patient' };
@@ -167,14 +155,7 @@ export default async function PatientDetailPage({
     };
   });
 
-  // Per-division visit counts — non-overlapping (each note has one
-  // division). Drives the header strip "Active in: Medical (X) · Rehab (Y)".
-  const visitsByDivision = visits.reduce<Record<string, number>>((acc, v) => {
-    acc[v.division] = (acc[v.division] ?? 0) + 1;
-    return acc;
-  }, {});
-
-  const externalContextItems: ExternalContextSummary[] = externalContexts.map((r) => ({
+  const externalContextItems = externalContexts.map((r) => ({
     id: r.id,
     dateOfRecord: r.dateOfRecord.toISOString(),
     source: r.source,
@@ -296,148 +277,58 @@ export default async function PatientDetailPage({
     })),
   }));
 
-  // Build "Active in: Medical (2) · Rehab (5) · BH (3)" strip from the
-  // per-division visit counts, in a stable display order. Only shown when
-  // the patient has ≥1 signed visit; ad-hoc divisions (MULTI) are folded
-  // into "Other".
-  const DIVISION_DISPLAY: { key: string; label: string }[] = [
-    { key: 'MEDICAL', label: 'Medical' },
-    { key: 'REHAB', label: 'Rehab' },
-    { key: 'BEHAVIORAL_HEALTH', label: 'Behavioral Health' },
-  ];
-  const activeStripEntries = DIVISION_DISPLAY.filter(
-    (d) => (visitsByDivision[d.key] ?? 0) > 0,
-  );
-  const otherCount = Object.entries(visitsByDivision).reduce(
-    (acc, [k, n]) => (DIVISION_DISPLAY.some((d) => d.key === k) ? acc : acc + n),
-    0,
-  );
-  const totalVisits = visits.length;
-
   return (
-    <div className="mx-auto max-w-6xl px-4 py-6 space-y-6">
-      <PatientIdentityHeader patient={patient} />
-
-      {episodeCreatedFlash && (
-        <StatusBanner variant="success">
-          Episode created — start visit again to link to it.
-        </StatusBanner>
-      )}
-
-      {totalVisits > 0 && (
-        <div className="flex items-center gap-2 flex-wrap text-sm">
-          <span className="text-muted-foreground">
-            {totalVisits} signed visit{totalVisits === 1 ? '' : 's'} · Active in:
-          </span>
-          {activeStripEntries.map((d) => (
-            <StatusBadge key={d.key} variant="neutral" noIcon>
-              {d.label} ({visitsByDivision[d.key]})
-            </StatusBadge>
-          ))}
-          {otherCount > 0 && (
-            <StatusBadge variant="neutral" noIcon>Other ({otherCount})</StatusBadge>
-          )}
-        </div>
-      )}
-
-      <div className="flex justify-end">
-        <StartVisitButton
+    <PatientChartTabs
+      patient={{
+        id: patient.id,
+        firstName: patient.firstName,
+        lastName: patient.lastName,
+        mrn: patient.mrn,
+        dobIso: patient.dob.toISOString(),
+        sex: patient.sex,
+        preferredLanguage: patient.preferredLanguage,
+        isDeleted: patient.isDeleted,
+        phone: patient.phone,
+        email: patient.email,
+        siteId: patient.siteId,
+        siteName: patient.site?.name ?? null,
+      }}
+      addresses={patient.addresses.map((a) => ({
+        id: a.id,
+        kind: a.kind,
+        line1: a.line1,
+        line2: a.line2,
+        city: a.city,
+        state: a.state,
+        postalCode: a.postalCode,
+      }))}
+      coverages={patient.coverages.map((c) => ({
+        id: c.id,
+        carrier: c.carrier,
+        planName: c.planName,
+        memberId: c.memberId,
+        status: c.status,
+      }))}
+      episodeCreatedFlash={episodeCreatedFlash}
+      snapshotStrip={snapshotStrip}
+      episodesForPanel={episodesForPanel}
+      externalContextItems={externalContextItems}
+      episodeChoicesForAdd={episodeChoicesForAdd}
+      visits={visits}
+      activeEpisodesForPicker={activeEpisodesForPicker}
+      startVisitSites={startVisitSites}
+      startVisitDefaultSiteId={startVisitDefaultSiteId}
+      ehrPanel={
+        <EhrLinkPanel
           patientId={patient.id}
-          activeEpisodes={activeEpisodesForPicker}
-          sites={startVisitSites}
-          defaultSiteId={startVisitDefaultSiteId}
+          patient={{
+            firstName: patient.firstName,
+            lastName: patient.lastName,
+            mrn: patient.mrn,
+            dobIso: patient.dob.toISOString(),
+          }}
         />
-      </div>
-
-      {/* Snapshot strip — first visual after identity, full-width. */}
-      <PatientSnapshotStrip patientId={patient.id} strip={snapshotStrip} />
-
-      {/* Two-column desktop / single-column mobile:
-            primary content (episodes + visits + demographics) left
-            reference cards right slot reserved for future watch/goals roll-up */}
-      <div className="grid lg:grid-cols-[1fr_20rem] gap-4">
-        <div className="space-y-4 min-w-0">
-          <EpisodesPanel
-            patientId={patient.id}
-            episodes={episodesForPanel}
-          />
-
-          <ExternalContextSection
-            patientId={patient.id}
-            episodeChoices={episodeChoicesForAdd}
-            initialItems={externalContextItems}
-          />
-
-          <VisitHistoryList visits={visits} />
-
-          <InlineDemographics
-            patient={{
-              id: patient.id,
-              firstName: patient.firstName,
-              lastName: patient.lastName,
-              mrn: patient.mrn,
-              dob: patient.dob.toISOString(),
-              sex: patient.sex,
-              phone: patient.phone,
-              email: patient.email,
-              preferredLanguage: patient.preferredLanguage,
-              siteId: patient.siteId,
-              siteName: patient.site?.name ?? null,
-            }}
-            availableSites={startVisitSites}
-          />
-
-          <EhrLinkPanel
-            patientId={patient.id}
-            patient={{
-              firstName: patient.firstName,
-              lastName: patient.lastName,
-              mrn: patient.mrn,
-              dobIso: patient.dob.toISOString(),
-            }}
-          />
-        </div>
-
-        <aside className="space-y-4 lg:sticky lg:top-4 self-start">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-md">Addresses + coverage</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3 text-sm">
-              {patient.addresses.length === 0 ? (
-                <p className="text-muted-foreground">No addresses on file.</p>
-              ) : (
-                <ul className="space-y-1">
-                  {patient.addresses.map((a) => (
-                    <li key={a.id} className="text-muted-foreground">
-                      <StatusBadge variant="neutral" noIcon className="mr-2">{a.kind}</StatusBadge>
-                      {a.line1}{a.line2 ? `, ${a.line2}` : ''}, {a.city}, {a.state} {a.postalCode}
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {patient.coverages.length === 0 ? (
-                <p className="text-muted-foreground">No coverage on file.</p>
-              ) : (
-                <ul className="space-y-1">
-                  {patient.coverages.map((c) => (
-                    <li key={c.id} className="text-muted-foreground">
-                      <StatusBadge
-                        variant={c.status === 'ACTIVE' ? 'success' : c.status === 'TERMINATED' ? 'danger' : 'warning'}
-                        noIcon
-                        className="mr-2"
-                      >
-                        {c.status}
-                      </StatusBadge>
-                      {c.carrier} · member {c.memberId}{c.planName ? ` (${c.planName})` : ''}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </CardContent>
-          </Card>
-        </aside>
-      </div>
-    </div>
+      }
+    />
   );
 }

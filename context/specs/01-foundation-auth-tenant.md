@@ -1,5 +1,7 @@
 # Unit 01: Foundation — Auth & Tenancy
 
+> **Wave 0.** The `Seat` model in this unit is **Wave 7 §01** (billing foundation) — see [`00-build-plan.md`](00-build-plan.md) Wave 7.
+
 ## Goal
 
 Build the multi-tenant identity, access-control, and BAA-tracking foundation that every subsequent unit depends on. After this unit, the product has Organizations (with BAA fields), Sites, Rooms, Users with role-based access, MFA TOTP, password reset, customer self-onboarding wizard, the `requireFeatureAccess` middleware, and PHI-scoping helpers — all backed by seed data that lets a developer sign in immediately.

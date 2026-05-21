@@ -27,9 +27,29 @@ import {
   EpisodeStatus,
   GoalType,
   GoalStatus,
+  NoteArtifactKind,
+  PatientAddressKind,
 } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import { generate as generateTotp } from 'otplib';
+import {
+  SEED_VISIT_CORPUS,
+  SEED_PATIENT_DEMOGRAPHICS,
+  DEMO_CLINIC_ORG_ID,
+  ACME_VISIT_CORPUS,
+  buildFinalJson,
+  buildTranscriptClean,
+  buildPatientBrief,
+  JAMES_PARK_BRIEF,
+  MARIA_ALVAREZ_BRIEF,
+  DEVON_MITCHELL_BRIEF,
+  RACHEL_KIM_ACME_BRIEF,
+  ROBERT_HAYES_ACME_BRIEF,
+  ELENA_SANTOS_ACME_BRIEF,
+  type SeedVisitCorpus,
+} from './seed-corpus';
+import { seedAcmeOrganization, seedAcmeAdditionalEpisodes } from './seed-acme-org';
+import type { PriorContextBriefContent } from '../src/types/brief';
 
 const prisma = new PrismaClient();
 
@@ -42,6 +62,161 @@ const DEMO_ADMIN_MFA_SECRET = '7FSWEU6M2MYDQONC5WHDM72MK3FUQZ4Q';
 
 async function hashPassword(plain: string) {
   return bcrypt.hash(plain, BCRYPT_ROUNDS);
+}
+
+type VisitSeedContext = {
+  orgId: string;
+  defaultSiteId: string;
+  deptByKey: { medical: string; rehab: string; bh: string };
+  clinicianRowByEmail: Record<string, { userId: string; orgUserId: string }>;
+};
+
+async function seedVisitCorpus(
+  corpus: SeedVisitCorpus[],
+  ctx: VisitSeedContext,
+  label: string,
+) {
+  console.log(`Seeding signed-visit corpus (${label}) …`);
+  for (const v of corpus) {
+    const orgId = v.orgId ?? DEMO_CLINIC_ORG_ID;
+    const siteId = v.siteId ?? ctx.defaultSiteId;
+    const c = ctx.clinicianRowByEmail[v.clinicianEmail];
+    if (!c) throw new Error(`Seed [${label}]: missing clinician ${v.clinicianEmail}`);
+    const signedAt = new Date(Date.now() - v.signedDaysAgo * 86_400_000);
+    const dateOfService =
+      v.isLateEntry && v.lateEntryDaysGap
+        ? new Date(signedAt.getTime() - v.lateEntryDaysGap * 86_400_000)
+        : signedAt;
+    const finalJson = buildFinalJson(v.sections, signedAt);
+    const transcriptClean = buildTranscriptClean(v.transcript);
+    const departmentId = ctx.deptByKey[v.departmentKey];
+
+    const encounter = await prisma.encounter.upsert({
+      where: { id: `seed-enc-${v.noteId}` },
+      update: { startedAt: dateOfService, endedAt: dateOfService },
+      create: {
+        id: `seed-enc-${v.noteId}`,
+        orgId,
+        patientId: v.patientId,
+        clinicianOrgUserId: c.orgUserId,
+        siteId,
+        departmentId,
+        episodeOfCareId: v.episodeId ?? null,
+        status: EncounterStatus.COMPLETED,
+        startedAt: dateOfService,
+        endedAt: dateOfService,
+      },
+    });
+
+    await prisma.note.upsert({
+      where: { id: v.noteId },
+      update: {
+        finalJson: finalJson as unknown as object,
+        transcriptClean: transcriptClean as unknown as object,
+        dateOfService,
+        isLateEntry: v.isLateEntry ?? false,
+        lateEntryDaysGap: v.lateEntryDaysGap ?? null,
+        signedAt,
+        templateId: v.templateId,
+      },
+      create: {
+        id: v.noteId,
+        orgId,
+        patientId: v.patientId,
+        encounterId: encounter.id,
+        clinicianOrgUserId: c.orgUserId,
+        division: v.division,
+        status: NoteStatus.SIGNED,
+        captureMode: CaptureMode.LIVE,
+        finalJson: finalJson as unknown as object,
+        transcriptClean: transcriptClean as unknown as object,
+        templateId: v.templateId,
+        templateVersion: 1,
+        noteStyle: NoteStyle.HYBRID,
+        signedAt,
+        signedByUserId: c.userId,
+        dateOfService,
+        isLateEntry: v.isLateEntry ?? false,
+        lateEntryDaysGap: v.lateEntryDaysGap ?? null,
+      },
+    });
+
+    await prisma.noteArtifact.upsert({
+      where: { id: `seed-artifact-handout-${v.noteId}` },
+      update: { content: v.handout as unknown as object },
+      create: {
+        id: `seed-artifact-handout-${v.noteId}`,
+        noteId: v.noteId,
+        kind: NoteArtifactKind.PATIENT_INSTRUCTIONS,
+        content: v.handout as unknown as object,
+        generatedAt: signedAt,
+      },
+    });
+
+    if (v.referralLetter) {
+      await prisma.noteArtifact.upsert({
+        where: { id: `seed-artifact-referral-${v.noteId}` },
+        update: { content: v.referralLetter as unknown as object },
+        create: {
+          id: `seed-artifact-referral-${v.noteId}`,
+          noteId: v.noteId,
+          kind: NoteArtifactKind.REFERRAL_LETTER,
+          content: v.referralLetter as unknown as object,
+          generatedAt: signedAt,
+        },
+      });
+    }
+  }
+}
+
+type BriefBuilder = (noteId: string, orgId: string) => {
+  patientId: string;
+  orgId: string;
+  noteId: string;
+  episodeId?: string;
+  content: Omit<PriorContextBriefContent, 'generatedAt' | 'generatorVersion'>;
+};
+
+async function seedBriefsAndFollowUps(
+  specs: ReadonlyArray<{ builder: BriefBuilder; noteId: string; orgId: string }>,
+) {
+  console.log('Seeding NoteBrief + FollowUp rows …');
+  for (const spec of specs) {
+    const input = spec.builder(spec.noteId, spec.orgId);
+    const content = buildPatientBrief(input);
+    await prisma.noteBrief.upsert({
+      where: { noteId: spec.noteId },
+      update: { content: content as unknown as object },
+      create: {
+        id: `seed-brief-${spec.noteId}`,
+        noteId: spec.noteId,
+        patientId: input.patientId,
+        orgId: spec.orgId,
+        episodeId: input.episodeId ?? null,
+        sourceNoteIds: content.sourceNoteIds,
+        generatedAt: new Date(),
+        generatorVersion: 'seed-v1',
+        model: 'seed',
+        content: content as unknown as object,
+      },
+    });
+
+    for (const fu of content.openFollowUps) {
+      await prisma.followUp.upsert({
+        where: { id: fu.followUpId },
+        update: { text: fu.text, status: 'OPEN' },
+        create: {
+          id: fu.followUpId,
+          orgId: spec.orgId,
+          patientId: input.patientId,
+          episodeId: input.episodeId ?? null,
+          originNoteId: fu.source.noteId,
+          text: fu.text,
+          status: 'OPEN',
+        },
+      });
+    }
+  }
 }
 
 /** Returns 10 plain recovery codes and their bcrypt hashes. */
@@ -341,9 +516,13 @@ async function main() {
   ];
 
   for (const p of patients) {
+    const demo = SEED_PATIENT_DEMOGRAPHICS[p.id];
     const patient = await prisma.patient.upsert({
       where: { id: p.id },
-      update: {},
+      update: {
+        phone: demo?.phone,
+        email: demo?.email,
+      },
       create: {
         id: p.id,
         orgId: org.id,
@@ -354,13 +533,57 @@ async function main() {
         dob: p.dob,
         sex: p.sex,
         preferredLanguage: 'en',
+        phone: demo?.phone,
+        email: demo?.email,
       },
     });
 
+    if (demo) {
+      await prisma.patientAddress.upsert({
+        where: { id: `seed-addr-${p.id}` },
+        update: {},
+        create: {
+          id: `seed-addr-${p.id}`,
+          patientId: patient.id,
+          kind: PatientAddressKind.HOME,
+          line1: demo.address.line1,
+          line2: demo.address.line2,
+          city: demo.address.city,
+          state: demo.address.state,
+          postalCode: demo.address.postalCode,
+        },
+      });
+      await prisma.patientCoverage.upsert({
+        where: { id: `seed-cov-${p.id}` },
+        update: {},
+        create: {
+          id: `seed-cov-${p.id}`,
+          patientId: patient.id,
+          carrier: demo.coverage.carrier,
+          planName: demo.coverage.planName,
+          memberId: demo.coverage.memberId,
+          groupId: demo.coverage.groupId,
+        },
+      });
+      await prisma.patientEmergencyContact.upsert({
+        where: { id: `seed-ec-${p.id}` },
+        update: {},
+        create: {
+          id: `seed-ec-${p.id}`,
+          patientId: patient.id,
+          name: demo.emergency.name,
+          relationship: demo.emergency.relationship,
+          phone: demo.emergency.phone,
+        },
+      });
+    }
+
     // One active episode per patient, anchored to the matching department.
+    const bodyPart =
+      p.id === 'seed-patient-rehab' ? 'Right knee' : undefined;
     const episode = await prisma.episodeOfCare.upsert({
       where: { id: `seed-episode-${p.id}` },
-      update: {},
+      update: { bodyPart },
       create: {
         id: `seed-episode-${p.id}`,
         orgId: org.id,
@@ -369,17 +592,47 @@ async function main() {
         departmentId: p.department.id,
         division: p.division,
         diagnosis: p.diagnosis,
+        bodyPart,
         status: EpisodeStatus.ACTIVE,
       },
     });
     await prisma.episodeGoal.upsert({
       where: { id: `seed-goal-${p.id}` },
-      update: {},
+      update: {
+        baselineMeasure:
+          p.id === 'seed-patient-rehab' ? 'Flexion 85° at PT eval' : undefined,
+        targetMeasure:
+          p.id === 'seed-patient-rehab'
+            ? 'Flexion 120°'
+            : p.id === 'seed-patient-bh'
+              ? 'GAD-7 <8'
+              : 'BP <130/80',
+        currentMeasure:
+          p.id === 'seed-patient-rehab'
+            ? '118°'
+            : p.id === 'seed-patient-bh'
+              ? 'GAD-7: 8'
+              : '128/82',
+      },
       create: {
         id: `seed-goal-${p.id}`,
         episodeId: episode.id,
         goalType: GoalType.LTG,
         goalText: p.goalText,
+        baselineMeasure:
+          p.id === 'seed-patient-rehab' ? 'Flexion 85° at PT eval' : undefined,
+        targetMeasure:
+          p.id === 'seed-patient-rehab'
+            ? 'Flexion 120°'
+            : p.id === 'seed-patient-bh'
+              ? 'GAD-7 <8'
+              : 'BP <130/80',
+        currentMeasure:
+          p.id === 'seed-patient-rehab'
+            ? '118°'
+            : p.id === 'seed-patient-bh'
+              ? 'GAD-7: 8'
+              : '128/82',
         status: GoalStatus.ACTIVE,
       },
     });
@@ -615,92 +868,17 @@ async function main() {
     },
   });
 
-  // Second organization — Acme Specialty Care — proves cross-tenant isolation
-  // in the admin / owner consoles. Smaller footprint: 1 clinician + 1 patient.
-  const acmeOrg = await prisma.organization.upsert({
-    where: { id: 'seed-acme-clinic' },
-    update: {},
-    create: {
-      id: 'seed-acme-clinic',
-      name: 'Acme Specialty Care',
-      division: Division.MEDICAL,
-      defaultDivision: Division.MEDICAL,
-      billingEmail: 'billing@acme.local',
-      forceMfa: false,
-      baaExecutedAt: new Date('2026-05-17T00:00:00Z'),
-      baaVersion: '2026.05.01',
-      complianceProfile: ComplianceProfile.STANDARD,
-    },
-  });
-  const acmeSite = await prisma.site.upsert({
-    where: { id: 'seed-acme-site' },
-    update: {},
-    create: {
-      id: 'seed-acme-site',
-      orgId: acmeOrg.id,
-      name: 'Acme Main Office',
-      address: '99 Acme Blvd, Springfield, USA',
-      phone: '+1-555-0250',
-      primaryDivision: Division.MEDICAL,
-    },
-  });
-  const acmeMdUser = await prisma.user.upsert({
-    where: { email: 'md.acme@demo.local' },
-    update: { name: 'Dr. Olivia Reed' },
-    create: {
-      email: 'md.acme@demo.local',
-      name: 'Dr. Olivia Reed',
-      passwordHash: await hashPassword(DEMO_PASSWORD),
-      mfaEnabled: false,
-      platformRole: PlatformRole.NONE,
-    },
-  });
-  const acmeMdSeat = await prisma.seat.upsert({
-    where: { id: 'seed-seat-acme-md' },
-    update: {},
-    create: {
-      id: 'seed-seat-acme-md',
-      orgId: acmeOrg.id,
-      tier: SeatTier.TEAM,
-      expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
-    },
-  });
-  await prisma.orgUser.upsert({
-    where: { userId_orgId: { userId: acmeMdUser.id, orgId: acmeOrg.id } },
-    update: {},
-    create: {
-      userId: acmeMdUser.id,
-      orgId: acmeOrg.id,
-      role: OrgRole.CLINICIAN,
-      division: Division.MEDICAL,
-      profession: 'Internal Medicine MD',
-      professionType: Profession.MD,
-      canManagePatients: true,
-      preferredNoteStyle: NoteStyle.HYBRID,
-      seatId: acmeMdSeat.id,
-    },
-  });
-  await prisma.patient.upsert({
-    where: { id: 'seed-acme-patient' },
-    update: {},
-    create: {
-      id: 'seed-acme-patient',
-      orgId: acmeOrg.id,
-      siteId: acmeSite.id,
-      firstName: 'Rachel',
-      lastName: 'Kim',
-      mrn: 'ACME-001',
-      dob: new Date('1980-03-14'),
-      sex: PatientSex.FEMALE,
-      preferredLanguage: 'en',
-    },
-  });
+  // Acme Specialty Care — full second org (sites, clinicians, patients, corpus).
+  const acmeCtx = await seedAcmeOrganization(prisma, hashPassword);
 
-  // Additional episodes of care for James Park (cross-division coverage)
-  // so his chart's "By episode" view shows three distinct episode buckets.
+  // Additional episodes of care for James Park (cross-division coverage).
+  // Medical: Essential hypertension (primary episode, seeded above).
+  // Rehab x2: Right rotator cuff (shoulder) + Left knee OA — both active,
+  //   demonstrates multi-episode same-division chart view.
+  // BH: Adjustment disorder.
   const jpRehabEpisode = await prisma.episodeOfCare.upsert({
     where: { id: 'seed-episode-jp-rehab' },
-    update: {},
+    update: { bodyPart: 'Right shoulder' },
     create: {
       id: 'seed-episode-jp-rehab',
       orgId: org.id,
@@ -709,7 +887,38 @@ async function main() {
       departmentId: deptRehab.id,
       division: Division.REHAB,
       diagnosis: 'Right rotator cuff strain',
+      bodyPart: 'Right shoulder',
       status: EpisodeStatus.ACTIVE,
+    },
+  });
+  // Second active rehab episode — left knee OA, concurrent with shoulder PT.
+  const jpKneeEpisode = await prisma.episodeOfCare.upsert({
+    where: { id: 'seed-episode-jp-knee' },
+    update: { bodyPart: 'Left knee' },
+    create: {
+      id: 'seed-episode-jp-knee',
+      orgId: org.id,
+      patientId: 'seed-patient-medical',
+      clinicianOrgUserId: clinicianRowByEmail['pt.smith@demo.local']!.orgUserId,
+      departmentId: deptRehab.id,
+      division: Division.REHAB,
+      diagnosis: 'Left knee osteoarthritis',
+      bodyPart: 'Left knee',
+      status: EpisodeStatus.ACTIVE,
+    },
+  });
+  await prisma.episodeGoal.upsert({
+    where: { id: 'seed-goal-jp-knee' },
+    update: {},
+    create: {
+      id: 'seed-goal-jp-knee',
+      episodeId: jpKneeEpisode.id,
+      goalType: GoalType.LTG,
+      goalText: 'Reduce left knee pain to ≤2/10 with stairs and restore functional ambulation without compensation within 8 weeks.',
+      baselineMeasure: 'Pain 6/10 stairs, TUG 13.8 sec at eval',
+      targetMeasure: 'Pain ≤2/10, TUG <12 sec',
+      currentMeasure: '4/10 stairs, TUG 12.4 sec',
+      status: GoalStatus.ACTIVE,
     },
   });
   const jpBhEpisode = await prisma.episodeOfCare.upsert({
@@ -726,202 +935,152 @@ async function main() {
       status: EpisodeStatus.ACTIVE,
     },
   });
+  void jpBhEpisode; // used in james-park corpus via EP_BH episode ID
 
-  // Helper: build a minimal-but-valid finalJson the assessment-snippet
-  // deriver can read (the visit-history rows show the Assessment text).
-  function buildFinalJson(args: {
-    subjective?: string;
-    assessment: string;
-    plan?: string;
-  }) {
-    return {
-      sections: [
-        { id: 'subjective', label: 'Subjective', content: args.subjective ?? '' },
-        { id: 'assessment', label: 'Assessment', content: args.assessment },
-        { id: 'plan', label: 'Plan', content: args.plan ?? '' },
-      ],
-    };
-  }
+  // Maria Alvarez — chronic medical care + post-op adjustment BH (concurrent with knee rehab).
+  await prisma.episodeOfCare.upsert({
+    where: { id: 'seed-episode-ma-medical' },
+    update: {},
+    create: {
+      id: 'seed-episode-ma-medical',
+      orgId: org.id,
+      patientId: 'seed-patient-rehab',
+      clinicianOrgUserId: clinicianRowByEmail['np.brown@demo.local']!.orgUserId,
+      departmentId: deptMedical.id,
+      division: Division.MEDICAL,
+      diagnosis: 'Essential hypertension; hypothyroidism',
+      status: EpisodeStatus.ACTIVE,
+    },
+  });
+  await prisma.episodeGoal.upsert({
+    where: { id: 'seed-goal-ma-medical' },
+    update: {},
+    create: {
+      id: 'seed-goal-ma-medical',
+      episodeId: 'seed-episode-ma-medical',
+      goalType: GoalType.LTG,
+      goalText: 'Maintain BP <130/80 and TSH in range on current regimen.',
+      baselineMeasure: 'BP 132/78, TSH 2.4',
+      targetMeasure: 'BP <130/80, TSH 0.5–4.0',
+      currentMeasure: 'BP avg 126/78',
+      status: GoalStatus.ACTIVE,
+    },
+  });
+  await prisma.episodeOfCare.upsert({
+    where: { id: 'seed-episode-ma-bh' },
+    update: {},
+    create: {
+      id: 'seed-episode-ma-bh',
+      orgId: org.id,
+      patientId: 'seed-patient-rehab',
+      clinicianOrgUserId: clinicianRowByEmail['lcsw.garcia@demo.local']!.orgUserId,
+      departmentId: deptBh.id,
+      division: Division.BEHAVIORAL_HEALTH,
+      diagnosis: 'Adjustment disorder with depressed mood — post-op social isolation',
+      status: EpisodeStatus.ACTIVE,
+    },
+  });
+  await prisma.episodeGoal.upsert({
+    where: { id: 'seed-goal-ma-bh' },
+    update: {},
+    create: {
+      id: 'seed-goal-ma-bh',
+      episodeId: 'seed-episode-ma-bh',
+      goalType: GoalType.LTG,
+      goalText: 'Reduce PHQ-9 below 5 and restore weekly social engagement.',
+      baselineMeasure: 'PHQ-9: 8',
+      targetMeasure: 'PHQ-9 <5',
+      currentMeasure: 'PHQ-9: 6',
+      status: GoalStatus.ACTIVE,
+    },
+  });
 
-  type SeedVisit = {
-    noteId: string;
-    patientId: string;
-    clinicianEmail: string;
-    division: Division;
-    templateId: string;
-    signedDaysAgo: number;
-    departmentId: string;
-    episodeId?: string;
-    subjective?: string;
-    assessment: string;
-    plan?: string;
+  // Devon Mitchell — medical co-management + cervical PT (concurrent with BH GAD episode).
+  await prisma.episodeOfCare.upsert({
+    where: { id: 'seed-episode-dm-medical' },
+    update: {},
+    create: {
+      id: 'seed-episode-dm-medical',
+      orgId: org.id,
+      patientId: 'seed-patient-bh',
+      clinicianOrgUserId: clinicianOrgUserId,
+      departmentId: deptMedical.id,
+      division: Division.MEDICAL,
+      diagnosis: 'Generalized anxiety disorder — medical co-management',
+      status: EpisodeStatus.ACTIVE,
+    },
+  });
+  await prisma.episodeGoal.upsert({
+    where: { id: 'seed-goal-dm-medical' },
+    update: {},
+    create: {
+      id: 'seed-goal-dm-medical',
+      episodeId: 'seed-episode-dm-medical',
+      goalType: GoalType.LTG,
+      goalText: 'Optimize pharmacotherapy for GAD with GAD-7 <8.',
+      baselineMeasure: 'GAD-7: 15 at establish care',
+      targetMeasure: 'GAD-7 <8',
+      currentMeasure: 'GAD-7: 9',
+      status: GoalStatus.ACTIVE,
+    },
+  });
+  const dmRehabEpisode = await prisma.episodeOfCare.upsert({
+    where: { id: 'seed-episode-dm-rehab' },
+    update: { bodyPart: 'Cervical spine' },
+    create: {
+      id: 'seed-episode-dm-rehab',
+      orgId: org.id,
+      patientId: 'seed-patient-bh',
+      clinicianOrgUserId: clinicianRowByEmail['pt.smith@demo.local']!.orgUserId,
+      departmentId: deptRehab.id,
+      division: Division.REHAB,
+      diagnosis: 'Cervicogenic tension headaches / upper trap strain',
+      bodyPart: 'Cervical spine',
+      status: EpisodeStatus.ACTIVE,
+    },
+  });
+  await prisma.episodeGoal.upsert({
+    where: { id: 'seed-goal-dm-rehab' },
+    update: {},
+    create: {
+      id: 'seed-goal-dm-rehab',
+      episodeId: dmRehabEpisode.id,
+      goalType: GoalType.LTG,
+      goalText: 'Reduce headache frequency to ≤1/week and HDI below 20%.',
+      baselineMeasure: 'HDI 42%, headaches 2–3×/week',
+      targetMeasure: 'HDI <20%, headaches ≤1/week',
+      currentMeasure: 'HDI 28%, headaches 1×/week',
+      status: GoalStatus.ACTIVE,
+    },
+  });
+
+  // Acme Specialty Care — additional multi-episode rows for Rachel, Robert, Elena.
+  await seedAcmeAdditionalEpisodes(prisma, acmeCtx);
+
+  const deptByKey = {
+    medical: deptMedical.id,
+    rehab: deptRehab.id,
+    bh: deptBh.id,
+  } as const;
+
+  const demoCtx: VisitSeedContext = {
+    orgId: org.id,
+    defaultSiteId: site.id,
+    deptByKey,
+    clinicianRowByEmail,
   };
 
-  const visits: SeedVisit[] = [
-    // James Park (primary: MEDICAL) — visits from MD / PT / LCSW
-    {
-      noteId: 'seed-visit-jp-md-1',
-      patientId: 'seed-patient-medical',
-      clinicianEmail: 'np.brown@demo.local',
-      division: Division.MEDICAL,
-      templateId: 'seed-tmpl-medical-soap',
-      signedDaysAgo: 21,
-      departmentId: deptMedical.id,
-      episodeId: 'seed-episode-seed-patient-medical',
-      subjective: 'Patient reports headache 3-4× weekly, worse in mornings. Compliant with current lisinopril 10 mg.',
-      assessment: '1. Essential hypertension — BP poorly controlled (avg 148/92 over last 5 readings). 2. Tension-type headache, likely related.',
-      plan: 'Increase lisinopril to 20 mg daily. Recheck BP in 2 weeks. Consider adding HCTZ if not at goal.',
-    },
-    {
-      noteId: 'seed-visit-jp-pt-1',
-      patientId: 'seed-patient-medical',
-      clinicianEmail: 'pt.smith@demo.local',
-      division: Division.REHAB,
-      templateId: 'seed-tmpl-rehab-daily',
-      signedDaysAgo: 14,
-      departmentId: deptRehab.id,
-      episodeId: jpRehabEpisode.id,
-      subjective: 'Right shoulder pain 6/10 with overhead reach; improving since last visit.',
-      assessment: 'Right rotator cuff strain — week 3 of 8. Active flexion 140° (improved from 120°). Continued limited end-range external rotation.',
-      plan: 'Continue PT 2×/week. Progress to resistive ER strengthening. HEP: scapular stabilization 2×/day.',
-    },
-    {
-      noteId: 'seed-visit-jp-bh-1',
-      patientId: 'seed-patient-medical',
-      clinicianEmail: 'lcsw.garcia@demo.local',
-      division: Division.BEHAVIORAL_HEALTH,
-      templateId: 'seed-tmpl-bh-session',
-      signedDaysAgo: 7,
-      departmentId: deptBh.id,
-      episodeId: jpBhEpisode.id,
-      subjective: 'Patient reports continued work-related stress; sleep onset improved with CBT-I techniques.',
-      assessment: 'Adjustment disorder with anxious mood — moderate improvement. PHQ-9: 7 (from 11). GAD-7: 8 (from 12). No SI/HI.',
-      plan: 'Continue weekly CBT sessions. Reinforce cognitive restructuring + sleep hygiene. Re-screen GAD-7 in 4 weeks.',
-    },
-    // Maria Alvarez (primary: REHAB) — visits from PT / OT / MD
-    {
-      noteId: 'seed-visit-ma-pt-1',
-      patientId: 'seed-patient-rehab',
-      clinicianEmail: 'pt.smith@demo.local',
-      division: Division.REHAB,
-      templateId: 'seed-tmpl-rehab-daily',
-      signedDaysAgo: 18,
-      departmentId: deptRehab.id,
-      episodeId: 'seed-episode-seed-patient-rehab',
-      subjective: 'Patient ambulating with single-point cane; right knee pain 4/10 with stairs.',
-      assessment: 'Right knee OA s/p arthroscopy — week 6 post-op. Active flexion 105° (improved from 90° last visit). Quad strength 4/5.',
-      plan: 'Continue PT 2×/week. Progress to single-leg balance + closed-chain strengthening. HEP: TKE + step-ups.',
-    },
-    {
-      noteId: 'seed-visit-ma-ot-1',
-      patientId: 'seed-patient-rehab',
-      clinicianEmail: 'ot.lee@demo.local',
-      division: Division.REHAB,
-      templateId: 'seed-tmpl-rehab-daily',
-      signedDaysAgo: 11,
-      departmentId: deptRehab.id,
-      subjective: 'Difficulty with kitchen tasks requiring sustained standing; energy conservation a concern.',
-      assessment: 'ADL impairment secondary to knee OA recovery + deconditioning. IADL score improved 12 points since intake.',
-      plan: 'Issue perching stool for kitchen. Trial joint-protection strategies for grocery prep. Re-eval in 2 weeks.',
-    },
-    {
-      noteId: 'seed-visit-ma-md-1',
-      patientId: 'seed-patient-rehab',
-      clinicianEmail: 'clinician@demo.local',
-      division: Division.MEDICAL,
-      templateId: 'seed-tmpl-medical-acute',
-      signedDaysAgo: 4,
-      departmentId: deptMedical.id,
-      subjective: 'Routine post-op check; mild medial-knee warmth resolved. No new c/o.',
-      assessment: 'S/p right knee arthroscopy — uncomplicated recovery. Wound well-healed. Cleared for full PT advancement.',
-      plan: 'Continue ortho follow-up at 6 weeks. PCP follow-up in 3 months unless new concerns.',
-    },
-    // Devon Mitchell (primary: BH) — visits from LCSW / Psychologist / MD
-    {
-      noteId: 'seed-visit-dm-bh-1',
-      patientId: 'seed-patient-bh',
-      clinicianEmail: 'lcsw.garcia@demo.local',
-      division: Division.BEHAVIORAL_HEALTH,
-      templateId: 'seed-tmpl-bh-session',
-      signedDaysAgo: 24,
-      departmentId: deptBh.id,
-      episodeId: 'seed-episode-seed-patient-bh',
-      subjective: 'Patient reports anxiety worsens with deadlines; using deep breathing during work meetings.',
-      assessment: 'Generalized anxiety disorder — moderate. GAD-7: 14. Sleep disturbed; appetite intact. No SI/HI.',
-      plan: 'Initiate weekly CBT. Introduce worry-postponement + cognitive restructuring. Coordinate with PCP re: pharmacotherapy.',
-    },
-    {
-      noteId: 'seed-visit-dm-psy-1',
-      patientId: 'seed-patient-bh',
-      clinicianEmail: 'psy.patel@demo.local',
-      division: Division.BEHAVIORAL_HEALTH,
-      templateId: 'seed-tmpl-bh-session',
-      signedDaysAgo: 17,
-      departmentId: deptBh.id,
-      episodeId: 'seed-episode-seed-patient-bh',
-      subjective: 'Psychodiagnostic intake follow-up. Reviewed MMPI-2 profile; congruent with anxious-distress presentation.',
-      assessment: 'GAD primary; trait anxiety + perfectionistic schema. Rule out social anxiety — Liebowitz scheduled.',
-      plan: 'Co-treat with LCSW (weekly CBT). Psychologist to provide quarterly progress re-evaluation. Liebowitz SAS in 1 week.',
-    },
-    {
-      noteId: 'seed-visit-dm-md-1',
-      patientId: 'seed-patient-bh',
-      clinicianEmail: 'clinician@demo.local',
-      division: Division.MEDICAL,
-      templateId: 'seed-tmpl-medical-soap',
-      signedDaysAgo: 9,
-      departmentId: deptMedical.id,
-      subjective: 'Patient requests medication evaluation per BH team recommendation. Current sleep impacted by anxiety.',
-      assessment: 'GAD — co-managing with BH team. No medical contraindications to SSRI initiation. TSH wnl, CMP wnl.',
-      plan: 'Start sertraline 25 mg daily × 1 week, then 50 mg. Follow up in 4 weeks for tolerability + GAD-7.',
-    },
-  ];
+  await seedVisitCorpus(SEED_VISIT_CORPUS, demoCtx, 'Demo Clinic');
+  await seedVisitCorpus(ACME_VISIT_CORPUS, acmeCtx, 'Acme Specialty Care');
 
-  for (const v of visits) {
-    const c = clinicianRowByEmail[v.clinicianEmail];
-    if (!c) throw new Error(`Seed: missing clinician ${v.clinicianEmail}`);
-    const signedAt = new Date(Date.now() - v.signedDaysAgo * 86_400_000);
-    const encounter = await prisma.encounter.upsert({
-      where: { id: `seed-enc-${v.noteId}` },
-      update: {},
-      create: {
-        id: `seed-enc-${v.noteId}`,
-        orgId: org.id,
-        patientId: v.patientId,
-        clinicianOrgUserId: c.orgUserId,
-        siteId: site.id,
-        departmentId: v.departmentId,
-        episodeOfCareId: v.episodeId ?? null,
-        status: EncounterStatus.COMPLETED,
-        startedAt: signedAt,
-        endedAt: signedAt,
-      },
-    });
-    await prisma.note.upsert({
-      where: { id: v.noteId },
-      update: {},
-      create: {
-        id: v.noteId,
-        orgId: org.id,
-        patientId: v.patientId,
-        encounterId: encounter.id,
-        clinicianOrgUserId: c.orgUserId,
-        division: v.division,
-        status: NoteStatus.SIGNED,
-        captureMode: CaptureMode.LIVE,
-        finalJson: buildFinalJson({
-          subjective: v.subjective,
-          assessment: v.assessment,
-          plan: v.plan,
-        }) as unknown as object,
-        templateId: v.templateId,
-        templateVersion: 1,
-        noteStyle: NoteStyle.HYBRID,
-        signedAt,
-        signedByUserId: c.userId,
-      },
-    });
-  }
+  await seedBriefsAndFollowUps([
+    { builder: JAMES_PARK_BRIEF, noteId: 'seed-visit-jp-md-2', orgId: org.id },
+    { builder: MARIA_ALVAREZ_BRIEF, noteId: 'seed-visit-ma-pt-2', orgId: org.id },
+    { builder: DEVON_MITCHELL_BRIEF, noteId: 'seed-visit-dm-bh-3', orgId: org.id },
+    { builder: RACHEL_KIM_ACME_BRIEF, noteId: 'seed-acme-visit-rk-md-2', orgId: acmeCtx.orgId },
+    { builder: ROBERT_HAYES_ACME_BRIEF, noteId: 'seed-acme-visit-rh-pt-2', orgId: acmeCtx.orgId },
+    { builder: ELENA_SANTOS_ACME_BRIEF, noteId: 'seed-acme-visit-es-bh-2', orgId: acmeCtx.orgId },
+  ]);
 
   // Sanity: generate a TOTP token against the seeded secret so devs know
   // their authenticator app will accept it.

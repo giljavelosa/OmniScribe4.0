@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
+import { ChevronDown, ChevronUp } from 'lucide-react';
 
 import {
   Card,
@@ -13,6 +14,8 @@ import {
 import { StatusBadge } from '@/components/ui/status-badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/cn';
+
+const PREVIEW_COUNT = 3;
 
 export type VisitHistoryRow = {
   id: string;
@@ -74,6 +77,11 @@ const VIEW_MODES: { value: ViewMode; label: string }[] = [
 export function VisitHistoryList({ visits }: { visits: VisitHistoryRow[] }) {
   const [view, setView] = useState<ViewMode>('episode');
   const [divisionFilter, setDivisionFilter] = useState<string | null>(null);
+  // Sprint 0.6 — collapsed by default when there are more than PREVIEW_COUNT
+  // visits. The 3 most-recent visits show as a flat preview; "Show all"
+  // reveals the full list with view-mode tabs and division filter.
+  const [expanded, setExpanded] = useState(false);
+  const showCollapsedPreview = visits.length > PREVIEW_COUNT && !expanded;
 
   // Restore the user's saved preference. Initial server render uses the
   // default ('episode') so SSR + first client render match — only after
@@ -114,6 +122,11 @@ export function VisitHistoryList({ visits }: { visits: VisitHistoryRow[] }) {
     return Array.from(set);
   }, [visits]);
 
+  // Visits arrive sorted newest-first from the server; the preview just
+  // takes the first PREVIEW_COUNT in chronological order so it always
+  // shows the most recent.
+  const previewVisits = useMemo(() => visits.slice(0, PREVIEW_COUNT), [visits]);
+
   return (
     <Card>
       <CardHeader className="space-y-3">
@@ -125,22 +138,51 @@ export function VisitHistoryList({ visits }: { visits: VisitHistoryRow[] }) {
               open the signed note.
             </CardDescription>
           </div>
-          <div className="flex gap-1 flex-wrap" role="tablist" aria-label="Visit history view">
-            {VIEW_MODES.map((m) => (
-              <Button
-                key={m.value}
-                type="button"
-                variant={view === m.value ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => changeView(m.value)}
-                aria-pressed={view === m.value}
-              >
-                {m.label}
-              </Button>
-            ))}
-          </div>
+          {/* Collapsed preview: only the Show all toggle.
+              Expanded: full view-mode tabs + Collapse toggle. */}
+          {showCollapsedPreview ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setExpanded(true)}
+              className="gap-1"
+            >
+              Show all {visits.length} notes
+              <ChevronDown className="h-3.5 w-3.5" aria-hidden />
+            </Button>
+          ) : (
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="flex gap-1 flex-wrap" role="tablist" aria-label="Visit history view">
+                {VIEW_MODES.map((m) => (
+                  <Button
+                    key={m.value}
+                    type="button"
+                    variant={view === m.value ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => changeView(m.value)}
+                    aria-pressed={view === m.value}
+                  >
+                    {m.label}
+                  </Button>
+                ))}
+              </div>
+              {visits.length > PREVIEW_COUNT && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setExpanded(false)}
+                  className="gap-1 text-muted-foreground"
+                >
+                  Collapse
+                  <ChevronUp className="h-3.5 w-3.5" aria-hidden />
+                </Button>
+              )}
+            </div>
+          )}
         </div>
-        {divisionsPresent.length > 1 && (
+        {!showCollapsedPreview && divisionsPresent.length > 1 && (
           <div className="flex gap-1 flex-wrap">
             <Button
               type="button"
@@ -165,11 +207,13 @@ export function VisitHistoryList({ visits }: { visits: VisitHistoryRow[] }) {
         )}
       </CardHeader>
       <CardContent className="space-y-0 p-0">
-        {filtered.length === 0 ? (
+        {visits.length === 0 ? (
+          <p className="px-4 py-6 text-sm text-muted-foreground">No signed visits yet.</p>
+        ) : showCollapsedPreview ? (
+          <FlatList visits={previewVisits} />
+        ) : filtered.length === 0 ? (
           <p className="px-4 py-6 text-sm text-muted-foreground">
-            {visits.length === 0
-              ? 'No signed visits yet.'
-              : 'No visits match the current filter.'}
+            No visits match the current filter.
           </p>
         ) : view === 'chronological' ? (
           <FlatList visits={filtered} />
@@ -328,7 +372,7 @@ function VisitRow({ v }: { v: VisitHistoryRow }) {
   return (
     <li>
       <Link
-        href={`/review/${v.id}`}
+        href={`/visits/${v.id}`}
         className={cn(
           'flex flex-col gap-1 px-4 py-3 hover:bg-muted/30 transition-colors',
         )}

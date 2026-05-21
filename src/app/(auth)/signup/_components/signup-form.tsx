@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { useRouter } from 'next/navigation';
 import { signIn } from 'next-auth/react';
 
 import { Button } from '@/components/ui/button';
@@ -44,7 +43,6 @@ const DIVISION_LABEL: Record<Division, string> = {
  * set. Otherwise the form proceeds without it (dev).
  */
 export function SignupForm() {
-  const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [orgName, setOrgName] = useState('');
@@ -113,11 +111,12 @@ export function SignupForm() {
       if (!signinRes || signinRes.error) {
         // Edge case: account created but sign-in failed. Send to login
         // so the user can try manually.
-        router.push('/login');
+        window.location.assign('/login');
         return;
       }
-      router.push('/mfa-setup');
-      router.refresh();
+      // New accounts always need MFA setup. Hard-navigate so the server
+      // reads the fresh JWT cookie rather than racing the cookie write.
+      window.location.assign('/mfa-setup');
     });
   }
 

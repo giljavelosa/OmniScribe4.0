@@ -8,6 +8,20 @@ Light-primary with dark-mode fallback. The aesthetic is **calm and clinical**: w
 
 The visual language is **tablet-first**: clinicians work at bedside or kiosk on a tablet, then transition to desktop for review. Mobile = single-column with bottom nav; desktop = two-pane workspaces.
 
+### Explicit design permissions (apply everywhere in the app)
+
+These patterns are explicitly allowed and encouraged across all surfaces:
+
+1. **Full-width solid-color bars.** Headers, bottom navigation bars, section banners, and hero strips may use `bg-primary`, `bg-card`, or any semantic token as a full-bleed background. The top header and the mobile bottom nav use `bg-primary` (deep teal) with `text-primary-foreground` (white) on all clinical surfaces. Admin/owner/ops layouts may adopt the same treatment or use their own accent. A solid-color bar is always preferred over a border-only divider for primary chrome.
+
+2. **Avatars, initials, and user/patient images.** Every entity that has a human identity — clinician, patient, user account — may display a visual avatar. Avatars are rendered as:
+   - **Initials circle** — `rounded-full bg-primary/10 text-primary font-semibold` (or role-specific color) with 1–2 character initials derived from first + last name. Default when no photo is set.
+   - **Photo avatar** — `<img>` or Next.js `<Image>` with `rounded-full`, `object-cover`, and explicit `width`/`height`. Photos are served via presigned S3 URL (never stored in localStorage or exposed in client logs). Alt text is always the person's display name.
+   - **System icon avatar** — Lucide icon in a circle, used for AI / system entities (e.g. the OmniScribe AI panel).
+   - Recommended sizes: `h-8 w-8` (compact list rows), `h-10 w-10` (card headers), `h-12 w-12` (profile / detail pages).
+   - Use the shared `<UserAvatar>` component (`src/components/ui/user-avatar.tsx`) once built; until then, inline the initials pattern directly.
+   - **PHI rule:** patient photos are PHI. Never embed base64 patient photos in HTML. Always use presigned URLs with short TTL. Never log photo URLs.
+
 Source of truth: `src/app/globals.css` — every token defined as a CSS custom property.
 
 ## Colors (OKLCH)
@@ -132,9 +146,9 @@ Minimal. Loads fonts. `body` is `min-h-full flex flex-col`. Theme is light by de
 
 ### Clinical layout (`src/app/(clinical)/layout.tsx`)
 Two-tier chrome on mobile/tablet:
-- **Top bar** (h-13, 52px) — `BrandWordmark` only; light border-bottom
-- **Bottom navigation** (fixed, mobile) — 5 items: Home / Patients / Drafts / Templates / Profile. Lucide icons. Active = teal background + shadow lift + `-translate-y-1`. `max-w-lg` constraint.
-- **Content** — `flex-1 overflow-y-auto pb-20` (padding for bottom nav)
+- **Top bar** (h-13, 52px) — `bg-primary` full-width teal. `BrandWordmark inverted` (white quill + white text). `AppNav` with `text-primary-foreground` links (hidden on mobile — bottom nav handles navigation at `< lg`). Email + sign-out always visible.
+- **Bottom navigation** (fixed, mobile, `lg:hidden`) — `bg-primary` full-width teal. 5 items: Home / Patients / Record / Drafts / More. Lucide icons, white. Active = `bg-white/20` rounded pill. `env(safe-area-inset-bottom)` for iOS notch. `More` opens a Sheet with role-gated admin/owner/ops links.
+- **Content** — `flex-1 pb-[calc(4rem+env(safe-area-inset-bottom))] lg:pb-0` (bottom nav clearance on mobile)
 
 On desktop (`lg+`), clinical chrome is suppressed on focused pages (capture, review, sign) — full-viewport workspaces.
 
@@ -158,6 +172,70 @@ On desktop (`lg+`), clinical chrome is suppressed on focused pages (capture, rev
 - **AlertDialog** — for destructive / sensitive actions (sign confirmation, regenerate-edited-section, leave-without-save). **Never native `confirm()`** (rule 22).
 - **Overlay** — `bg-black/10` with optional `backdrop-blur-xs`.
 
+#### Internal-scroll sheets (required pattern)
+
+Every Sheet **must** use internal scroll so the base page never moves. Structure:
+
+```tsx
+<SheetContent side="right" className="sm:max-w-md flex flex-col gap-0 p-0">
+  {/* Fixed header — never scrolls */}
+  <SheetHeader className="border-b px-6 py-4">...</SheetHeader>
+
+  {/* Scrollable body — the only thing that moves */}
+  <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+    {/* content */}
+  </div>
+
+  {/* Fixed footer — never scrolls */}
+  <SheetFooter className="border-t px-6 py-4">...</SheetFooter>
+</SheetContent>
+```
+
+The `flex flex-col gap-0 p-0` on `SheetContent` enables this layout. If the body content fits without scrolling, that is fine — `overflow-y-auto` is a no-op until overflow occurs.
+
+#### Nested (stacked) sheets
+
+Sheets may open further sheets on top. Use a consistent LIFO dismiss pattern: each sheet's X / Cancel closes only itself, returning to the layer below. Never close multiple sheets at once unless explicitly confirming a cancel-all.
+
+### Progressive disclosure — the core page pattern
+
+Every non-trivial page in the clinical and admin surfaces MUST use one of these two techniques to avoid long single-column scroll:
+
+1. **Tabs** — for detail pages with 3+ distinct content areas. The active tab shows a short, focused surface. Other content is hidden, not pushed below the fold.
+   - Use `<Tabs>` from `@/components/ui/tabs`.
+   - Default to the most clinician-facing tab (e.g. "Overview" or the primary action area).
+   - Show count badges on tabs that have data (e.g. `Visits (7)`, `Episodes (2)`).
+
+2. **Collapsible sections** — for lists or repetitive content where the first few rows are the 90% case. Show N rows by default, offer "Show all" toggle.
+   - Use for visit history (default: 3 most recent), episode goals, audit entries.
+
+Combined with a **sticky page anchor**, these techniques mean:
+
+- The clinician always has identity + primary action visible.
+- Long content is never the default state — it requires an intentional expand.
+- Navigating between sections does not lose the current scroll position of other sections.
+
+### Sticky page anchors (required on all detail pages)
+
+Any page that has scrollable content AND a primary action must implement a sticky anchor. The anchor MUST NOT scroll away.
+
+```tsx
+{/* Sticky anchor — lives at the top of the page component, before tabs/content */}
+<div className="sticky top-0 z-30 bg-background/95 backdrop-blur-sm border-b shadow-sm">
+  <div className="mx-auto max-w-6xl px-4 py-3 flex items-center gap-3 flex-wrap">
+    {/* entity identity — name, key demographic, status badge */}
+    {/* primary action button */}
+  </div>
+</div>
+```
+
+Rules:
+- `z-30` — above floating content, below modals and sheets (`z-50`).
+- `bg-background/95 backdrop-blur-sm` — slightly frosted, not opaque, so the clinician sees they are mid-scroll.
+- `shadow-sm` — visually separates from scrolled content without a hard border.
+- The anchor contains the minimum info needed to identify the context (patient name + age + MRN) plus the primary action (Start Visit, Save, etc.).
+- The full detail header lives in the first tab/section. The anchor is a compact repeat, not a replacement.
+
 ### Page composition
 
 - `/prepare/[noteId]` — prior-context brief + Watch cards + setup form
@@ -165,7 +243,10 @@ On desktop (`lg+`), clinical chrome is suppressed on focused pages (capture, rev
 - `/processing/[noteId]` — transient reassurance screen (gear animation + escalating empathy)
 - `/review/[noteId]` — section-by-section editor; collapsible accordions; readiness panel right side
 - `/sign/[noteId]` — attestation surface; final read-only preview; MFA re-verify
-- `/patients/[id]` — identity header + snapshot strip + visit history + reference cards
+- `/patients/[id]` — **sticky anchor** (name + Start Visit) + **four tabs**: Overview / Episodes / Visits / Profile
+- `/visits/[noteId]` — **sticky header** + **four tabs**: Note / Handout / Transcript / Recording
+
+Any future detail page (new patient sub-page, admin org detail, etc.) MUST follow the sticky anchor + tabs pattern above. Do not create new long single-column stacks.
 
 ## Icons
 
@@ -211,9 +292,10 @@ No dedicated skeleton component. Use `opacity-pulse` or `ProcessingIndicator` fo
 **Brand name**: **OmniScribe**. Always one word, capital O + capital S. Never variants. This is the canonical name from day one.
 
 ### Wordmark
-- **Quill icon** — 22×22 SVG, gradient `#064d2a → #0B7A42 → #3da878` (green → teal)
-- **Text "OmniScribe"** — Geist Sans, bold, `text-lg`, gradient fill green → teal → darker teal
-- **Drop shadow** — `drop-shadow-[0_4px_10px_rgba(0,0,0,0.22)]`
+- **Quill icon** — 22×22 SVG, gradient `#064d2a → #0B7A42 → #3da878` (green → teal). On colored backgrounds use `<BrandWordmark inverted />` — quill and text render white.
+- **Text "OmniScribe"** — Geist Sans, bold, `text-lg`, gradient fill green → teal → darker teal (default). White when `inverted`.
+- **Drop shadow** — `drop-shadow-[0_2px_6px_rgba(0,0,0,0.18)]`
+- **Usage:** `<BrandWordmark />` on white/card backgrounds. `<BrandWordmark inverted />` on `bg-primary` or any colored bar.
 
 ### PWA manifest
 - `theme_color: "#3d8b8b"` — teal, app chrome on mobile
@@ -255,6 +337,10 @@ Strategy: **mobile-first, tablet-optimized**. Single-column on mobile; mid-width
 4. **AlertDialog, never `confirm()`.** Even for "leave without saving?"
 5. **Touch targets ≥ 44 px.** Clinicians use tablets.
 6. **OmniScribe — one word.** No variants. No abbreviations.
+7. **Full-width colored bars are the standard chrome.** Top header and mobile bottom nav use `bg-primary` (teal) throughout the app. Do not revert to `bg-card border-b` for primary navigation chrome. See "Explicit design permissions" above.
+8. **Avatars everywhere a human is named.** Any list row, card, or header that shows a clinician or patient name should pair it with an initials circle or photo avatar. Use the initials pattern until `<UserAvatar>` exists. Never show a name without a visual anchor.
+9. **Detail pages use sticky anchor + tabs.** If a page has 3+ distinct content areas or requires scrolling to reach the primary action, it MUST have a sticky mini-header and tabs. A long vertical stack is never the answer. See "Progressive disclosure" and "Sticky page anchors" above.
+10. **Sheets scroll inside themselves.** The base page never moves when a sheet is open. Use `flex flex-col` + `flex-1 overflow-y-auto` body to contain scroll inside the sheet. See "Internal-scroll sheets" above.
 
 ## What to read next (visual design deep dives)
 

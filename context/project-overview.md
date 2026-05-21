@@ -62,7 +62,7 @@ Detail in [`journeys/02-typical-visit.md`](../journeys/02-typical-visit.md). Var
 
 ### Pillar 3 — Agentic Clinical Copilot
 
-Two modes (per [`references/encounter-copilot-spec.md`](../references/encounter-copilot-spec.md)):
+Two modes (per [`references/encounter-copilot-spec.md`](../references/encounter-copilot-spec.md)). **Wave 5** (Units 25–31) shipped capabilities; **Wave 8** (Units 42–47) ports Miss Cleo persona, streaming, and persistence — see [`context/specs/00-build-plan.md`](specs/00-build-plan.md).
 
 - **Watch (proactive)** — context cards surfaced pre-encounter and during capture, without the clinician asking:
   - **v0**: open follow-ups from prior visit, "plan said for today" cards
@@ -92,7 +92,7 @@ Read [`journeys/05-copilot-ask-mode.md`](../journeys/05-copilot-ask-mode.md) for
 - **Templates admin** — preset CMS templates + custom templates; section schema editor; specialty/division defaults; visibility tiers.
 - **Voice profile admin** — enrollment, BIPA consent versioning, soft-delete + 30-day hard-delete grace.
 - **Audit & compliance** — `AuditLog` (org/user/patient/note scope) + `PlatformAuditLog` (cross-org owner scope). Append-only. PHI-free metadata. Reconstructable state on important mutations (sign, BAA acceptance, MFA reset, sensitive-tier change).
-- **Billing & seats** — Stripe integration, seat tiers (`SOLO` / `TEAM` / `ENTERPRISE`), per-user seat assignment, expirations, transfers, per-org note quota where applicable.
+- **Billing & seats** — Stripe integration, seat tiers (`SOLO` / `TEAM` / `ENTERPRISE`), per-user seat assignment, expirations, transfers. **Canonical wave: Wave 7** (units §01, §09, 38–41 in [`context/specs/00-build-plan.md`](specs/00-build-plan.md)).
 - **Telehealth** — Daily.co video room, magic-link patient join with DOB verification, browser-side audio tap integrating with the same transcription pipeline. Audio processed + audio discarded after note signing; the *note* is the artifact of record, NOT the video.
 - **EHR / FHIR integration** (Wave 4) — SMART-on-FHIR OAuth2, cached resource reads via worker, brief-generator enrichment, provenance UI with source pills + staleness chips. NextGen first, then Epic + Cerner. v1 is provider-launched, **read-only** — no write-back.
 - **Owner & Ops consoles** — platform-owner cross-org visibility, BAA management, ops audit + announcements + system health.

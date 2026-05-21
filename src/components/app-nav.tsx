@@ -44,6 +44,9 @@ export type AppNavProps = {
   email: string;
   role: OrgRole | null;
   platformRole: PlatformRole;
+  /** Organization name — shown as a small pill in the header so the
+   *  clinician always knows which workspace they are operating in. */
+  orgName?: string | null;
   /** Current top-level path segment, e.g. '/home', '/patients',
    *  '/admin', '/owner', '/ops'. Used to highlight the active link. */
   currentSection?: string;
@@ -56,7 +59,7 @@ type NavItem = {
   section: string;
 };
 
-export function AppNav({ email, role, platformRole, currentSection }: AppNavProps) {
+export function AppNav({ email, role, platformRole, orgName, currentSection }: AppNavProps) {
   // Derive the active section from the current pathname when the layout
   // doesn't pass one explicitly — without this, no link ever highlights.
   const pathname = usePathname();
@@ -103,31 +106,43 @@ export function AppNav({ email, role, platformRole, currentSection }: AppNavProp
       aria-label="Primary"
       className="flex items-center gap-1 flex-wrap"
     >
+      {/* Nav links hidden on mobile — MobileBottomNav handles navigation
+          on < lg viewports so we don't duplicate them in the header. */}
       {clinicalItems.map((item) => (
-        <NavLink key={item.href} {...item} active={derivedSection === item.section} />
+        <span key={item.href} className="hidden lg:inline-flex">
+          <NavLink {...item} active={derivedSection === item.section} />
+        </span>
       ))}
       {consoleItems.length > 0 && (
         <>
-          <span className="text-muted-foreground/40 px-1" aria-hidden>
+          <span className="hidden lg:inline-flex text-muted-foreground/40 px-1" aria-hidden>
             ·
           </span>
           {consoleItems.map((item) => (
-            <NavLink
-              key={item.href}
-              {...item}
-              active={derivedSection === item.section}
-            />
+            <span key={item.href} className="hidden lg:inline-flex">
+              <NavLink
+                {...item}
+                active={derivedSection === item.section}
+              />
+            </span>
           ))}
         </>
       )}
       <div className="ml-auto pl-3 flex items-center gap-2">
-        <span className="text-xs text-muted-foreground truncate max-w-[16rem]">
-          {email}
-        </span>
+        <div className="flex flex-col items-end gap-0.5">
+          {orgName && (
+            <span className="hidden sm:inline-flex items-center rounded-full bg-white/15 px-2 py-0.5 text-[10px] font-medium text-primary-foreground/90 max-w-[14rem] truncate">
+              {orgName}
+            </span>
+          )}
+          <span className="text-xs text-primary-foreground/70 truncate max-w-[16rem]">
+            {email}
+          </span>
+        </div>
         <button
           type="button"
           onClick={() => signOut({ callbackUrl: '/login' })}
-          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
+          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-primary-foreground/80 hover:text-primary-foreground hover:bg-white/10 transition-colors"
           aria-label="Sign out"
           title="Sign out"
         >
@@ -159,8 +174,8 @@ function NavLink({
       className={cn(
         'inline-flex items-center gap-1.5 rounded-md px-3 min-h-[var(--touch-min)] text-sm',
         active
-          ? 'bg-muted text-foreground font-medium'
-          : 'text-muted-foreground hover:text-foreground hover:bg-muted/60',
+          ? 'bg-white/15 text-white font-medium'
+          : 'text-primary-foreground/80 hover:text-white hover:bg-white/10',
       )}
       aria-current={active ? 'page' : undefined}
     >

@@ -7,6 +7,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { StatusBanner } from '@/components/ui/status-banner';
+import { UserAvatar } from '@/components/ui/user-avatar';
 import {
   StartVisitDialog,
   type StartVisitDialogEpisode,
@@ -18,7 +19,7 @@ export type SchedulingCardData = {
   scheduleId: string;
   patientId: string;
   patientName: string;
-  mrn: string;
+  mrn: string | null;
   scheduledStart: string;     // ISO
   scheduledEnd: string;       // ISO
   visitType: VisitType;
@@ -120,27 +121,35 @@ export function SchedulingCard({ visit }: { visit: SchedulingCardData }) {
   const end24 = new Date(visit.scheduledEnd);
   const fmt = (d: Date) => d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
+  // patientName is "Last, First" — split to derive initials for the avatar.
+  const [avatarLast = '', avatarFirst = ''] = visit.patientName.split(', ');
+
   return (
     <Card>
       <CardContent className="flex flex-col gap-3">
         <div className="flex items-center justify-between gap-3">
-          <div className="space-y-1 min-w-0">
-            <p className="text-sm font-mono text-muted-foreground">
-              {fmt(start24)} – {fmt(end24)}
-            </p>
-            <p className="font-medium truncate">
-              <Link href={`/patients/${visit.patientId}`} className="hover:underline">
-                {visit.patientName}
-              </Link>
-              <span className="ml-2 text-xs text-muted-foreground font-mono">{visit.mrn}</span>
-            </p>
-            <div className="flex flex-wrap items-center gap-2 text-xs">
-              <StatusBadge variant={visit.visitType === 'TELEHEALTH' ? 'violet' : 'neutral'} noIcon>
-                {visit.visitType}
-              </StatusBadge>
-              <StatusBadge variant={STATUS_VARIANT[visit.status]} noIcon>
-                {visit.status}
-              </StatusBadge>
+          <div className="flex items-center gap-3 min-w-0 flex-1">
+            <UserAvatar firstName={avatarFirst} lastName={avatarLast} size="md" className="shrink-0" />
+            <div className="space-y-1 min-w-0">
+              <p className="text-sm font-mono text-muted-foreground">
+                {fmt(start24)} – {fmt(end24)}
+              </p>
+              <p className="font-medium truncate">
+                <Link href={`/patients/${visit.patientId}`} className="hover:underline">
+                  {visit.patientName}
+                </Link>
+                {visit.mrn && (
+                  <span className="ml-2 text-xs text-muted-foreground font-mono">{visit.mrn}</span>
+                )}
+              </p>
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <StatusBadge variant={visit.visitType === 'TELEHEALTH' ? 'violet' : 'neutral'} noIcon>
+                  {visit.visitType}
+                </StatusBadge>
+                <StatusBadge variant={STATUS_VARIANT[visit.status]} noIcon>
+                  {visit.status}
+                </StatusBadge>
+              </div>
             </div>
           </div>
           <Button

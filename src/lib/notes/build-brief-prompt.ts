@@ -25,7 +25,7 @@ export type BriefPatientProjection = {
   sex: string;
   displayName: string; // first + last initial — never full legal name
   preferredLanguage: string | null;
-  mrn: string;
+  mrn: string | null;
 };
 
 export type BriefEpisodeProjection = {

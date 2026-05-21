@@ -2,6 +2,7 @@ import type { Patient } from '@prisma/client';
 import { cn } from '@/lib/cn';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { SectionLabel } from '@/components/ui/section-label';
+import { UserAvatar } from '@/components/ui/user-avatar';
 
 type Props = {
   patient: Pick<
@@ -19,30 +20,38 @@ type Props = {
 export function PatientIdentityHeader({ patient, className }: Props) {
   const age = ageInYears(patient.dob);
   return (
-    <header className={cn('space-y-2', className)}>
-      <div className="flex items-center gap-2 flex-wrap">
-        <h1 className="text-2lg font-semibold leading-tight">
-          {patient.firstName} {patient.lastName}
-        </h1>
-        <StatusBadge variant="neutral" noIcon>
-          {patient.sex} · {age}
-        </StatusBadge>
-        {patient.isDeleted && <StatusBadge variant="danger">deleted</StatusBadge>}
+    <header className={cn('flex items-start gap-4', className)}>
+      <UserAvatar
+        firstName={patient.firstName}
+        lastName={patient.lastName}
+        size="lg"
+        className="mt-0.5 shrink-0"
+      />
+      <div className="space-y-2 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <h1 className="text-2lg font-semibold leading-tight">
+            {patient.firstName} {patient.lastName}
+          </h1>
+          <StatusBadge variant="neutral" noIcon>
+            {patient.sex} · {age}
+          </StatusBadge>
+          {patient.isDeleted && <StatusBadge variant="danger">deleted</StatusBadge>}
+        </div>
+        <dl className="grid grid-cols-3 gap-2 text-sm text-muted-foreground">
+          <div>
+            <SectionLabel>MRN</SectionLabel>
+            <dd className="font-mono">{patient.mrn}</dd>
+          </div>
+          <div>
+            <SectionLabel>DOB</SectionLabel>
+            <dd>{patient.dob.toLocaleDateString()}</dd>
+          </div>
+          <div>
+            <SectionLabel>Language</SectionLabel>
+            <dd>{patient.preferredLanguage ?? '—'}</dd>
+          </div>
+        </dl>
       </div>
-      <dl className="grid grid-cols-3 gap-2 text-sm text-muted-foreground">
-        <div>
-          <SectionLabel>MRN</SectionLabel>
-          <dd className="font-mono">{patient.mrn}</dd>
-        </div>
-        <div>
-          <SectionLabel>DOB</SectionLabel>
-          <dd>{patient.dob.toLocaleDateString()}</dd>
-        </div>
-        <div>
-          <SectionLabel>Language</SectionLabel>
-          <dd>{patient.preferredLanguage ?? '—'}</dd>
-        </div>
-      </dl>
     </header>
   );
 }

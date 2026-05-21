@@ -1,16 +1,15 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 
+import { completeMfaNavigation } from '@/lib/auth/complete-mfa-navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { StatusBanner } from '@/components/ui/status-banner';
 
 export function MfaChallengeForm() {
-  const router = useRouter();
   const { update } = useSession();
   const [token, setToken] = useState('');
   const [useRecovery, setUseRecovery] = useState(false);
@@ -30,10 +29,7 @@ export function MfaChallengeForm() {
         setError(useRecovery ? 'Invalid recovery code.' : 'Invalid 6-digit code.');
         return;
       }
-      // Tell the JWT to flip mfaVerified=true.
-      await update({ mfaVerified: true });
-      router.push('/home');
-      router.refresh();
+      await completeMfaNavigation(update, { mfaVerified: true }, '/home');
     });
   }
 

@@ -20,7 +20,7 @@ export type PatientProjection = {
   age: number;
   sex: string;
   preferredLanguage: string | null;
-  mrn: string;
+  mrn: string | null;
 };
 
 export function projectPatientForPrompt(patient: Patient): PatientProjection {

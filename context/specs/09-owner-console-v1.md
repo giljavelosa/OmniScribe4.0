@@ -1,5 +1,7 @@
 # Unit 09: Owner Console v1
 
+> **Wave 1** (owner console). Billing prerequisites in this unit are **Wave 7 §09** — see [`00-build-plan.md`](00-build-plan.md) Wave 7 for the canonical billing wave. Live Stripe lands in **Unit 38**.
+
 ## Goal
 
 Close Wave 1 by giving the platform owner the surfaces needed to run OmniScribe as a multi-tenant service: cross-org user search, cross-org audit (PHI-free), system-wide announcements, system health, and seat allocation. After this unit, the first paying customer can be provisioned, onboarded, recorded, signed, AND paid (seat allocation drives the billing intent — actual Stripe API calls are stubbed in v1 per the existing provider-stub pattern).

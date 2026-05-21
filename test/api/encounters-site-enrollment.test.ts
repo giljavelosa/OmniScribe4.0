@@ -38,6 +38,13 @@ vi.mock('@/lib/audit/impersonation', () => ({
   assertNotImpersonating: vi.fn(async () => ({ ok: true })),
 }));
 
+// Seat gate: bypass — these tests predate Wave 7 billing and don't test
+// seat enforcement. checkClinicianSeat always passes here.
+vi.mock('@/lib/authz/seat', () => ({
+  checkClinicianSeat: vi.fn(async () => ({ ok: true })),
+  seatRequiredResponse: vi.fn(),
+}));
+
 import { POST } from '@/app/api/encounters/route';
 
 function session(

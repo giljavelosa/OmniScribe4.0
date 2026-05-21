@@ -31,7 +31,7 @@ export async function EhrLinkPanel({
   patient,
 }: {
   patientId: string;
-  patient: { firstName: string; lastName: string; mrn: string; dobIso: string };
+  patient: { firstName: string; lastName: string; mrn: string | null; dobIso: string };
 }) {
   const session = await auth();
   const orgUserId = session?.user?.orgUserId;

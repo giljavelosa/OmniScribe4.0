@@ -29,7 +29,7 @@ Choose every layer below at the start. The combination is intentional; do not su
 | Cache (prod) | AWS ElastiCache Redis 7.1 | TLS in-transit, KMS at-rest, primary + 2 replicas, automatic failover |
 | Secrets | AWS Secrets Manager | All credentials; never in console env vars |
 | IaC | AWS CDK (TypeScript) | `infra/lib/{compute,data,vpc,monitoring}-stack.ts` |
-| Billing | Stripe 21 | Subscriptions, seat tiers, customer portal |
+| Billing | Stripe 21 | Subscriptions, seat tiers, customer portal — **Wave 7** in [`specs/00-build-plan.md`](specs/00-build-plan.md) |
 | Email | Resend (verified domain) | Transactional auth emails (verify, reset, MFA) |
 | PWA | next-pwa 5 | Installable web app for tablet clinicians |
 | Testing | Vitest + @testing-library/react + happy-dom | Unit + integration; integration tests touch real DB (no mocks for DB layer) |

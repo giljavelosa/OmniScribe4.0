@@ -1,5 +1,7 @@
 # Unit 32: Owner Console Maturity
 
+> **Wave 6** (platform). Subscription plan metadata in this unit is **Wave 7 Unit 39** — see [`00-build-plan.md`](00-build-plan.md) Wave 7.
+
 ## Goal
 
 Wave 6 opener. Unit 09 shipped the owner console v1: cross-org list, BAA
@@ -236,8 +238,8 @@ endpoints repeat it via `requirePlatformOwner()`.
 
 - True scoped mutations during impersonation (v1 is read-only; v2 polish iteration)
 - Background BullMQ rollup job (on-demand cache is fine for v1; promotes to background when usage page becomes hot)
-- Plan-tier feature flags (subscriptionPlan is metadata; FEATURE_FLAG_USAGE_BASED_BILLING etc. lives in Wave 7)
-- Stripe webhook integration (Unit 09 stubbed STRIPE_SUBSCRIPTION_UPDATED already; live Stripe integration is its own unit)
+- Plan-tier feature flags (`FEATURE_FLAG_USAGE_BASED_BILLING` etc.) → **Wave 7 Unit 41**
+- Live Stripe webhook / checkout / portal → **Wave 7 Unit 38** (shipped 2026-05-19)
 - Per-tz day buckets (UTC only in v1)
 - Transactions pagination (100 cap; full audit table covers deep dives)
 - Multi-org impersonation queue (one target at a time per owner)

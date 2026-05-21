@@ -1,5 +1,7 @@
 # Unit 37: Public Signup + Self-Serve Org Creation
 
+> **Wave 6** (platform). Commercial signup provisioning in this unit is **Wave 7 Unit 40** — see [`00-build-plan.md`](00-build-plan.md) Wave 7.
+
 ## Goal
 
 **Wave 6 closer — final unit of the 37-unit build plan.** The app

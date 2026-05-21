@@ -4,19 +4,25 @@ import type { OrgRole } from '@prisma/client';
 import {
   FileEdit,
   FileText,
+  Mic,
   ShieldCheck,
   Sparkles,
   Stethoscope,
-  UserPlus,
   Wrench,
 } from 'lucide-react';
+
+import { redirect } from 'next/navigation';
 
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { getClinicianSiteIds } from '@/lib/authz/site-scope';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { StatusBadge } from '@/components/ui/status-badge';
+import { UserAvatar } from '@/components/ui/user-avatar';
 import { SchedulingCard } from '@/components/clinical/scheduling-card';
+import { TodayStatusTiles } from '@/components/home/today-status-tiles';
+import { AiCommandPanel } from '@/components/home/ai-command-panel';
 import { HomeSearchForm } from './_components/home-search-form';
 
 const ADMIN_ROLES: OrgRole[] = ['ORG_ADMIN', 'SITE_ADMIN'];
@@ -26,38 +32,17 @@ export const metadata: Metadata = { title: 'Home' };
 
 type HomeSearchParams = Promise<{ siteId?: string }>;
 
-/**
- * /home — clinician dashboard.
- *
- * Polish (post-Wave 6) — replaced the Unit 01 placeholder "Drafts queue
- * arrives in Unit 05" copy with real data. Now surfaces:
- *   - today's schedule (already existed; unchanged)
- *   - patient search (already existed; unchanged)
- *   - drafts: notes assigned to this clinician in DRAFT / REVIEWING /
- *     PENDING_REVIEW state, capped at 10 (clinician can drill into
- *     /drafts for the full list when that surface lands)
- *   - open follow-ups: assigned to this clinician, status=OPEN, capped
- *     at 10
- *
- * The drafts list links to /review/[noteId] (Unit 05 finalization
- * surface). Follow-ups link to the patient page where the follow-up
- * surface lives.
- */
 export default async function HomePage({
   searchParams,
 }: {
   searchParams: HomeSearchParams;
 }) {
   const session = await auth();
-  if (!session?.user?.orgId || !session.user.orgUserId) return null;
+  if (!session?.user?.orgId || !session.user.orgUserId) redirect('/login');
   const orgId = session.user.orgId;
   const clinicianOrgUserId = session.user.orgUserId;
   const { siteId: selectedSiteParam } = await searchParams;
 
-  // Multi-site enrollment — surface a "My sites" pill row above the schedule
-  // when the clinician has 2+ enrolled sites. Single-enrollment users skip
-  // the row (one pill is just noise). Org-wide-admins (scope 'all') get all
-  // sites in the row and can filter just like clinicians.
   const siteScope = await getClinicianSiteIds(clinicianOrgUserId, orgId);
   const mySites =
     siteScope.siteIds.length > 0
@@ -78,7 +63,7 @@ export default async function HomePage({
   const dayEnd = new Date(dayStart);
   dayEnd.setDate(dayEnd.getDate() + 1);
 
-  const [schedules, drafts, followups] = await Promise.all([
+  const [schedules, drafts, followups, org] = await Promise.all([
     prisma.schedule.findMany({
       where: {
         orgId,
@@ -94,8 +79,6 @@ export default async function HomePage({
             firstName: true,
             lastName: true,
             mrn: true,
-            // Active episodes for the start-visit picker so the
-            // SchedulingCard can open the dialog without a second fetch.
             episodes: {
               where: { status: { in: ['ACTIVE', 'RECERT_DUE'] } },
               select: {
@@ -146,285 +129,435 @@ export default async function HomePage({
         patient: { select: { id: true, firstName: true, lastName: true, mrn: true } },
       },
     }),
+    prisma.organization.findUnique({
+      where: { id: orgId },
+      select: { name: true },
+    }),
   ]);
 
+  const orgName = org?.name ?? null;
   const role = session.user.role;
   const platformRole = session.user.platformRole;
   const isAdmin = role && ADMIN_ROLES.includes(role);
   const isOwner = platformRole === 'PLATFORM_OWNER';
   const isOps = platformRole === 'PLATFORM_OPS' || isOwner;
 
-  return (
-    <div className="mx-auto max-w-5xl px-4 py-6 space-y-6">
-      <div className="flex flex-col gap-1">
-        <h1 className="text-2lg font-semibold">Today</h1>
-        <p className="text-sm text-muted-foreground">
-          {dayStart.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })} ·{' '}
-          {session.user.email}
-        </p>
-      </div>
+  const dateLabel = dayStart.toLocaleDateString(undefined, {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+  });
 
-      {/* Quick Actions — direct links to the most-used surfaces.
-          Role-gated: admin/owner/ops only render their group when the
-          user has the matching role. */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-md">Quick actions</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
-            <QuickActionLink
-              href="/patients"
-              Icon={Stethoscope}
-              label="All patients"
-              hint="Search, filter, manage"
-            />
-            <QuickActionLink
-              // Lands on the patient list — the "New patient" button is
-              // visible at the top of that page. Hint reflects the actual
-              // destination so the label + hint stop contradicting each other.
-              href="/patients"
-              Icon={UserPlus}
-              label="Add patient"
-              hint="Open list + tap New"
-            />
-            {isAdmin && (
-              <>
-                <QuickActionLink
-                  href="/admin/templates"
-                  Icon={FileText}
-                  label="Templates"
-                  hint="Note templates"
-                />
-                <QuickActionLink
-                  href="/admin/users"
-                  Icon={ShieldCheck}
-                  label="Team members"
-                  hint="Invite, manage, audit"
-                />
-                <QuickActionLink
-                  href="/admin/audit"
-                  Icon={FileEdit}
-                  label="Audit log"
-                  hint="Per-org events"
-                />
-              </>
-            )}
-            {isOwner && (
-              <QuickActionLink
-                href="/owner/orgs"
-                Icon={Sparkles}
-                label="Owner console"
-                hint="Orgs, BAA, billing"
-              />
-            )}
-            {isOps && (
-              <QuickActionLink
-                href="/ops"
-                Icon={Wrench}
-                label="Ops dashboard"
-                hint="Platform health"
-              />
+  // Derive first name for greeting: prefer session.user.name, fall back
+  // to the part of the email before '@'.
+  const displayFirst =
+    session.user.name?.split(' ')[0] ||
+    (session.user.email.split('@')[0] ?? 'there');
+
+  const hour = new Date().getUTCHours();
+  const timeGreeting =
+    hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+
+  // Shared schedule card factory (used in both mobile + desktop branches)
+  const scheduleCards = schedules.map((s) => (
+    <SchedulingCard
+      key={s.id}
+      visit={{
+        scheduleId: s.id,
+        patientId: s.patient.id,
+        patientName: `${s.patient.lastName}, ${s.patient.firstName}`,
+        mrn: s.patient.mrn,
+        scheduledStart: s.scheduledStart.toISOString(),
+        scheduledEnd: s.scheduledEnd.toISOString(),
+        visitType: s.visitType,
+        status: s.status,
+        hasEncounter: !!s.encounter,
+        encounterNoteId: s.encounter?.notes[0]?.id ?? null,
+        scheduleEpisodeOfCareId: s.episodeOfCareId,
+        activeEpisodes: s.patient.episodes.map((ep) => ({
+          id: ep.id,
+          diagnosis: ep.diagnosis,
+          bodyPart: ep.bodyPart,
+          division: ep.division,
+          lastVisitAt: null,
+          visitCount: ep.visitsCompleted,
+        })),
+      }}
+    />
+  ));
+
+  // Shared draft rows (used in both branches)
+  const draftRows = drafts.map((d) => (
+    <Link
+      key={d.id}
+      href={`/review/${d.id}`}
+      className="flex items-center justify-between rounded-md border border-border px-3 py-2 hover:bg-muted/40 min-h-[var(--touch-min)]"
+    >
+      <div className="flex items-center gap-2 text-sm">
+        <UserAvatar
+          firstName={d.patient.firstName}
+          lastName={d.patient.lastName}
+          size="sm"
+        />
+        <span className="font-medium">
+          {d.patient.lastName}, {d.patient.firstName}
+        </span>
+        <span className="text-muted-foreground text-xs">{d.patient.mrn}</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <StatusBadge variant="neutral" noIcon className="text-[10px]">
+          {d.status}
+        </StatusBadge>
+        <span className="text-[11px] text-muted-foreground">
+          {d.updatedAt.toLocaleDateString()}
+        </span>
+      </div>
+    </Link>
+  ));
+
+  // Shared follow-up rows
+  const followupRows = followups.map((f) => (
+    <Link
+      key={f.id}
+      href={`/patients/${f.patient.id}`}
+      className="flex items-start gap-3 rounded-md border border-border px-3 py-2 hover:bg-muted/40 min-h-[var(--touch-min)]"
+    >
+      <UserAvatar
+        firstName={f.patient.firstName}
+        lastName={f.patient.lastName}
+        size="sm"
+        className="mt-0.5"
+      />
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-sm font-medium">
+            {f.patient.lastName}, {f.patient.firstName}
+          </span>
+          <span className="text-[11px] text-muted-foreground shrink-0">{f.patient.mrn}</span>
+        </div>
+        <p className="text-xs text-muted-foreground line-clamp-2">{f.text}</p>
+      </div>
+    </Link>
+  ));
+
+  // Shared site pill row
+  const sitePillRow = showSitePillRow ? (
+    <div className="flex flex-wrap items-center gap-2 overflow-x-auto" role="tablist" aria-label="Filter by site">
+      <Link
+        href="/home"
+        role="tab"
+        aria-selected={selectedSiteId === null}
+        className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs transition-colors min-h-[var(--touch-min)] whitespace-nowrap ${
+          selectedSiteId === null
+            ? 'border-primary bg-primary/10 text-primary'
+            : 'border-border text-muted-foreground hover:bg-muted/40'
+        }`}
+      >
+        All my sites
+      </Link>
+      {mySites.map((site) => (
+        <Link
+          key={site.id}
+          href={`/home?siteId=${encodeURIComponent(site.id)}`}
+          role="tab"
+          aria-selected={selectedSiteId === site.id}
+          className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs transition-colors min-h-[var(--touch-min)] whitespace-nowrap ${
+            selectedSiteId === site.id
+              ? 'border-primary bg-primary/10 text-primary'
+              : 'border-border text-muted-foreground hover:bg-muted/40'
+          }`}
+        >
+          {site.name}
+        </Link>
+      ))}
+    </div>
+  ) : null;
+
+  return (
+    <>
+      {/* ── MOBILE COCKPIT ──────────────────────────────────────────── */}
+      {/* Shown at < lg. Patient search and primary CTAs are above the
+          fold so clinicians can act immediately without scrolling. */}
+      <div className="lg:hidden flex flex-col min-h-[calc(100dvh-52px)]">
+
+        {/* 0. Greeting strip — flows visually from the teal header above */}
+        <div className="bg-gradient-to-b from-primary/90 to-primary/75 px-4 py-3 flex items-start justify-between gap-3">
+          <div>
+            <p className="text-primary-foreground font-semibold text-base leading-tight">
+              {timeGreeting}, {displayFirst}
+            </p>
+            {orgName && (
+              <p className="text-primary-foreground/80 text-xs mt-0.5">{orgName}</p>
             )}
           </div>
-        </CardContent>
-      </Card>
+          <p className="text-primary-foreground/70 text-xs shrink-0 text-right">{dateLabel}</p>
+        </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-md">Schedule</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {showSitePillRow && (
-            <div className="flex flex-wrap items-center gap-2" role="tablist" aria-label="Filter schedule by site">
-              <Link
-                href="/home"
-                role="tab"
-                aria-selected={selectedSiteId === null}
-                className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs transition-colors min-h-[var(--touch-min)] ${
-                  selectedSiteId === null
-                    ? 'border-primary bg-primary/10 text-primary'
-                    : 'border-border text-muted-foreground hover:bg-muted/40'
-                }`}
-              >
-                All my sites
+        {/* 1. Patient search — ABOVE FOLD */}
+        <section className="px-4 pt-4 pb-3 border-b border-border bg-card">
+          <HomeSearchForm />
+        </section>
+
+        {/* 2. Primary action CTAs — ABOVE FOLD */}
+        <section className="px-4 py-3 flex gap-2 border-b border-border bg-card">
+          <Button asChild className="flex-1 gap-2" size="sm">
+            <Link href="/patients">
+              <Mic className="h-4 w-4" aria-hidden />
+              Start Encounter
+            </Link>
+          </Button>
+          {drafts.length > 0 && drafts[0] && (
+            <Button asChild variant="outline" className="flex-1 gap-2" size="sm">
+              <Link href={`/review/${drafts[0].id}`}>
+                <FileEdit className="h-4 w-4" aria-hidden />
+                Resume Draft
               </Link>
-              {mySites.map((site) => (
-                <Link
-                  key={site.id}
-                  href={`/home?siteId=${encodeURIComponent(site.id)}`}
-                  role="tab"
-                  aria-selected={selectedSiteId === site.id}
-                  className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs transition-colors min-h-[var(--touch-min)] ${
-                    selectedSiteId === site.id
-                      ? 'border-primary bg-primary/10 text-primary'
-                      : 'border-border text-muted-foreground hover:bg-muted/40'
-                  }`}
-                >
-                  {site.name}
-                </Link>
-              ))}
-            </div>
+            </Button>
           )}
+          {drafts.length === 0 && (
+            <Button asChild variant="outline" className="flex-1 gap-2" size="sm">
+              <Link href="/patients">
+                <Stethoscope className="h-4 w-4" aria-hidden />
+                All Patients
+              </Link>
+            </Button>
+          )}
+        </section>
+
+        {/* 3. Status tiles — ABOVE FOLD */}
+        <section className="px-4 py-3 border-b border-border">
+          <div className="rounded-xl border border-border bg-card shadow-sm overflow-hidden">
+            <TodayStatusTiles
+              visits={schedules.length}
+              drafts={drafts.length}
+              followups={followups.length}
+            />
+          </div>
+        </section>
+
+        {/* 4. Site filter pills (only when multi-site) */}
+        {showSitePillRow && (
+          <section className="px-4 py-2 border-b border-border overflow-x-auto">
+            {sitePillRow}
+          </section>
+        )}
+
+        {/* 5. Today's queue */}
+        <section id="schedule" className="px-4 py-4 space-y-3">
+          <h2 className="text-xs uppercase tracking-wide text-muted-foreground font-medium">
+            Today&apos;s queue
+          </h2>
           {schedules.length === 0 ? (
             <p className="text-sm text-muted-foreground">No visits scheduled for today.</p>
           ) : (
-            schedules.map((s) => (
-              <SchedulingCard
-                key={s.id}
-                visit={{
-                  scheduleId: s.id,
-                  patientId: s.patient.id,
-                  patientName: `${s.patient.lastName}, ${s.patient.firstName}`,
-                  mrn: s.patient.mrn,
-                  scheduledStart: s.scheduledStart.toISOString(),
-                  scheduledEnd: s.scheduledEnd.toISOString(),
-                  visitType: s.visitType,
-                  status: s.status,
-                  hasEncounter: !!s.encounter,
-                  encounterNoteId: s.encounter?.notes[0]?.id ?? null,
-                  scheduleEpisodeOfCareId: s.episodeOfCareId,
-                  activeEpisodes: s.patient.episodes.map((ep) => ({
-                    id: ep.id,
-                    diagnosis: ep.diagnosis,
-                    bodyPart: ep.bodyPart,
-                    division: ep.division,
-                    // Visit count + last-visit-at are extra DB hops per episode;
-                    // for the home-screen picker we ship visit-count only
-                    // (cheap, already on the episode row) and skip last-visit
-                    // to keep the home page fast. The dialog renders cleanly
-                    // with lastVisitAt=null.
-                    lastVisitAt: null,
-                    visitCount: ep.visitsCompleted,
-                  })),
-                }}
-              />
-            ))
+            <div className="space-y-3">{scheduleCards}</div>
           )}
-        </CardContent>
-      </Card>
+        </section>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-md">Find a patient</CardTitle>
-        </CardHeader>
-        <CardContent>
+        {/* 6. Drafts */}
+        {drafts.length > 0 && (
+          <section id="drafts" className="px-4 pb-4 space-y-2">
+            <h2 className="text-xs uppercase tracking-wide text-muted-foreground font-medium flex items-center gap-2">
+              Drafts
+              <StatusBadge variant="info" noIcon className="text-[10px]">{drafts.length}</StatusBadge>
+            </h2>
+            <div className="space-y-1">{draftRows}</div>
+          </section>
+        )}
+
+        {/* 7. Open follow-ups */}
+        {followups.length > 0 && (
+          <section id="followups" className="px-4 pb-4 space-y-2">
+            <h2 className="text-xs uppercase tracking-wide text-muted-foreground font-medium flex items-center gap-2">
+              Open follow-ups
+              <StatusBadge variant="info" noIcon className="text-[10px]">{followups.length}</StatusBadge>
+            </h2>
+            <div className="space-y-1">{followupRows}</div>
+          </section>
+        )}
+
+        {/* 8. AI command strip */}
+        <div className="mt-auto">
+          <AiCommandPanel variant="mobile" />
+        </div>
+      </div>
+
+      {/* ── DESKTOP COMMAND CENTER ──────────────────────────────────── */}
+      {/* Three-column grid: left sidebar | center workspace | right AI panel */}
+      <div className="hidden lg:grid lg:grid-cols-[240px_1fr_320px] min-h-[calc(100dvh-52px)]">
+
+        {/* LEFT SIDEBAR — navigation + primary CTA */}
+        <aside className="border-r border-border flex flex-col gap-1 px-3 py-5 overflow-y-auto">
+          <Button asChild className="w-full justify-start gap-2 mb-3">
+            <Link href="/patients">
+              <Mic className="h-4 w-4" aria-hidden />
+              Start Encounter
+            </Link>
+          </Button>
+
+          <SidebarLink href="/home" Icon={Sparkles} label="Home" active />
+          <SidebarLink href="/patients" Icon={Stethoscope} label="Patients" />
+
+          {(isAdmin || isOwner || isOps) && (
+            <div className="mt-3 mb-1">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground px-2 pb-1">
+                Console
+              </p>
+              {isAdmin && (
+                <>
+                  <SidebarLink href="/admin/users" Icon={ShieldCheck} label="Team members" />
+                  <SidebarLink href="/admin/templates" Icon={FileText} label="Templates" />
+                </>
+              )}
+              {isOwner && (
+                <SidebarLink href="/owner/orgs" Icon={Sparkles} label="Owner console" />
+              )}
+              {isOps && (
+                <SidebarLink href="/ops" Icon={Wrench} label="Ops dashboard" />
+              )}
+            </div>
+          )}
+
+          {/* Spacer pushes org/date block to the bottom */}
+          <div className="flex-1" />
+          <div className="px-2 py-2 text-xs text-muted-foreground space-y-0.5 border-t border-border mt-2 pt-3">
+            {orgName && (
+              <p className="font-semibold text-foreground text-[11px] truncate">{orgName}</p>
+            )}
+            <p className="font-medium text-[11px]">
+              {dayStart.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}
+            </p>
+            {mySites[0] && (
+              <p className="truncate">{mySites[0].name}</p>
+            )}
+          </div>
+        </aside>
+
+        {/* CENTER WORKSPACE */}
+        <main className="px-6 py-6 overflow-y-auto space-y-6">
+          <div className="flex flex-col gap-0.5">
+            <h1 className="text-2lg font-semibold">
+              {timeGreeting}, {displayFirst}
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              {dateLabel}
+              {orgName && <> · <span className="font-medium text-foreground">{orgName}</span></>}
+            </p>
+            <p className="text-xs text-muted-foreground">{session.user.email}</p>
+          </div>
+
+          {/* Patient search */}
           <HomeSearchForm />
-        </CardContent>
-      </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-md flex items-center gap-2">
-            <FileEdit className="h-4 w-4 text-muted-foreground" aria-hidden />
-            Drafts
-            {drafts.length > 0 && (
-              <StatusBadge variant="info" noIcon className="text-[10px]">
-                {drafts.length}
-              </StatusBadge>
-            )}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-2">
-          {drafts.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No drafts waiting — finalize a recording on{' '}
-              <Link href="/patients" className="underline hover:text-foreground">
-                a patient
-              </Link>{' '}
-              to start one.
-            </p>
-          ) : (
-            drafts.map((d) => (
-              <Link
-                key={d.id}
-                href={`/review/${d.id}`}
-                className="flex items-center justify-between rounded-md border border-border px-3 py-2 hover:bg-muted/40"
-              >
-                <div className="flex items-center gap-2 text-sm">
-                  <Sparkles className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
-                  <span className="font-medium">
-                    {d.patient.lastName}, {d.patient.firstName}
-                  </span>
-                  <span className="text-muted-foreground text-xs">{d.patient.mrn}</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <StatusBadge variant="neutral" noIcon className="text-[10px]">
-                    {d.status}
+          {/* Status tiles */}
+          <TodayStatusTiles
+            visits={schedules.length}
+            drafts={drafts.length}
+            followups={followups.length}
+          />
+
+          {/* Site filter pills */}
+          {showSitePillRow && sitePillRow}
+
+          {/* Schedule */}
+          <Card id="schedule">
+            <CardHeader>
+              <CardTitle className="text-md">Schedule</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {schedules.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No visits scheduled for today.</p>
+              ) : (
+                scheduleCards
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Drafts */}
+          <Card id="drafts">
+            <CardHeader>
+              <CardTitle className="text-md flex items-center gap-2">
+                <FileEdit className="h-4 w-4 text-muted-foreground" aria-hidden />
+                Drafts
+                {drafts.length > 0 && (
+                  <StatusBadge variant="info" noIcon className="text-[10px]">
+                    {drafts.length}
                   </StatusBadge>
-                  <span className="text-[11px] text-muted-foreground">
-                    {d.updatedAt.toLocaleDateString()}
-                  </span>
-                </div>
-              </Link>
-            ))
-          )}
-        </CardContent>
-      </Card>
+                )}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {drafts.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No drafts waiting — finalize a recording on{' '}
+                  <Link href="/patients" className="underline hover:text-foreground">
+                    a patient
+                  </Link>{' '}
+                  to start one.
+                </p>
+              ) : (
+                draftRows
+              )}
+            </CardContent>
+          </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-md flex items-center gap-2">
-            <Stethoscope className="h-4 w-4 text-muted-foreground" aria-hidden />
-            Open follow-ups
-            {followups.length > 0 && (
-              <StatusBadge variant="info" noIcon className="text-[10px]">
-                {followups.length}
-              </StatusBadge>
-            )}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-2">
-          {followups.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No open follow-ups assigned to you.
-            </p>
-          ) : (
-            followups.map((f) => (
-              <Link
-                key={f.id}
-                href={`/patients/${f.patient.id}`}
-                className="flex flex-col gap-1 rounded-md border border-border px-3 py-2 hover:bg-muted/40"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-sm font-medium">
-                    {f.patient.lastName}, {f.patient.firstName}
-                  </span>
-                  <span className="text-[11px] text-muted-foreground">
-                    {f.patient.mrn}
-                  </span>
-                </div>
-                <p className="text-xs text-muted-foreground line-clamp-2">{f.text}</p>
-              </Link>
-            ))
-          )}
-        </CardContent>
-      </Card>
-    </div>
+          {/* Open follow-ups */}
+          <Card id="followups">
+            <CardHeader>
+              <CardTitle className="text-md flex items-center gap-2">
+                <Stethoscope className="h-4 w-4 text-muted-foreground" aria-hidden />
+                Open follow-ups
+                {followups.length > 0 && (
+                  <StatusBadge variant="info" noIcon className="text-[10px]">
+                    {followups.length}
+                  </StatusBadge>
+                )}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {followups.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No open follow-ups assigned to you.
+                </p>
+              ) : (
+                followupRows
+              )}
+            </CardContent>
+          </Card>
+        </main>
+
+        {/* RIGHT AI PANEL */}
+        <aside className="border-l border-border px-4 py-6 overflow-y-auto">
+          <AiCommandPanel variant="desktop" />
+        </aside>
+      </div>
+    </>
   );
 }
 
-function QuickActionLink({
+function SidebarLink({
   href,
   Icon,
   label,
-  hint,
+  active = false,
 }: {
   href: string;
   Icon: typeof Stethoscope;
   label: string;
-  hint: string;
+  active?: boolean;
 }) {
   return (
     <Link
       href={href}
-      className="flex flex-col gap-1 rounded-md border border-border bg-card p-3 hover:bg-muted/40 hover:border-foreground/30 transition-colors min-h-[var(--touch-min)]"
+      aria-current={active ? 'page' : undefined}
+      className={`flex items-center gap-2 rounded-md px-2 py-2 text-sm transition-colors min-h-[var(--touch-min)] ${
+        active
+          ? 'bg-muted text-foreground font-medium'
+          : 'text-muted-foreground hover:text-foreground hover:bg-muted/60'
+      }`}
     >
-      <div className="flex items-center gap-2 text-sm font-medium">
-        <Icon className="h-3.5 w-3.5 text-primary" aria-hidden />
-        {label}
-      </div>
-      <p className="text-[11px] text-muted-foreground">{hint}</p>
+      <Icon className="h-4 w-4 shrink-0" aria-hidden />
+      {label}
     </Link>
   );
 }

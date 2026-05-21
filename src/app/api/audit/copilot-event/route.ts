@@ -7,7 +7,7 @@ import type { AuditAction } from '@/lib/audit/actions';
 
 export const runtime = 'nodejs';
 
-const SURFACES = ['prepare', 'capture', 'review', 'telehealth-room'] as const;
+const SURFACES = ['prepare', 'capture', 'review', 'telehealth-room', 'visit'] as const;
 // Client-side fire-and-forget audit ingress. Each action is shape-locked
 // here at the route boundary so PHI can't be smuggled through the
 // metadata fields. Adding new actions: extend this allowlist AND update
