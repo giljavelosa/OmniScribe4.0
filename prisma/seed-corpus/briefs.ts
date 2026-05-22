@@ -1,4 +1,4 @@
-import type { PriorContextBriefContent } from '../src/types/brief';
+import type { PriorContextBriefContent } from '../../src/types/brief';
 
 type BriefInput = {
   patientId: string;
