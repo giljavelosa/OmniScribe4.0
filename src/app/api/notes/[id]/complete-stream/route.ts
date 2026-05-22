@@ -95,19 +95,24 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   let byteSize = 0;
 
   if (!audioMissing && audioBlob) {
-    // Generate the segment id up-front so the S3 key + the DB row line up.
+    // Generate the segment id up-front so the S3 key + the DB row align.
     const segmentId = `seg-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
     s3Key = audioKeyFor(noteId, segmentId);
 
     const bytes = Buffer.from(await audioBlob.arrayBuffer());
-    await putAudio({ key: s3Key, body: bytes, contentType: audioBlob.type || 'audio/wav' });
     byteSize = bytes.byteLength;
     // Rough duration estimate: WAV header (44 bytes) stripped, 2 bytes/sample.
     durationMs = Math.round((Math.max(0, bytes.byteLength - WAV_HEADER_BYTES) / 2 / sampleRate) * 1000);
+    const mimeType = audioBlob.type || 'audio/wav';
 
+    // Write the DB row FIRST so that if S3 upload fails we have a soft-deletable
+    // record to clean up. Orphan risk is minimized: a failed S3 put leaves a
+    // DB row with isDeleted=false that ops can soft-delete; the reverse order
+    // (S3 first, DB second) leaves an unreachable S3 object — Rule 7 forbids
+    // hard-deleting audio so those objects accumulate forever.
     await prisma.$transaction([
       prisma.audioSegment.create({
-        data: { id: segmentId, noteId, segmentIndex: 0, s3Key, durationMs, sampleRate, byteSize },
+        data: { id: segmentId, noteId, segmentIndex: 0, s3Key, durationMs, sampleRate, byteSize, mimeType },
       }),
       prisma.note.update({
         where: { id: noteId },
@@ -118,6 +123,22 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         },
       }),
     ]);
+
+    // Upload after the DB commit. On S3 failure, soft-delete the segment row so
+    // the missing object doesn't confuse the transcription worker, then surface
+    // the error to the browser so the clinician can retry.
+    try {
+      await putAudio({ key: s3Key, body: bytes, contentType: mimeType });
+    } catch (s3Err) {
+      await prisma.audioSegment.update({
+        where: { id: segmentId },
+        data: { isDeleted: true, deletedAt: new Date() },
+      }).catch(() => {}); // best-effort; don't shadow the S3 error
+      throw new Error(
+        `Audio upload failed: ${s3Err instanceof Error ? s3Err.message : String(s3Err)}. ` +
+        'Your recording data is safe — please try again.',
+      );
+    }
   } else {
     // Dev transcript-only path — no S3 upload, no AudioSegment row. The
     // finalize-realtime-transcript worker job works off transcriptRaw, so

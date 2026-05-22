@@ -37,7 +37,7 @@ export default async function CapturePage({ params }: { params: Promise<{ noteId
     where: { id: noteId, orgId: session.user.orgId },
     include: {
       patient: { select: { id: true, firstName: true, lastName: true, mrn: true } },
-      encounter: { select: { episodeOfCareId: true } },
+      encounter: { select: { episodeOfCareId: true, siteId: true } },
     },
   });
   if (!note) notFound();
@@ -105,15 +105,22 @@ export default async function CapturePage({ params }: { params: Promise<{ noteId
     },
   }));
 
+  const siteName = note.encounter?.siteId
+    ? (await prisma.site.findFirst({
+        where: { id: note.encounter.siteId },
+        select: { name: true },
+      }))?.name ?? null
+    : null;
   const patientHeader = (
     <div className="min-w-0">
       <h1 className="text-md font-semibold truncate">
         {note.patient.lastName}, {note.patient.firstName}
       </h1>
       <p className="text-xs text-muted-foreground font-mono">{note.patient.mrn}</p>
-      <div className="mt-1 flex items-center gap-2">
+      <div className="mt-1 flex items-center gap-2 flex-wrap">
         <StatusBadge variant="neutral" noIcon>{note.division}</StatusBadge>
         <StatusBadge variant="neutral" noIcon>{note.captureMode}</StatusBadge>
+        {siteName && <StatusBadge variant="neutral" noIcon>{siteName}</StatusBadge>}
       </div>
     </div>
   );
@@ -129,6 +136,13 @@ export default async function CapturePage({ params }: { params: Promise<{ noteId
     />
   ) : null;
 
+  // Autostart the mic when the clinician arrives at /capture for a brand-new
+  // LIVE note (status PREPARING). This is the "Record now" optimization: home
+  // schedule card → /capture → 1.5s countdown → recording. Resume / paused
+  // states skip the countdown — the clinician is mid-visit and shouldn't be
+  // surprised by a re-start.
+  const autostart = note.captureMode === 'LIVE' && note.status === 'PREPARING';
+
   return (
     <CaptureStateProvider noteId={note.id}>
       <DesktopCaptureLayout
@@ -143,6 +157,7 @@ export default async function CapturePage({ params }: { params: Promise<{ noteId
         nowMs={nowMs}
         hasPriorSignedNote={hasPriorSignedNote}
         fhirContext={fhirContext}
+        autostart={autostart}
       />
       <MobileCaptureLayout
         noteId={note.id}
@@ -156,8 +171,15 @@ export default async function CapturePage({ params }: { params: Promise<{ noteId
         nowMs={nowMs}
         hasPriorSignedNote={hasPriorSignedNote}
         fhirContext={fhirContext}
+        autostart={autostart}
       />
-      <CopilotShell surface="capture" noteId={note.id} patientId={note.patient.id} />
+      <CopilotShell
+        surface="capture"
+        noteId={note.id}
+        patientId={note.patient.id}
+        clinicianName={session.user.name ?? null}
+        patientFirstName={note.patient.firstName}
+      />
     </CaptureStateProvider>
   );
 }

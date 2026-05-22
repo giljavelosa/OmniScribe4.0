@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, Mic } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -78,10 +78,11 @@ export function StartVisitButton({ patientId, activeEpisodes, sites, defaultSite
       <div className="inline-flex items-stretch rounded-md shadow-sm">
         <Button
           onClick={openNormal}
-          className="rounded-r-none"
+          className="rounded-r-none gap-2"
           aria-label="Start visit"
         >
-          Start visit (ad-hoc)
+          <Mic className="h-3.5 w-3.5" aria-hidden />
+          Start visit
         </Button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

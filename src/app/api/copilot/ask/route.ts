@@ -6,6 +6,7 @@ import { requireFeatureAccess } from '@/lib/authz/server';
 import { writeAuditLog } from '@/lib/audit/log';
 import { assertOrgScoped } from '@/lib/phi-access';
 import { runAgent, type AgentTurn } from '@/services/copilot/agent';
+import { PERSONA_VERSION } from '@/services/copilot/persona';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -161,6 +162,8 @@ export async function POST(req: Request) {
       toolCallCount: result.toolCalls.length,
       draftCount: result.drafts.length,
       reasoningStepCount: result.reasoningSteps.length,
+      // Unit 42 — auditor-queryable persona version stamp. PHI-free.
+      personaVersion: PERSONA_VERSION,
     },
   });
 

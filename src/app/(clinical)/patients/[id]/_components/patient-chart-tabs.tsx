@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import type { PatientSex } from '@prisma/client';
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -8,17 +8,25 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { StatusBanner } from '@/components/ui/status-banner';
 import { UserAvatar } from '@/components/ui/user-avatar';
-import { PatientIdentityHeader } from '@/components/patients/patient-identity-header';
-import { PatientSnapshotStrip } from '@/components/patients/snapshot-strip';
 import { VisitHistoryList } from '@/components/patients/visit-history-list';
 import { InlineDemographics } from '@/components/patients/inline-demographics';
 import type { VisitHistoryRow } from '@/components/patients/visit-history-list';
 import type { PatientSnapshotStrip as PatientSnapshotStripData } from '@/lib/snapshots/types';
-import { ExternalContextSection } from './external-context-section';
 import type { ExternalContextSummary } from './external-context-section';
 import { EpisodesPanel } from './episodes-panel';
 import { StartVisitButton } from './start-visit-button';
 import type { StartVisitDialogEpisode, StartVisitDialogSite } from './start-visit-dialog';
+import { SafetyBand } from './safety-band';
+import type { ProblemRow } from './safety-band';
+import { CockpitTile } from './cockpit-tile';
+import { ChartDetailSheet } from './chart-detail-sheet';
+import { FollowUpsSheet } from './follow-ups-sheet';
+import type { FollowUpSummary } from './follow-ups-sheet';
+import { LastVisitSheet } from './last-visit-sheet';
+import { SnapshotDetailSheet } from './snapshot-detail-sheet';
+import { PriorRecordsSheet } from './prior-records-sheet';
+import { ProblemsSheet } from './problems-sheet';
+import { SnapshotInlineStrip } from './snapshot-inline-strip';
 
 // ---------------------------------------------------------------------------
 // Local prop types — mirror the Prisma shapes but with ISO strings so the
@@ -58,6 +66,14 @@ type CoverageData = {
   status: string;
 };
 
+type GoalProgressEntryData = {
+  id: string;
+  measureValue: string | null;
+  statusAtEntry: string | null;
+  deltaNote: string | null;
+  recordedAt: string; // ISO
+};
+
 type EpisodeGoalData = {
   id: string;
   goalType: 'STG' | 'LTG';
@@ -65,6 +81,7 @@ type EpisodeGoalData = {
   status: 'ACTIVE' | 'MET' | 'NOT_MET' | 'MODIFIED' | 'DISCONTINUED' | 'PARTIALLY_MET';
   currentMeasure: string | null;
   targetMeasure: string | null;
+  progressEntries: GoalProgressEntryData[];
 };
 
 type EpisodeData = {
@@ -91,11 +108,14 @@ type Props = {
   snapshotStrip: PatientSnapshotStripData | null;
   episodesForPanel: EpisodeData[];
   externalContextItems: ExternalContextSummary[];
-  episodeChoicesForAdd: { id: string; label: string }[];
   visits: VisitHistoryRow[];
+  followUps: FollowUpSummary[];
   activeEpisodesForPicker: StartVisitDialogEpisode[];
   startVisitSites: StartVisitDialogSite[];
   startVisitDefaultSiteId: string | null;
+  /** False when the caller's role is VIEWER — hides edit controls in
+   *  GoalsSection / GoalRow to prevent the 403-on-save UX trap. */
+  canEditEpisodes: boolean;
   /** EhrLinkPanel is a Server Component — passed as rendered ReactNode so it
    *  can live in the Profile tab without breaking the client boundary. */
   ehrPanel: React.ReactNode;
@@ -116,18 +136,36 @@ function computeAge(dobIso: string): string {
   return `${age}y`;
 }
 
+function formatRelativeDate(iso: string | null): string {
+  if (!iso) return '';
+  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
+  if (days === 0) return 'Today';
+  if (days === 1) return 'Yesterday';
+  if (days < 7) return `${days}d ago`;
+  if (days < 30) return `${Math.round(days / 7)}w ago`;
+  if (days < 365) return `${Math.round(days / 30)}mo ago`;
+  return `${Math.round(days / 365)}y ago`;
+}
+
+type OpenSheet =
+  | 'snapshot'
+  | 'medications'
+  | 'followUps'
+  | 'lastVisit'
+  | 'priorRecords'
+  | 'problems'
+  | null;
+
 /**
- * PatientChartTabs — Sprint 0.8 chart modernisation.
+ * PatientChartTabs — Sprint 0.9 + 0.10 chart.
  *
- * Converts the old long stacked chart into a tabbed layout with a sticky
- * patient-anchor mini-header so the patient name + Start visit button are
- * always reachable while the clinician drills into any tab section.
+ * Sticky header: identity anchor (row 1) + compact stat strip (row 1.5) +
+ * Safety Band with allergies + active problems (row 2).
  *
- * Four tabs:
- *   Overview  — identity, visit-division summary, snapshot strip, prior context
- *   Episodes  — episodes of care + goal management
- *   Visits    — full signed visit history (by episode / clinician / division / chrono)
- *   Profile   — demographics, EHR link, addresses + coverage
+ * Overview cockpit (Option D): promoted Snapshot inline row showing actual
+ * measure values + trend arrows, followed by a clean 2×2 tile grid for
+ * Medications / Open follow-ups / Last visit / Prior records. Every tile
+ * and the snapshot row open a right-side ChartDetailSheet drill-down.
  */
 export function PatientChartTabs({
   patient,
@@ -137,15 +175,17 @@ export function PatientChartTabs({
   snapshotStrip,
   episodesForPanel,
   externalContextItems,
-  episodeChoicesForAdd,
   visits,
+  followUps,
   activeEpisodesForPicker,
   startVisitSites,
   startVisitDefaultSiteId,
+  canEditEpisodes,
   ehrPanel,
 }: Props) {
   const age = computeAge(patient.dobIso);
   const totalVisits = visits.length;
+  const [openSheet, setOpenSheet] = useState<OpenSheet>(null);
 
   const visitsByDivision = visits.reduce<Record<string, number>>((acc, v) => {
     acc[v.division] = (acc[v.division] ?? 0) + 1;
@@ -157,201 +197,373 @@ export function PatientChartTabs({
     0,
   );
 
-  const activeEpisodeCount = episodesForPanel.filter(
-    (ep) => ep.status === 'ACTIVE' || ep.status === 'RECERT_DUE',
+  // Sprint 0.10 — Episodes tab is only shown when the patient has at least one
+  // REHAB episode. Recert cycles, visit authorizations, and STG/LTG goals are
+  // Rehab / therapy plan-of-care constructs. Medical + BH episodes continue to
+  // exist in the data and feed AI prompts, the brief, and the Safety Band, but
+  // they have no dedicated tab UI until a future wave.
+  const hasRehabEpisode = episodesForPanel.some((ep) => ep.division === 'REHAB');
+  const activeRehabEpisodeCount = episodesForPanel.filter(
+    (ep) => ep.division === 'REHAB' && (ep.status === 'ACTIVE' || ep.status === 'RECERT_DUE'),
   ).length;
 
-  // PatientIdentityHeader expects the Prisma Patient shape with dob as Date.
-  const patientForHeader = {
-    firstName: patient.firstName,
-    lastName: patient.lastName,
-    mrn: patient.mrn,
-    dob: new Date(patient.dobIso),
-    sex: patient.sex,
-    preferredLanguage: patient.preferredLanguage,
-    isDeleted: patient.isDeleted,
-  };
+  // Derive active problems (unique labels) from ACTIVE + RECERT_DUE episodes
+  // for the SafetyBand and ProblemsSheet.
+  const activeProblems: ProblemRow[] = Array.from(
+    new Map(
+      episodesForPanel
+        .filter((ep) => ep.status === 'ACTIVE' || ep.status === 'RECERT_DUE')
+        .map((ep) => {
+          const label = ep.bodyPart ? `${ep.diagnosis} (${ep.bodyPart})` : ep.diagnosis;
+          return [label, { id: ep.id, label }] as [string, ProblemRow];
+        }),
+    ).values(),
+  );
+
+  // Cockpit tile headlines
+  const measureCount = snapshotStrip?.measures.length ?? 0;
+  const snapshotHeadline =
+    measureCount > 0
+      ? `${measureCount} measure${measureCount === 1 ? '' : 's'}`
+      : 'No measures yet';
+
+  const openFollowUpCount = followUps.filter((f) => f.status === 'OPEN').length;
+  const followUpsHeadline =
+    openFollowUpCount > 0 ? `Open follow-ups (${openFollowUpCount})` : 'None open';
+
+  const lastVisit = visits[0] ?? null;
+  const lastVisitHeadline = lastVisit
+    ? `${formatRelativeDate(lastVisit.signedAt)}${lastVisit.templateName ? ` — ${lastVisit.templateName}` : ''}`
+    : 'No visits yet';
+
+  const priorRecordsHeadline =
+    externalContextItems.length > 0
+      ? `Prior records (${externalContextItems.length})`
+      : 'None on file';
+
+  function closeSheet() {
+    setOpenSheet(null);
+  }
 
   return (
-    <div>
-      {/* ── Sticky mini-header ──────────────────────────────────────────────
-          Sticks to the top of the viewport as the user scrolls into any tab.
-          Keeps patient identity + Start visit accessible without scrolling back. */}
-      <div className="sticky top-0 z-30 bg-background/95 backdrop-blur-sm border-b shadow-sm">
-        <div className="mx-auto max-w-6xl px-4 py-3 flex items-center gap-3 flex-wrap">
-          {/* Patient identity anchor */}
-          <div className="flex items-center gap-2 flex-1 min-w-0">
-            <UserAvatar
-              firstName={patient.firstName}
-              lastName={patient.lastName}
-              size="sm"
-              className="shrink-0"
-            />
-            <div className="flex items-center gap-2 flex-wrap min-w-0">
-              <span className="font-semibold leading-tight truncate">
-                {patient.firstName} {patient.lastName}
-              </span>
-              <StatusBadge variant="neutral" noIcon>
-                {patient.sex} · {age}
-              </StatusBadge>
-              {patient.mrn && (
-                <span className="hidden sm:inline text-xs text-muted-foreground font-mono">
-                  MRN {patient.mrn}
-                </span>
-              )}
-              {/* Active divisions — hidden on small screens to avoid overflow */}
-              {activeStripEntries.map((d) => (
-                <StatusBadge key={d.key} variant="neutral" noIcon className="hidden lg:inline-flex">
-                  {d.label}
-                </StatusBadge>
-              ))}
+    <>
+      <div>
+        {/* ── Sticky mini-header ──────────────────────────────────────────────
+            Tier 1: identity anchor + Start Visit button (row 1).
+            Tier 1: Safety Band — allergies + active problems (row 2). */}
+        <div className="sticky top-0 z-30 bg-background/95 backdrop-blur-sm border-b shadow-sm">
+          <div className="mx-auto max-w-6xl px-4 pt-3 pb-1">
+            {/* Row 1: patient identity + action */}
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="flex items-center gap-2 flex-1 min-w-0">
+                <UserAvatar
+                  firstName={patient.firstName}
+                  lastName={patient.lastName}
+                  size="sm"
+                  className="shrink-0"
+                />
+                <div className="flex items-center gap-2 flex-wrap min-w-0">
+                  <span className="font-semibold leading-tight truncate">
+                    {patient.firstName} {patient.lastName}
+                  </span>
+                  <StatusBadge variant="neutral" noIcon>
+                    {patient.sex} · {age}
+                  </StatusBadge>
+                  {patient.mrn && (
+                    <span className="hidden sm:inline text-xs text-muted-foreground font-mono">
+                      MRN {patient.mrn}
+                    </span>
+                  )}
+                  {activeStripEntries.map((d) => (
+                    <StatusBadge key={d.key} variant="neutral" noIcon className="hidden lg:inline-flex">
+                      {d.label}
+                    </StatusBadge>
+                  ))}
+                </div>
+              </div>
+              <StartVisitButton
+                patientId={patient.id}
+                activeEpisodes={activeEpisodesForPicker}
+                sites={startVisitSites}
+                defaultSiteId={startVisitDefaultSiteId}
+              />
             </div>
-          </div>
 
-          {/* Start visit — always reachable */}
-          <StartVisitButton
-            patientId={patient.id}
-            activeEpisodes={activeEpisodesForPicker}
-            sites={startVisitSites}
-            defaultSiteId={startVisitDefaultSiteId}
-          />
+            {/* Row 1.5: Compact stat strip — non-zero values only, so it
+                collapses cleanly for patients with no history yet. Order
+                prioritizes the most clinically actionable signal first
+                (open follow-ups) over reference counts (total visits). */}
+            {(() => {
+              const stats: Array<{ key: string; n: number; one: string; many: string }> = [];
+              if (openFollowUpCount > 0) {
+                stats.push({
+                  key: 'fu',
+                  n: openFollowUpCount,
+                  one: 'open follow-up',
+                  many: 'open follow-ups',
+                });
+              }
+              if (hasRehabEpisode && activeRehabEpisodeCount > 0) {
+                stats.push({
+                  key: 'ep',
+                  n: activeRehabEpisodeCount,
+                  one: 'active episode',
+                  many: 'active episodes',
+                });
+              }
+              if (totalVisits > 0) {
+                stats.push({
+                  key: 'v',
+                  n: totalVisits,
+                  one: 'visit',
+                  many: 'visits',
+                });
+              }
+              if (externalContextItems.length > 0) {
+                stats.push({
+                  key: 'pr',
+                  n: externalContextItems.length,
+                  one: 'prior record',
+                  many: 'prior records',
+                });
+              }
+              if (stats.length === 0) return null;
+              return (
+                <div className="flex items-center gap-3 flex-wrap text-xs text-muted-foreground py-0.5">
+                  {stats.map((s, i) => (
+                    <span key={s.key} className="flex items-center gap-3">
+                      {i > 0 && <span aria-hidden="true" className="text-border">·</span>}
+                      <span>
+                        <span className="font-medium text-foreground">{s.n}</span>{' '}
+                        {s.n === 1 ? s.one : s.many}
+                      </span>
+                    </span>
+                  ))}
+                </div>
+              );
+            })()}
+
+            {/* Row 2: Safety Band */}
+            <SafetyBand
+              activeProblems={activeProblems}
+              onOpenProblems={() => setOpenSheet('problems')}
+            />
+          </div>
+        </div>
+
+        {/* ── Tab content ─────────────────────────────────────────────────── */}
+        <div className="mx-auto max-w-6xl px-4 py-6">
+          {episodeCreatedFlash && (
+            <StatusBanner variant="success" className="mb-6">
+              Episode created — start visit again to link to it.
+            </StatusBanner>
+          )}
+
+          <Tabs defaultValue="overview" className="space-y-6">
+            <TabsList>
+              <TabsTrigger value="overview">Overview</TabsTrigger>
+              {/* Episodes tab is only rendered for patients with >= 1 REHAB episode */}
+              {hasRehabEpisode && (
+                <TabsTrigger value="episodes">
+                  Episodes{activeRehabEpisodeCount > 0 ? ` (${activeRehabEpisodeCount})` : ''}
+                </TabsTrigger>
+              )}
+              <TabsTrigger value="visits">
+                Visits{totalVisits > 0 ? ` (${totalVisits})` : ''}
+              </TabsTrigger>
+              <TabsTrigger value="profile">Profile</TabsTrigger>
+            </TabsList>
+
+            {/* ── Overview cockpit ─────────────────────────────────────────── */}
+            <TabsContent value="overview" className="space-y-5">
+              {/* Division summary line — kept per spec */}
+              {totalVisits > 0 && (
+                <div className="flex items-center gap-2 flex-wrap text-sm">
+                  <span className="text-muted-foreground">
+                    {totalVisits} signed visit{totalVisits === 1 ? '' : 's'} · Active in:
+                  </span>
+                  {activeStripEntries.map((d) => (
+                    <StatusBadge key={d.key} variant="neutral" noIcon>
+                      {d.label} ({visitsByDivision[d.key]})
+                    </StatusBadge>
+                  ))}
+                  {otherCount > 0 && (
+                    <StatusBadge variant="neutral" noIcon>
+                      Other ({otherCount})
+                    </StatusBadge>
+                  )}
+                </div>
+              )}
+
+              {/* Promoted snapshot — spans full width; shows actual measure
+                  values + trend arrows instead of just a count tile. The
+                  whole card is the click target → SnapshotDetailSheet. */}
+              <SnapshotInlineStrip
+                strip={snapshotStrip}
+                onClick={() => setOpenSheet('snapshot')}
+              />
+
+              {/* Remaining 4 tiles — clean 2×2 grid */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                <CockpitTile
+                  label="Medications"
+                  headline="Not recorded — connect an EHR"
+                  onClick={() => setOpenSheet('medications')}
+                />
+                <CockpitTile
+                  label="Open follow-ups"
+                  headline={followUpsHeadline}
+                  onClick={() => setOpenSheet('followUps')}
+                />
+                <CockpitTile
+                  label="Last visit"
+                  headline={lastVisitHeadline}
+                  onClick={() => setOpenSheet('lastVisit')}
+                />
+                <CockpitTile
+                  label="Prior records"
+                  headline={priorRecordsHeadline}
+                  onClick={() => setOpenSheet('priorRecords')}
+                />
+              </div>
+            </TabsContent>
+
+            {/* ── Episodes — only rendered when patient has a REHAB episode ── */}
+            {hasRehabEpisode && (
+              <TabsContent value="episodes">
+                <EpisodesPanel
+                  patientId={patient.id}
+                  episodes={episodesForPanel}
+                  canEdit={canEditEpisodes}
+                />
+              </TabsContent>
+            )}
+
+            {/* ── Visits ───────────────────────────────────────────────────── */}
+            <TabsContent value="visits">
+              <VisitHistoryList visits={visits} />
+            </TabsContent>
+
+            {/* ── Profile ──────────────────────────────────────────────────── */}
+            <TabsContent value="profile" className="space-y-4">
+              <InlineDemographics
+                patient={{
+                  id: patient.id,
+                  firstName: patient.firstName,
+                  lastName: patient.lastName,
+                  mrn: patient.mrn,
+                  dob: patient.dobIso,
+                  sex: patient.sex,
+                  phone: patient.phone,
+                  email: patient.email,
+                  preferredLanguage: patient.preferredLanguage,
+                  siteId: patient.siteId,
+                  siteName: patient.siteName,
+                }}
+                availableSites={startVisitSites}
+              />
+
+              {/* EHR link panel — Server Component, rendered in the parent page and
+                  passed here as ReactNode so auth/prisma calls stay on the server. */}
+              {ehrPanel}
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-md">Addresses + coverage</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3 text-sm">
+                  {addresses.length === 0 ? (
+                    <p className="text-muted-foreground">No addresses on file.</p>
+                  ) : (
+                    <ul className="space-y-1">
+                      {addresses.map((a) => (
+                        <li key={a.id} className="text-muted-foreground">
+                          <StatusBadge variant="neutral" noIcon className="mr-2">
+                            {a.kind}
+                          </StatusBadge>
+                          {a.line1}
+                          {a.line2 ? `, ${a.line2}` : ''}, {a.city}, {a.state} {a.postalCode}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {coverages.length === 0 ? (
+                    <p className="text-muted-foreground">No coverage on file.</p>
+                  ) : (
+                    <ul className="space-y-1">
+                      {coverages.map((c) => (
+                        <li key={c.id} className="text-muted-foreground">
+                          <StatusBadge
+                            variant={
+                              c.status === 'ACTIVE'
+                                ? 'success'
+                                : c.status === 'TERMINATED'
+                                  ? 'danger'
+                                  : 'warning'
+                            }
+                            noIcon
+                            className="mr-2"
+                          >
+                            {c.status}
+                          </StatusBadge>
+                          {c.carrier} · member {c.memberId}
+                          {c.planName ? ` (${c.planName})` : ''}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+          </Tabs>
         </div>
       </div>
 
-      {/* ── Tab content ─────────────────────────────────────────────────── */}
-      <div className="mx-auto max-w-6xl px-4 py-6">
-        {episodeCreatedFlash && (
-          <StatusBanner variant="success" className="mb-6">
-            Episode created — start visit again to link to it.
-          </StatusBanner>
-        )}
+      {/* ── Cockpit drill-down sheets ──────────────────────────────────────── */}
 
-        <Tabs defaultValue="overview" className="space-y-6">
-          <TabsList>
-            <TabsTrigger value="overview">Overview</TabsTrigger>
-            <TabsTrigger value="episodes">
-              Episodes{activeEpisodeCount > 0 ? ` (${activeEpisodeCount})` : ''}
-            </TabsTrigger>
-            <TabsTrigger value="visits">
-              Visits{totalVisits > 0 ? ` (${totalVisits})` : ''}
-            </TabsTrigger>
-            <TabsTrigger value="profile">Profile</TabsTrigger>
-          </TabsList>
+      <SnapshotDetailSheet
+        open={openSheet === 'snapshot'}
+        onOpenChange={(o) => { if (!o) closeSheet(); }}
+        patientId={patient.id}
+        snapshotStrip={snapshotStrip}
+      />
 
-          {/* ── Overview ─────────────────────────────────────────────────── */}
-          <TabsContent value="overview" className="space-y-6">
-            <PatientIdentityHeader patient={patientForHeader} />
+      {/* Medications — Phase 1: "not connected" placeholder */}
+      <ChartDetailSheet
+        open={openSheet === 'medications'}
+        onOpenChange={(o) => { if (!o) closeSheet(); }}
+        title="Medications"
+      >
+        <p className="text-sm text-muted-foreground">
+          Medication data will be available once an EHR is connected. Use the Profile tab
+          to link your EHR system.
+        </p>
+      </ChartDetailSheet>
 
-            {totalVisits > 0 && (
-              <div className="flex items-center gap-2 flex-wrap text-sm">
-                <span className="text-muted-foreground">
-                  {totalVisits} signed visit{totalVisits === 1 ? '' : 's'} · Active in:
-                </span>
-                {activeStripEntries.map((d) => (
-                  <StatusBadge key={d.key} variant="neutral" noIcon>
-                    {d.label} ({visitsByDivision[d.key]})
-                  </StatusBadge>
-                ))}
-                {otherCount > 0 && (
-                  <StatusBadge variant="neutral" noIcon>
-                    Other ({otherCount})
-                  </StatusBadge>
-                )}
-              </div>
-            )}
+      <FollowUpsSheet
+        open={openSheet === 'followUps'}
+        onOpenChange={(o) => { if (!o) closeSheet(); }}
+        followUps={followUps}
+      />
 
-            <PatientSnapshotStrip patientId={patient.id} strip={snapshotStrip} />
+      <LastVisitSheet
+        open={openSheet === 'lastVisit'}
+        onOpenChange={(o) => { if (!o) closeSheet(); }}
+        visit={lastVisit}
+      />
 
-            <ExternalContextSection
-              patientId={patient.id}
-              episodeChoices={episodeChoicesForAdd}
-              initialItems={externalContextItems}
-            />
-          </TabsContent>
+      <PriorRecordsSheet
+        open={openSheet === 'priorRecords'}
+        onOpenChange={(o) => { if (!o) closeSheet(); }}
+        patientId={patient.id}
+        items={externalContextItems}
+      />
 
-          {/* ── Episodes ─────────────────────────────────────────────────── */}
-          <TabsContent value="episodes">
-            <EpisodesPanel patientId={patient.id} episodes={episodesForPanel} />
-          </TabsContent>
-
-          {/* ── Visits ───────────────────────────────────────────────────── */}
-          <TabsContent value="visits">
-            <VisitHistoryList visits={visits} />
-          </TabsContent>
-
-          {/* ── Profile ──────────────────────────────────────────────────── */}
-          <TabsContent value="profile" className="space-y-4">
-            <InlineDemographics
-              patient={{
-                id: patient.id,
-                firstName: patient.firstName,
-                lastName: patient.lastName,
-                mrn: patient.mrn,
-                dob: patient.dobIso,
-                sex: patient.sex,
-                phone: patient.phone,
-                email: patient.email,
-                preferredLanguage: patient.preferredLanguage,
-                siteId: patient.siteId,
-                siteName: patient.siteName,
-              }}
-              availableSites={startVisitSites}
-            />
-
-            {/* EHR link panel — Server Component, rendered in the parent page and
-                passed here as ReactNode so auth/prisma calls stay on the server. */}
-            {ehrPanel}
-
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-md">Addresses + coverage</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3 text-sm">
-                {addresses.length === 0 ? (
-                  <p className="text-muted-foreground">No addresses on file.</p>
-                ) : (
-                  <ul className="space-y-1">
-                    {addresses.map((a) => (
-                      <li key={a.id} className="text-muted-foreground">
-                        <StatusBadge variant="neutral" noIcon className="mr-2">
-                          {a.kind}
-                        </StatusBadge>
-                        {a.line1}
-                        {a.line2 ? `, ${a.line2}` : ''}, {a.city}, {a.state} {a.postalCode}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                {coverages.length === 0 ? (
-                  <p className="text-muted-foreground">No coverage on file.</p>
-                ) : (
-                  <ul className="space-y-1">
-                    {coverages.map((c) => (
-                      <li key={c.id} className="text-muted-foreground">
-                        <StatusBadge
-                          variant={
-                            c.status === 'ACTIVE'
-                              ? 'success'
-                              : c.status === 'TERMINATED'
-                                ? 'danger'
-                                : 'warning'
-                          }
-                          noIcon
-                          className="mr-2"
-                        >
-                          {c.status}
-                        </StatusBadge>
-                        {c.carrier} · member {c.memberId}
-                        {c.planName ? ` (${c.planName})` : ''}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-        </Tabs>
-      </div>
-    </div>
+      <ProblemsSheet
+        open={openSheet === 'problems'}
+        onOpenChange={(o) => { if (!o) closeSheet(); }}
+        problems={activeProblems}
+      />
+    </>
   );
 }

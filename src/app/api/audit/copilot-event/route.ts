@@ -4,10 +4,21 @@ import { z } from 'zod';
 import { auth } from '@/lib/auth';
 import { writeAuditLog } from '@/lib/audit/log';
 import type { AuditAction } from '@/lib/audit/actions';
+import { PERSONA_VERSION } from '@/services/copilot/persona';
 
 export const runtime = 'nodejs';
 
-const SURFACES = ['prepare', 'capture', 'review', 'telehealth-room', 'visit'] as const;
+const SURFACES = [
+  'prepare',
+  'capture',
+  'review',
+  'telehealth-room',
+  'visit',
+  // Phase 3 — patient cockpit (/patients/[id]) mount. The shell only
+  // renders when the patient has at least one signed note (the
+  // cockpit page passes visits[0].id as the anchor).
+  'patient-cockpit',
+] as const;
 // Client-side fire-and-forget audit ingress. Each action is shape-locked
 // here at the route boundary so PHI can't be smuggled through the
 // metadata fields. Adding new actions: extend this allowlist AND update
@@ -90,6 +101,15 @@ export async function POST(req: Request) {
     );
   }
 
+  // Unit 42 — beacon open/close rows carry the persona version stamp
+  // so auditors can answer "which Cleo voice was live for this row?"
+  // from one metadata field. PHI-free. Other actions accepted by this
+  // route (card raised/rendered/dismissed, telehealth signals,
+  // section copy) don't need the stamp because they're persona-agnostic.
+  const isBeaconAction =
+    parsed.data.action === 'COPILOT_BEACON_OPENED' ||
+    parsed.data.action === 'COPILOT_BEACON_CLOSED';
+
   await writeAuditLog({
     userId: session.user.id,
     orgId: session.user.orgId,
@@ -102,6 +122,7 @@ export async function POST(req: Request) {
       ...(parsed.data.itemCount !== undefined ? { itemCount: parsed.data.itemCount } : {}),
       ...(parsed.data.check ? { check: parsed.data.check } : {}),
       ...(parsed.data.reason ? { reason: parsed.data.reason } : {}),
+      ...(isBeaconAction ? { personaVersion: PERSONA_VERSION } : {}),
     },
   });
 

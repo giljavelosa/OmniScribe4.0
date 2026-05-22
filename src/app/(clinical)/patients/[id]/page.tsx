@@ -9,7 +9,9 @@ import { buildSnapshotStrip } from '@/lib/snapshots/build-snapshot-strip';
 import { deriveAssessmentSnippet } from '@/lib/notes/note-text';
 import type { FinalJsonShape } from '@/lib/notes/build-artifact-prompt';
 import { professionLabel } from '@/lib/professions';
+import { CopilotShell } from '@/components/copilot/copilot-shell';
 import { PatientChartTabs } from './_components/patient-chart-tabs';
+import type { FollowUpSummary } from './_components/follow-ups-sheet';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Patient' };
@@ -38,7 +40,16 @@ export default async function PatientDetailPage({
       // Unit 11 — include DISCHARGED so the panel can Reopen + show close history.
       episodes: {
         where: { status: { in: ['ACTIVE', 'RECERT_DUE', 'DISCHARGED'] } },
-        include: { department: true, goals: { orderBy: { createdAt: 'asc' } } },
+        include: {
+          department: true,
+          goals: {
+            orderBy: { createdAt: 'asc' },
+            include: {
+              // Sprint 0.10 — progression trail for GoalDetailSheet.
+              progressEntries: { orderBy: { recordedAt: 'desc' } },
+            },
+          },
+        },
         orderBy: [{ status: 'asc' }, { startedAt: 'desc' }],
       },
     },
@@ -49,7 +60,7 @@ export default async function PatientDetailPage({
   // so the first paint has real content. Cross-division stratification:
   // fetch up to 50 most-recent signed visits including clinician identity
   // and episode-of-care (powers the by-episode / by-clinician views).
-  const [snapshotStrip, recentVisits, externalContexts] = await Promise.all([
+  const [snapshotStrip, recentVisits, externalContexts, openFollowUps] = await Promise.all([
     buildSnapshotStrip({ orgId: session.user.orgId, patientId: patient.id }),
     prisma.note.findMany({
       where: {
@@ -103,6 +114,20 @@ export default async function PatientDetailPage({
             user: { select: { email: true, name: true } },
           },
         },
+      },
+    }),
+    // Sprint 0.9 — open follow-ups for the cockpit tile + FollowUpsSheet.
+    prisma.followUp.findMany({
+      where: { patientId: patient.id, orgId: session.user.orgId, status: 'OPEN' },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        text: true,
+        status: true,
+        createdAt: true,
+        originNoteId: true,
+        episodeId: true,
+        originNote: { select: { signedAt: true } },
       },
     }),
   ]);
@@ -171,12 +196,15 @@ export default async function PatientDetailPage({
     },
   }));
 
-  const episodeChoicesForAdd = patient.episodes
-    .filter((ep) => ep.status === 'ACTIVE' || ep.status === 'RECERT_DUE')
-    .map((ep) => ({
-      id: ep.id,
-      label: ep.bodyPart ? `${ep.diagnosis} (${ep.bodyPart})` : ep.diagnosis,
-    }));
+  const followUpItems: FollowUpSummary[] = openFollowUps.map((fu) => ({
+    id: fu.id,
+    text: fu.text,
+    status: fu.status,
+    createdAt: fu.createdAt.toISOString(),
+    originNoteId: fu.originNoteId,
+    originNoteSignedAt: fu.originNote?.signedAt?.toISOString() ?? null,
+    episodeId: fu.episodeId,
+  }));
 
   // Pull visit counts + last-visit-at per active episode so the start-visit
   // picker can show "3 prior visits / last visit 12 days ago" without the
@@ -274,61 +302,91 @@ export default async function PatientDetailPage({
       status: g.status,
       currentMeasure: g.currentMeasure,
       targetMeasure: g.targetMeasure,
+      // Sprint 0.10 — progression trail (newest-first from DB, for GoalDetailSheet).
+      progressEntries: g.progressEntries.map((pe) => ({
+        id: pe.id,
+        measureValue: pe.measureValue,
+        statusAtEntry: pe.statusAtEntry,
+        deltaNote: pe.deltaNote,
+        recordedAt: pe.recordedAt.toISOString(),
+      })),
     })),
   }));
 
+  // Phase 3 — anchor Miss Cleo to the patient's most-recent signed
+  // visit. The /api/copilot/ask contract requires a noteId because
+  // every audit row anchors there; reusing visits[0].id keeps the
+  // backend unchanged. Patients with zero signed notes intentionally
+  // render no beacon at all — there's nothing source-grounded for
+  // Cleo to cite from yet, so showing a broken beacon would be
+  // worse UX than no beacon. Document this here so the next agent
+  // doesn't reflexively add a "Cleo unavailable" tile.
+  const lastSignedNoteId = visits[0]?.id ?? null;
+
   return (
-    <PatientChartTabs
-      patient={{
-        id: patient.id,
-        firstName: patient.firstName,
-        lastName: patient.lastName,
-        mrn: patient.mrn,
-        dobIso: patient.dob.toISOString(),
-        sex: patient.sex,
-        preferredLanguage: patient.preferredLanguage,
-        isDeleted: patient.isDeleted,
-        phone: patient.phone,
-        email: patient.email,
-        siteId: patient.siteId,
-        siteName: patient.site?.name ?? null,
-      }}
-      addresses={patient.addresses.map((a) => ({
-        id: a.id,
-        kind: a.kind,
-        line1: a.line1,
-        line2: a.line2,
-        city: a.city,
-        state: a.state,
-        postalCode: a.postalCode,
-      }))}
-      coverages={patient.coverages.map((c) => ({
-        id: c.id,
-        carrier: c.carrier,
-        planName: c.planName,
-        memberId: c.memberId,
-        status: c.status,
-      }))}
-      episodeCreatedFlash={episodeCreatedFlash}
-      snapshotStrip={snapshotStrip}
-      episodesForPanel={episodesForPanel}
-      externalContextItems={externalContextItems}
-      episodeChoicesForAdd={episodeChoicesForAdd}
-      visits={visits}
-      activeEpisodesForPicker={activeEpisodesForPicker}
-      startVisitSites={startVisitSites}
-      startVisitDefaultSiteId={startVisitDefaultSiteId}
-      ehrPanel={
-        <EhrLinkPanel
+    <>
+      <PatientChartTabs
+        patient={{
+          id: patient.id,
+          firstName: patient.firstName,
+          lastName: patient.lastName,
+          mrn: patient.mrn,
+          dobIso: patient.dob.toISOString(),
+          sex: patient.sex,
+          preferredLanguage: patient.preferredLanguage,
+          isDeleted: patient.isDeleted,
+          phone: patient.phone,
+          email: patient.email,
+          siteId: patient.siteId,
+          siteName: patient.site?.name ?? null,
+        }}
+        addresses={patient.addresses.map((a) => ({
+          id: a.id,
+          kind: a.kind,
+          line1: a.line1,
+          line2: a.line2,
+          city: a.city,
+          state: a.state,
+          postalCode: a.postalCode,
+        }))}
+        coverages={patient.coverages.map((c) => ({
+          id: c.id,
+          carrier: c.carrier,
+          planName: c.planName,
+          memberId: c.memberId,
+          status: c.status,
+        }))}
+        episodeCreatedFlash={episodeCreatedFlash}
+        snapshotStrip={snapshotStrip}
+        episodesForPanel={episodesForPanel}
+        externalContextItems={externalContextItems}
+        visits={visits}
+        followUps={followUpItems}
+        activeEpisodesForPicker={activeEpisodesForPicker}
+        startVisitSites={startVisitSites}
+        startVisitDefaultSiteId={startVisitDefaultSiteId}
+        canEditEpisodes={session.user.role !== 'VIEWER'}
+        ehrPanel={
+          <EhrLinkPanel
+            patientId={patient.id}
+            patient={{
+              firstName: patient.firstName,
+              lastName: patient.lastName,
+              mrn: patient.mrn,
+              dobIso: patient.dob.toISOString(),
+            }}
+          />
+        }
+      />
+      {lastSignedNoteId && (
+        <CopilotShell
+          surface="patient-cockpit"
+          noteId={lastSignedNoteId}
           patientId={patient.id}
-          patient={{
-            firstName: patient.firstName,
-            lastName: patient.lastName,
-            mrn: patient.mrn,
-            dobIso: patient.dob.toISOString(),
-          }}
+          clinicianName={session.user.name ?? null}
+          patientFirstName={patient.firstName}
         />
-      }
-    />
+      )}
+    </>
   );
 }

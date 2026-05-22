@@ -5,13 +5,30 @@ import { ChevronUp, Minimize2, Send, Sparkles, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/cn';
 import { AskSurface } from './ask-surface';
 import { ResearchSurface } from './research-surface';
+import { COPILOT_DISPLAY_NAME } from '@/services/copilot/persona';
 
-export type CopilotSurface = 'prepare' | 'capture' | 'review' | 'visit';
+/** Phase 3 — 'patient-cockpit' added so /patients/[id] can mount the
+ *  shell. Audit metadata routes through SURFACES on
+ *  /api/audit/copilot-event. */
+export type CopilotSurface =
+  | 'prepare'
+  | 'capture'
+  | 'review'
+  | 'visit'
+  | 'patient-cockpit';
+
+type CopilotTab = 'chart' | 'research';
 
 type ViewMode = 'full' | 'compact';
 
@@ -39,14 +56,33 @@ export function CopilotShell({
   surface,
   noteId,
   patientId,
+  clinicianName,
+  patientFirstName,
 }: {
   surface: CopilotSurface;
   noteId: string;
   patientId: string;
+  /** Unit 42 — threaded into the persona greeting + the empty-state
+   *  intro. Optional so mount sites that haven't been updated yet
+   *  fall back to a generic "Hi there" salutation. */
+  clinicianName?: string | null;
+  /** Unit 42 — patient first name only; never last name / MRN /
+   *  DOB. Used in the chart-mode greeting template. Undefined on
+   *  research-only contexts. */
+  patientFirstName?: string | null;
 }) {
   const [open, setOpen] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>('full');
+  const [activeTab, setActiveTab] = useState<CopilotTab>('chart');
   const lastOpenStateRef = useRef(false);
+  // Unit 42 — greetingShown refs live in the CopilotShell (which is
+  // always mounted) so closing + reopening the Sheet within the same
+  // page session does NOT re-greet. The refs are passed down to the
+  // surfaces; both surfaces check + mutate them on first message
+  // render. A page navigation resets them naturally (new component
+  // instance, new refs).
+  const chartGreetedRef = useRef(false);
+  const researchGreetedRef = useRef(false);
 
   const fireAudit = useCallback(
     (action: 'COPILOT_BEACON_OPENED' | 'COPILOT_BEACON_CLOSED') => {
@@ -115,14 +151,33 @@ export function CopilotShell({
         <SheetContent side="right" className="sm:max-w-md p-0 flex flex-col">
           <SheetHeader className="border-b border-border px-4 py-3">
             <div className="flex items-center justify-between gap-2">
-              <SheetTitle className="flex items-center gap-2">
-                <Sparkles className="size-4" aria-hidden="true" />
-                Co-Pilot
-              </SheetTitle>
+              <div className="flex flex-col gap-0.5">
+                <SheetTitle className="flex items-center gap-2">
+                  <Sparkles className="size-4" aria-hidden="true" />
+                  {COPILOT_DISPLAY_NAME}
+                </SheetTitle>
+                {/* Unit 42 — mode-aware subhead. Derived from the
+                    controlled `activeTab` so switching tabs updates
+                    the framing in real time. */}
+                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                  {activeTab === 'research' ? 'Research assistant' : 'Clinical co-pilot'}
+                </p>
+                {/* sr-only SheetDescription satisfies Radix's a11y
+                    contract — screen readers announce Cleo's purpose
+                    when the Sheet opens; sighted users see only the
+                    title + subhead above. Silences the
+                    "Missing Description or aria-describedby"
+                    DialogContent warning that fired every open. */}
+                <SheetDescription className="sr-only">
+                  {activeTab === 'research'
+                    ? `${COPILOT_DISPLAY_NAME} — clinical research assistant. Ask questions about evidence in the medical literature.`
+                    : `${COPILOT_DISPLAY_NAME} — clinical co-pilot. Ask questions about this patient and get source-grounded answers from their chart.`}
+                </SheetDescription>
+              </div>
               <button
                 type="button"
                 onClick={collapse}
-                aria-label="Minimize Co-Pilot"
+                aria-label={`Minimize ${COPILOT_DISPLAY_NAME}`}
                 title="Minimize"
                 className={cn(
                   'inline-flex items-center justify-center rounded-md',
@@ -133,7 +188,11 @@ export function CopilotShell({
               </button>
             </div>
           </SheetHeader>
-          <Tabs defaultValue="chart" className="flex-1 min-h-0 flex flex-col">
+          <Tabs
+            value={activeTab}
+            onValueChange={(v) => setActiveTab(v as CopilotTab)}
+            className="flex-1 min-h-0 flex flex-col"
+          >
             <TabsList className="mx-4 mt-3">
               <TabsTrigger value="chart">Chart</TabsTrigger>
               <TabsTrigger value="research">Research</TabsTrigger>
@@ -146,14 +205,25 @@ export function CopilotShell({
               forceMount
               className="flex-1 min-h-0 mt-3 data-[state=inactive]:hidden"
             >
-              <AskSurface patientId={patientId} noteId={noteId} />
+              <AskSurface
+                patientId={patientId}
+                noteId={noteId}
+                clinicianName={clinicianName ?? null}
+                patientFirstName={patientFirstName ?? null}
+                surface={surface}
+                greetedRef={chartGreetedRef}
+              />
             </TabsContent>
             <TabsContent
               value="research"
               forceMount
               className="flex-1 min-h-0 mt-3 data-[state=inactive]:hidden"
             >
-              <ResearchSurface />
+              <ResearchSurface
+                clinicianName={clinicianName ?? null}
+                surface={surface}
+                greetedRef={researchGreetedRef}
+              />
             </TabsContent>
           </Tabs>
         </SheetContent>
@@ -252,13 +322,13 @@ function CompactStrip({
         <div className="flex items-center justify-between gap-2 px-3 py-1.5 bg-muted/30 border-b border-border">
           <div className="flex items-center gap-1.5 min-w-0">
             <Sparkles className="size-3.5 text-primary shrink-0" aria-hidden />
-            <span className="text-xs font-medium truncate">Co-Pilot</span>
+            <span className="text-xs font-medium truncate">{COPILOT_DISPLAY_NAME}</span>
           </div>
           <div className="flex items-center gap-1 shrink-0">
             <button
               type="button"
               onClick={onExpand}
-              aria-label="Expand Co-Pilot"
+              aria-label={`Expand ${COPILOT_DISPLAY_NAME}`}
               title="Expand"
               className="inline-flex items-center justify-center rounded-md h-6 w-6 text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
             >
@@ -267,7 +337,7 @@ function CompactStrip({
             <button
               type="button"
               onClick={onClose}
-              aria-label="Close Co-Pilot"
+              aria-label={`Close ${COPILOT_DISPLAY_NAME}`}
               title="Close"
               className="inline-flex items-center justify-center rounded-md h-6 w-6 text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
             >

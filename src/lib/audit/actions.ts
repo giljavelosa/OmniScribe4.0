@@ -67,9 +67,13 @@ export type AuditAction =
   // ---- Unit 04: Transcription Pipeline ----
   | 'NOTE_STATUS_TRANSITIONED'
   | 'NOTE_INTERRUPTED'
+  | 'NOTE_RETRY_ENQUEUED'
   | 'TRANSCRIPTION_JOB_ENQUEUED'
   | 'TRANSCRIPT_FINALIZED'
   | 'VOICE_ID_MATCHED'
+  | 'VOICE_ID_ENROLLED'
+  | 'VOICE_PROFILE_CREATED'
+  | 'VOICE_PROFILE_REVOKED'
   | 'VOICE_ID_SKIPPED'
   | 'VOICE_ID_FAILED'
   // ---- Sprint 0.7: dedicated visit viewer ----

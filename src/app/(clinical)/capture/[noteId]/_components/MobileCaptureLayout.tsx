@@ -38,6 +38,9 @@ type Props = {
    *  bundle. Null when patient has no verified PatientFhirIdentity or
    *  the cache is empty / fully stale; bundle renders nothing then. */
   fhirContext: ExternalEhrContext | null;
+  /** Forwarded to RecordingControls. True for a fresh LIVE PREPARING note;
+   *  triggers a 1.5s countdown then auto-fires start(). */
+  autostart?: boolean;
 };
 
 /**
@@ -57,6 +60,7 @@ export function MobileCaptureLayout({
   nowMs,
   hasPriorSignedNote,
   fhirContext,
+  autostart,
 }: Props) {
   const [active, setActive] = useState<'transcript' | 'note' | 'history' | 'setup'>('transcript');
   const transcriptCountRef = useRef(0);
@@ -151,7 +155,7 @@ export function MobileCaptureLayout({
       </Tabs>
 
       <footer className="border-t border-border bg-card px-4 py-3">
-        <RecordingControls noteId={noteId} />
+        <RecordingControls noteId={noteId} autostart={autostart} />
       </footer>
     </div>
   );

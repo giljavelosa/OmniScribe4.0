@@ -1,13 +1,12 @@
 import type { Metadata } from 'next';
-import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
+import { Mic } from 'lucide-react';
 
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { requiresProfileCompletion } from '@/lib/auth/profile-completion';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { StatusBadge } from '@/components/ui/status-badge';
 import { PatientIdentityHeader } from '@/components/patients/patient-identity-header';
 import { BriefCard } from '@/components/brief/brief-card';
 import { EmptyBrief } from '@/components/brief/empty-brief';
@@ -19,6 +18,7 @@ import { loadExternalEhrContext } from '@/lib/fhir/project-ehr-context';
 import type { PriorContextBriefContent } from '@/types/brief';
 import { PasteTranscriptForm } from './_components/paste-transcript-form';
 import { UploadAudioForm } from './_components/upload-audio-form';
+import { LiveCaptureButton } from './_components/live-capture-button';
 import { VisitContextStrip } from '@/components/clinical/visit-context-strip';
 
 export const dynamic = 'force-dynamic';
@@ -112,6 +112,36 @@ export default async function PreparePage({ params }: { params: Promise<{ noteId
     <div className="mx-auto max-w-4xl px-4 py-6 space-y-6">
       <PatientIdentityHeader patient={note.patient} />
 
+      {/* HERO recording CTA — sits above brief/context so the highest-frequency
+          action (live recording) is one tap away. Upload / Paste live below
+          for the rarer flows. */}
+      {isPreparing ? (
+        <Card className="border-primary/30 bg-gradient-to-br from-primary/5 to-transparent">
+          <CardContent className="flex flex-col sm:flex-row sm:items-center gap-4 py-5">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <Mic className="h-4 w-4 text-primary" aria-hidden />
+                <p className="text-md font-semibold">Record this visit</p>
+              </div>
+              <p className="text-sm text-muted-foreground mt-0.5">
+                Live, diarized transcript starts immediately when you tap.
+              </p>
+            </div>
+            <div className="sm:max-w-xs sm:w-64">
+              <LiveCaptureButton noteId={note.id} hero />
+            </div>
+          </CardContent>
+        </Card>
+      ) : (
+        <Card>
+          <CardContent className="py-5">
+            <Button disabled className="w-full">
+              Recording status: {note.status}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
       <VisitContextStrip
         noteId={note.id}
         clinicianName={session.user.name ?? session.user.email}
@@ -122,6 +152,7 @@ export default async function PreparePage({ params }: { params: Promise<{ noteId
         noteTemplateId={note.templateId}
         noteStyle={note.noteStyle}
         locked={!isPreparing}
+        collapsible
       />
 
       {briefContent ? (
@@ -152,47 +183,8 @@ export default async function PreparePage({ params }: { params: Promise<{ noteId
         nowMs={nowMs}
       />
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Prepare for visit</CardTitle>
-          <CardDescription>
-            Record live, upload an existing audio file, or paste a transcript. Template + note
-            style come from your saved defaults; the AI draft generates after capture finishes.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3 text-sm">
-          <div className="flex items-center gap-2">
-            <StatusBadge variant="info" noIcon>note · {note.status}</StatusBadge>
-            <StatusBadge variant="neutral" noIcon>{note.division}</StatusBadge>
-            <StatusBadge variant="neutral" noIcon>{note.captureMode}</StatusBadge>
-            {note.encounter?.status && (
-              <StatusBadge variant="neutral" noIcon>encounter · {note.encounter.status}</StatusBadge>
-            )}
-          </div>
-          {note.encounter?.schedule && (
-            <p className="text-muted-foreground">
-              Scheduled {note.encounter.schedule.scheduledStart.toLocaleString()} ·{' '}
-              {note.encounter.schedule.visitType}
-            </p>
-          )}
-        </CardContent>
-      </Card>
-
-      <div className="grid md:grid-cols-3 gap-4">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-md">Live</CardTitle>
-            <CardDescription>Record audio in-room with diarized live transcript.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Button asChild disabled={!isPreparing} className="w-full">
-              <Link href={`/capture/${note.id}`}>
-                {isPreparing ? 'Start recording →' : `Status: ${note.status}`}
-              </Link>
-            </Button>
-          </CardContent>
-        </Card>
-
+      {/* Secondary capture paths — clearly subordinate to the hero. */}
+      <div className="grid md:grid-cols-2 gap-4">
         <Card>
           <CardHeader>
             <CardTitle className="text-md">Upload audio</CardTitle>
@@ -214,7 +206,13 @@ export default async function PreparePage({ params }: { params: Promise<{ noteId
         </Card>
       </div>
 
-      <CopilotShell surface="prepare" noteId={note.id} patientId={note.patient.id} />
+      <CopilotShell
+        surface="prepare"
+        noteId={note.id}
+        patientId={note.patient.id}
+        clinicianName={session.user.name ?? null}
+        patientFirstName={note.patient.firstName}
+      />
     </div>
   );
 }

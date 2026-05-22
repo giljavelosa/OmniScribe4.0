@@ -84,7 +84,7 @@ Read [`journeys/05-copilot-ask-mode.md`](../journeys/05-copilot-ask-mode.md) for
 ### Cross-cutting features
 
 - **Patient management** — demographics (name, MRN, DOB, sex SAAB), insurance coverage, addresses, emergency contacts, guarantors, consents, communication preferences. Division-scoped, site-scoped.
-- **Episode of care** — for Rehab + longitudinal Medical / BH episodes. `EpisodeOfCare` + `EpisodeGoal` (STG/LTG, baseline/target/current, status) + `GoalProgressEntry` (per-Note progress updates).
+- **Episode of care** — `EpisodeOfCare` + `EpisodeGoal` (STG/LTG, baseline/target/current, status) + `GoalProgressEntry` (per-visit progression trail). The data model supports all three divisions; the dedicated Episodes UI tab is **scoped to REHAB patients only** for now (clinically: recert cycles, visit authorization, and STG/LTG goals are Medicare therapy plan-of-care constructs). Medical and BH episodes continue to feed AI prompts, the prior-context brief, and the Safety Band — they are not surfaced in a tab until a future wave.
 - **Follow-up lifecycle** — `FollowUp` rows extracted from plan sections at sign-time. Statuses: `OPEN` / `MET` / `CARRIED` / `DROPPED` / `CLOSED_BY_DISCHARGE`. Sign-time sweep modal forces a decision on every open item before allowing sign.
 - **Patient detail surface** — identity header (inline editable), division-keyed snapshot strip with trend arrows + source dots (rehab: pain/ROM/strength/gait/outcome-tool; medical: vitals; BH: PHQ-9/GAD-7), visit history with 2-line assessment per row, reference cards (active goals / watch / open follow-ups).
 - **Schedule** — appointment calendar with visit type (`IN_PERSON` / `TELEHEALTH`), duration, status. Encounter auto-created on schedule start.

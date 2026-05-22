@@ -62,9 +62,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         noteId,
         segmentIndex: 0,
         s3Key,
-        durationMs: 0, // unknown without ffprobe; Unit 04 fills this in
+        // durationMs: filled by the transcription worker from Soniox's response
+        durationMs: 0,
         sampleRate: 0,
         byteSize: bytes.byteLength,
+        mimeType: mime,
       },
     }),
     prisma.note.update({

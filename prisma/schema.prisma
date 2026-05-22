@@ -8,12 +8,13 @@
 
 generator client {
   provider        = "prisma-client-js"
-  previewFeatures = []
+  previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [vector]
 }
 
 // -----------------------------------------------------------------------------
@@ -318,6 +319,7 @@ model OrgUser {
   externalContextsAdded ExternalContext[]  @relation("ExternalContextAddedBy")
   siteEnrollments     OrgUserSite[]        @relation("OrgUserSiteMember")
   siteEnrollmentsCreated OrgUserSite[]     @relation("OrgUserSiteEnroller")
+  voiceProfile        VoiceProfile?
 
   @@unique([userId, orgId])
   @@index([orgId, role])
@@ -1105,11 +1107,59 @@ model AudioSegment {
   durationMs   Int
   sampleRate   Int
   byteSize     Int
+  /// MIME type of the uploaded or recorded audio (e.g. "audio/wav", "audio/mpeg").
+  /// Null for segments created before this field was added (LIVE captures pre-2026-05-21).
+  mimeType     String?
   isDeleted    Boolean   @default(false)
   deletedAt    DateTime?
   createdAt    DateTime  @default(now())
 
   @@index([noteId, segmentIndex])
+}
+
+// =============================================================================
+// Voice-ID — Sprint A (polish-waves-0-6 W0-01 + W0-02).
+//
+// VoiceProfile stores a 192-dimensional TitaNet x-vector embedding per
+// enrolled clinician. The transcription worker uses pgvector cosine distance
+// to match Soniox diarized speaker windows to enrolled profiles and rewrite
+// Note.transcriptClean.structured[].speaker from numeric to CLINICIAN/PATIENT.
+//
+// BIPA compliance: explicit consent versioning required before enrollment.
+// Soft-delete: isDeleted + deletedAt track revocations; hard-delete forbidden
+// for 30 days (hardDeleteAt) so that period can be reversed on appeal.
+//
+// Rule 7 extension: the enrollment audio S3 key follows the same never-hard-
+// delete lifecycle as recording audio.
+// =============================================================================
+
+model VoiceProfile {
+  id              String    @id @default(cuid())
+  orgUserId       String
+  orgUser         OrgUser   @relation(fields: [orgUserId], references: [id])
+  orgId           String
+  /// 192-dim TitaNet x-vector stored as pgvector; null until the
+  /// compute-enrollment-embedding worker completes.
+  embedding       Unsupported("vector(192)")?
+  /// S3 key of the enrollment audio sample (30–60 s WAV).
+  enrollmentS3Key String?
+  /// Semantic version of the BIPA consent text the clinician accepted.
+  consentVersion  String
+  consentedAt     DateTime
+  /// Human-readable label e.g. "My Voice" or the user's display name.
+  displayName     String?
+  /// Heuristic default role used during transcript matching.
+  defaultRole     String    @default("CLINICIAN")
+  isDeleted       Boolean   @default(false)
+  deletedAt       DateTime?
+  /// 30-day window during which the record can be restored; hard-delete
+  /// allowed after this date by a scheduled ops sweep (not auto-deleted).
+  hardDeleteAt    DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([orgUserId])
+  @@index([orgId, isDeleted])
 }
 
 // =============================================================================

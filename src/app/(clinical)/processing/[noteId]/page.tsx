@@ -22,7 +22,12 @@ export default async function ProcessingPage({ params }: { params: Promise<{ not
 
   const note = await prisma.note.findFirst({
     where: { id: noteId, orgId: session.user.orgId },
-    select: { id: true, status: true, clinicianOrgUserId: true },
+    select: {
+      id: true,
+      status: true,
+      clinicianOrgUserId: true,
+      patient: { select: { firstName: true, lastName: true } },
+    },
   });
   if (!note) notFound();
 
@@ -36,5 +41,16 @@ export default async function ProcessingPage({ params }: { params: Promise<{ not
     redirect(`/capture/${noteId}`);
   }
 
-  return <ProcessingClient noteId={note.id} initialStatus={note.status} />;
+  // PHI-safe display name: first name + last initial. Matches the format the
+  // /capture and /prepare surfaces use in their patient headers.
+  const patientDisplayName =
+    `${note.patient.firstName} ${note.patient.lastName[0] ?? ''}.`.trim();
+
+  return (
+    <ProcessingClient
+      noteId={note.id}
+      initialStatus={note.status}
+      patientDisplayName={patientDisplayName}
+    />
+  );
 }

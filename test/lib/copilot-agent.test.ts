@@ -108,7 +108,10 @@ describe('runAgent', () => {
     expect(out.answer.text).toContain('plan');
   });
 
-  it('retries once on parse error then returns answer', async () => {
+  it('refunds the first parse-error iteration then returns answer', async () => {
+    // Phase 1A: a single JSON-mode hiccup must not tax the model's
+    // tool budget. iterations === 1 after the refund (1 attempt
+    // refunded + 1 successful answer turn that landed at slot 1).
     const llm = scriptedLlm([
       'not valid JSON at all',
       JSON.stringify({
@@ -118,8 +121,59 @@ describe('runAgent', () => {
       }),
     ]);
     const out = await runAgent(baseInput, ctx, llm);
-    expect(out.iterations).toBe(2);
+    expect(out.iterations).toBe(1);
     expect(out.answer.text).toBe('Recovered after parse retry.');
+  });
+
+  it('does not refund a second parse error (refund cap = 1)', async () => {
+    // Phase 1A: second parse failure consumes its iteration so a model
+    // that keeps emitting non-JSON still terminates within MAX_ITERATIONS.
+    const llm = scriptedLlm([
+      'first garbage',
+      'second garbage',
+      JSON.stringify({
+        action: 'answer',
+        text: 'Recovered eventually.',
+        sources: [{ kind: 'patient', id: 'pat-1', label: 'Patient' }],
+      }),
+    ]);
+    const out = await runAgent(baseInput, ctx, llm);
+    // 1st parse fail refunded (iterations net 0), 2nd parse fail
+    // consumed (iterations net 1), answer succeeded (iterations net 2).
+    expect(out.iterations).toBe(2);
+    expect(out.answer.text).toBe('Recovered eventually.');
+  });
+
+  it('strips a markdown ```json``` fence around the JSON envelope', async () => {
+    // Phase 1A: Sonnet occasionally wraps JSON-mode output in a fence
+    // despite the jsonMode flag. The agent must transparently unwrap.
+    const fenced =
+      '```json\n' +
+      JSON.stringify({
+        action: 'answer',
+        text: 'Fenced answer.',
+        sources: [{ kind: 'patient', id: 'pat-1', label: 'Patient' }],
+      }) +
+      '\n```';
+    const llm = scriptedLlm([fenced]);
+    const out = await runAgent(baseInput, ctx, llm);
+    expect(out.iterations).toBe(1);
+    expect(out.answer.text).toBe('Fenced answer.');
+    expect(out.answer.isClarification).toBe(false);
+  });
+
+  it('strips a bare ``` (no language tag) fence around the JSON envelope', async () => {
+    const fenced =
+      '```\n' +
+      JSON.stringify({
+        action: 'answer',
+        text: 'Bare-fence answer.',
+        sources: [{ kind: 'patient', id: 'pat-1', label: 'Patient' }],
+      }) +
+      '\n```';
+    const llm = scriptedLlm([fenced]);
+    const out = await runAgent(baseInput, ctx, llm);
+    expect(out.answer.text).toBe('Bare-fence answer.');
   });
 
   it('bails after MAX_ITERATIONS when the model never answers', async () => {
@@ -301,7 +355,7 @@ describe('runAgent', () => {
     expect(out.answer.text).toMatch(/tool budget/);
   });
 
-  it('rejects a think action missing summary as a parse error', async () => {
+  it('rejects a think action missing summary as a parse error (first refunded)', async () => {
     const llm = scriptedLlm([
       JSON.stringify({ action: 'think' }),
       JSON.stringify({
@@ -311,7 +365,8 @@ describe('runAgent', () => {
       }),
     ]);
     const out = await runAgent(baseInput, ctx, llm);
-    expect(out.iterations).toBe(2);
+    // Phase 1A — first parse failure is refunded, so iterations === 1.
+    expect(out.iterations).toBe(1);
     expect(out.reasoningSteps).toHaveLength(0);
     expect(out.answer.text).toBe('recovered');
   });
@@ -321,6 +376,122 @@ describe('runAgent', () => {
     const out = await runAgent(baseInput, ctx, llm);
     expect(out.reasoningSteps).toEqual([]);
     expect(out.stub).toBe(true);
+  });
+
+  // ──────────────────────────────────────────────────────────────────
+  // Phase 1B — research-mode LLM-knowledge fallback
+  // ──────────────────────────────────────────────────────────────────
+
+  it('research mode: answer-from-knowledge returns isLLMKnowledge + synthetic llm-intrinsic source', async () => {
+    const llm = scriptedLlm([
+      // First, model calls a research tool that comes up empty (stub
+      // fixtures still return rows, but the test only cares about
+      // dispatch shape — see the route's behavior end-to-end).
+      JSON.stringify({
+        action: 'tool',
+        tool: 'searchPMC',
+        args: { query: 'tirzepatide starting dose' },
+      }),
+      // Then it falls back to training knowledge.
+      JSON.stringify({
+        action: 'answer-from-knowledge',
+        text: 'Tirzepatide typically starts at 2.5 mg subcut weekly, titrated monthly.',
+        topic: 'tirzepatide dosing',
+      }),
+    ]);
+    const out = await runAgent(
+      { ...baseInput, mode: 'research', question: 'starting dose for tirzepatide?' },
+      ctx,
+      llm,
+    );
+    expect(out.answer.isLLMKnowledge).toBe(true);
+    expect(out.answer.isClarification).toBe(false);
+    expect(out.answer.sources).toEqual([
+      { kind: 'llm-intrinsic', id: 'sonnet-4-5', label: 'LLM training knowledge' },
+    ]);
+    expect(out.answer.text).toMatch(/tirzepatide/i);
+  });
+
+  it('chart mode: answer-from-knowledge is rejected with wrong_mode_fallback (no LLM-knowledge leak)', async () => {
+    // Phase 1B fail-closed: a model that tries to fall back from chart
+    // mode must NEVER return an LLM-knowledge answer. The agent
+    // injects a wrong_mode_fallback tool-result and the loop continues
+    // until the model produces a real source-grounded answer (or hits
+    // the budget-exhausted clarification).
+    const llm = scriptedLlm([
+      JSON.stringify({
+        action: 'answer-from-knowledge',
+        text: 'General medical knowledge on ACL recovery says…',
+        topic: 'ACL recovery',
+      }),
+      JSON.stringify({
+        action: 'answer',
+        text: 'I need to look that up against the chart.',
+        sources: [{ kind: 'patient', id: 'pat-1', label: 'Patient' }],
+      }),
+    ]);
+    const out = await runAgent({ ...baseInput, mode: 'chart' }, ctx, llm);
+    expect(out.answer.isLLMKnowledge).toBe(false);
+    expect(out.answer.sources[0]?.kind).toBe('patient');
+    expect(out.answer.sources.find((s) => s.kind === 'llm-intrinsic')).toBeUndefined();
+  });
+
+  it('parser rejects answer-from-knowledge missing text or topic', async () => {
+    // Missing text → parse error → refunded once, second valid answer
+    // lands at iterations=1.
+    const llm = scriptedLlm([
+      JSON.stringify({ action: 'answer-from-knowledge', topic: 'x' }),
+      JSON.stringify({
+        action: 'answer-from-knowledge',
+        text: 'recovered',
+        topic: 'x',
+      }),
+    ]);
+    const out = await runAgent(
+      { ...baseInput, mode: 'research', question: 'q' },
+      ctx,
+      llm,
+    );
+    expect(out.iterations).toBe(1);
+    expect(out.answer.isLLMKnowledge).toBe(true);
+    expect(out.answer.text).toBe('recovered');
+  });
+
+  it('truncates answer-from-knowledge topic at 80 chars', async () => {
+    const longTopic = 't'.repeat(200);
+    const llm = scriptedLlm([
+      JSON.stringify({
+        action: 'answer-from-knowledge',
+        text: 'short answer',
+        topic: longTopic,
+      }),
+    ]);
+    const out = await runAgent(
+      { ...baseInput, mode: 'research', question: 'q' },
+      ctx,
+      llm,
+    );
+    // The parser truncates topic to 80; we don't surface topic in the
+    // answer envelope, but the action must still resolve cleanly.
+    expect(out.answer.isLLMKnowledge).toBe(true);
+    expect(out.answer.text).toBe('short answer');
+  });
+
+  it('non-fallback research answers leave isLLMKnowledge false', async () => {
+    const llm = scriptedLlm([
+      JSON.stringify({
+        action: 'answer',
+        text: 'Literature says X.',
+        sources: [{ kind: 'literature', id: 'PMC1', label: 'Smith 2024 (NEJM)' }],
+      }),
+    ]);
+    const out = await runAgent(
+      { ...baseInput, mode: 'research', question: 'q' },
+      ctx,
+      llm,
+    );
+    expect(out.answer.isLLMKnowledge).toBe(false);
+    expect(out.answer.sources[0]?.kind).toBe('literature');
   });
 
   it('drops invalid source entries (kind / id / label malformed)', async () => {

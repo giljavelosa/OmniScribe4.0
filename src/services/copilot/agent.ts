@@ -3,6 +3,7 @@ import { getLLMService } from '@/services/llm';
 import { runTool, type AskSource, type Draft } from './tools';
 import { RESEARCH_TOOL_NAMES, runResearchTool } from './research-tools';
 import { DRAFT_TOOL_NAMES } from './draft-tools';
+import { buildPersonaSystemBlock } from './persona';
 
 /**
  * Ask-mode agent runner — Unit 27.
@@ -77,6 +78,13 @@ export type AgentAnswer = {
   /** True when the agent didn't supply sources — UI renders as a
    *  clarification question instead of an answer. */
   isClarification: boolean;
+  /** Phase 1B — research-mode-only fallback. True when the model
+   *  emitted `{ action: 'answer-from-knowledge' }` after exhausting
+   *  the vetted-literature corpus. The UI must render a yellow
+   *  "LLM knowledge" badge above the bubble AND a yellow
+   *  llm-intrinsic source pill so the clinician sees the trust
+   *  framing twice. Chart mode never sets this true (fail-closed). */
+  isLLMKnowledge: boolean;
 };
 
 export type ReasoningStep = {
@@ -116,7 +124,8 @@ patient during their visit. You have access to read-only lookup tools:
   In-app (always available):
   - lookupSignedNote({ noteId })             → returns sections + signedAt
   - lookupFollowUp({ patientId, status? })   → returns up to 10 follow-ups
-  - lookupEpisodeGoals({ episodeId })        → returns active goals
+  - lookupEpisodeGoals({ episodeId })        → returns active goals for ONE episode
+  - lookupPatientGoals({ patientId })        → returns active goals across ALL of the patient's episodes (use when episodeId is none or when you want a cross-episode answer)
   - lookupPatientDemographics({ patientId }) → returns name, dob, sex, mrn
 
   EHR-backed (require a verified patient-to-EHR link — Rule 20):
@@ -126,16 +135,76 @@ patient during their visit. You have access to read-only lookup tools:
   - lookupFhirAllergy({ patientId })
   - lookupFhirCarePlan({ patientId })
 
-When a FHIR tool returns { error: "verified_link_required" }, tell the clinician:
-"This patient isn't linked to an EHR record yet. Confirm the match on the
-patient page to enable EHR-backed answers." Use a single source of
-{ kind: "patient", id: <patientId>, label: "Confirm EHR link" }.
+SEARCH STRATEGY. A clinical value (a vital, a measure, a count) is not only in FHIR —
+goals carry current/target measures, the visit note carries vitals, follow-ups carry
+committed checks. For a clinical-value question, check the relevant in-app tools too,
+not just the FHIR one.
+
+When a FHIR tool returns { error: "verified_link_required" }, the patient has no
+verified EHR link — FHIR is unavailable, but the in-app tools still work. Do NOT make
+"go link an EHR" your answer. Instead:
+  - First try the relevant in-app tools (lookupPatientGoals / lookupEpisodeGoals,
+    lookupFollowUp, lookupSignedNote). If one answers the question, answer from it and
+    cite it (kind: "note" | "goal" | "follow-up").
+  - If no in-app source has the answer, give an honest, definitive answer naming what
+    you checked — e.g. "I don't see any blood-pressure readings in this patient's
+    visit notes or goals here." Attach { kind: "patient", id: <patientId>,
+    label: "Confirm EHR link" } as a source so the answer stays definitive and the
+    clinician keeps the option to link an EHR. You MAY add one short sentence that
+    linking an EHR would surface that data — as a secondary note, never the whole answer.
 
 When a FHIR tool returns { error: "fhir_rate_limit_exceeded" }, answer with
 what you already have and tell the clinician you've hit the session lookup
 budget for EHR data.
 
 Sources for FHIR-derived facts use { kind: "fhir", id: <fhirResourceId>, label }.
+
+═══ ACTION TOOLS — produce a draft, clinician confirms ═══
+
+You ALSO have access to draft-producing tools. These do NOT mutate any
+record by themselves — they return a draft the clinician will confirm via
+a DraftCard in the UI. Use them when the clinician asks you to CREATE,
+DRAFT, PROPOSE, SCHEDULE, SET, or WRITE something.
+
+  - draftPatientMessage({ patientId, noteId, topic? })
+      → drafts a short plain-language patient message
+  - proposeFollowUpCadence({ patientId, noteId })
+      → drafts a follow-up commitment for the next visit
+      ← use this when the clinician says any of:
+         "create a follow-up plan", "draft a follow-up", "set a follow-up",
+         "schedule a recheck", "recheck X next visit", "add to next visit",
+         "check Y at the next visit", "follow up in N weeks/days/months"
+  - suggestReferralLetterContent({ patientId, noteId, specialty? })
+      → drafts a brief referral letter
+
+ACTION TOOL RULES (read these carefully):
+
+1. When the clinician's question is clearly an action request (verbs like
+   "create / draft / propose / write / schedule / set / add for next visit"),
+   call the matching action tool IMMEDIATELY. Do NOT run read lookups first
+   — the action tool already loads the patient context internally.
+
+2. After the action tool returns, give a SHORT answer (1 sentence) that
+   tells the clinician the draft is ready below and to review and confirm
+   it. Sources are NOT required for action-tool answers — pass an empty
+   sources array (just []). The DraftCard renders separately in the UI.
+
+3. NEVER refuse an action request with "I need more information" or
+   "I couldn't gather enough information" when the clinician's intent is
+   clear. Call the appropriate draft tool; the tool does its own context
+   loading.
+
+EXAMPLE — action-mode flow (do this exactly):
+
+  User: "create a follow-up plan: check ROM next visit"
+  You:  { "action": "tool",
+          "tool": "proposeFollowUpCadence",
+          "args": { "patientId": "<from context>", "noteId": "<from context>" } }
+  Tool: { draft: { kind: "followup-cadence", content: "Recheck ROM next visit.",
+                   draftId: "..." }, ... }
+  You:  { "action": "answer",
+          "text": "Drafted a follow-up — review and tap Accept to add it.",
+          "sources": [] }
 
 ═══ ABSOLUTE RULES ═══
 
@@ -198,11 +267,17 @@ You have access to TWO research lookup tools:
    or recommend for a specific patient. The clinician decides whether the
    evidence applies.
 
-2. CITE EVERY CLAIM.
-   Every fact in your answer must cite at least one entry from a tool result
+2. CITE EVERY CLAIM — when you use { "action": "answer" }.
+   Every fact in an "answer" must cite at least one entry from a tool result
    via the sources array. Use kind: "literature" with the source id (PMC id
    or attested-literature id) and a short citation label like
    "Smith 2024 (NEJM)".
+
+   EXCEPTION — when the literature tools came up empty or returned stub
+   abstracts that don't address the question, do NOT force a literature
+   citation onto an answer that isn't actually from those sources. Use the
+   "answer-from-knowledge" action instead (defined below). The UI labels
+   that path so the clinician sees the trust signal clearly.
 
 3. NO PATIENT-SPECIFIC TAILORING.
    If the clinician asks "should I prescribe X for my patient?" answer with
@@ -231,6 +306,47 @@ answer). Use them sparingly — 1-3 per answer is plenty. Each summary
 MUST be 120 characters or fewer.
 
 If you don't need to think, skip straight to a tool call or answer.
+
+═══ FALLBACK TO TRAINING KNOWLEDGE — Research mode only ═══
+
+The literature corpus is intentionally narrow today (stub PMC + a
+limited attested set). When the literature tools don't surface what
+the clinician actually needs, you MUST take the fallback path:
+
+  { "action": "answer-from-knowledge",
+    "text": "<your best general-medical-knowledge answer>",
+    "topic": "<short topic, e.g. 'tirzepatide starting dose'>" }
+
+Trigger conditions (any one is enough — DO NOT keep searching once
+you see one of these):
+  - A literature tool returned 0 results.
+  - The returned abstracts begin with "[stub]" — that means the
+    real corpus isn't wired yet and you're seeing placeholder data.
+  - The returned papers are tangentially related but don't actually
+    answer the specific question (e.g. clinician asks "starting dose
+    for X" and the citations are about long-term outcomes).
+
+DO NOT:
+  - Tell the clinician the corpus is "stubbed", "in development",
+    "pending integration", or that "once the real PMC feeds are live
+    I'll be able to…". That's OUR concern, not theirs. They asked a
+    clinical question and they want the answer.
+  - Return { "action": "answer" } with literature pills when the
+    cited papers don't actually contain what you're asserting — the
+    pills mislead the clinician about what's in the source.
+  - Use the clarification path ({ "action": "answer", sources: [] })
+    just because you have nothing literature-cited to say. Research
+    mode has the answer-from-knowledge escape valve for exactly this
+    case.
+
+The clinician's UI labels every answer-from-knowledge response TWICE:
+a yellow "LLM knowledge" badge above the bubble AND a yellow
+llm-intrinsic source pill. The trust framing is visible; the
+clinician knows the answer isn't literature-cited and expects a
+useful answer anyway.
+
+Patient-specific advice is still off-limits — Research mode is
+patient-agnostic by design, regardless of which action you use.
 
 The very first character of every response is { and the very last is }.
 `.trim();
@@ -266,10 +382,21 @@ export async function runAgent(
   // return wrong_mode_tool — fail-closed against the model blending
   // chart + research sources.
   const mode: AgentMode = input.mode ?? 'chart';
-  const systemPrompt = mode === 'research' ? RESEARCH_SYSTEM_PROMPT : ASK_SYSTEM_PROMPT;
+  // Unit 42 / Phase 2 — prepend the Miss Cleo persona block at call
+  // time so the exported ASK_SYSTEM_PROMPT / RESEARCH_SYSTEM_PROMPT
+  // constants remain stable (existing agent tests assert against
+  // their substrings). The persona block owns voice + anti-drift;
+  // the existing prompts own the tool catalog + OUTPUT FORMAT contract.
+  const baseSystemPrompt = mode === 'research' ? RESEARCH_SYSTEM_PROMPT : ASK_SYSTEM_PROMPT;
+  const systemPrompt = `${buildPersonaSystemBlock(mode)}\n\n${baseSystemPrompt}`;
 
   let stub = false;
   let iterations = 0;
+  // Phase 1A — refund the iteration the first time a parse fails so a
+  // single JSON-mode hiccup (e.g. an unexpected markdown fence the
+  // fence-stripper missed) doesn't tax the model's tool budget. Capped
+  // at 1 so a model that keeps emitting non-JSON can't hang the loop.
+  let parseRetriesUsed = 0;
   while (iterations < MAX_ITERATIONS) {
     iterations += 1;
     const userPrompt = buildUserPrompt(input, turns, iterations === MAX_ITERATIONS, mode);
@@ -294,6 +421,7 @@ export async function runAgent(
           text: 'Ask mode runs against Bedrock — set AWS_BEARER_TOKEN_BEDROCK + BEDROCK_MODEL_ID to use it in real mode.',
           sources: [],
           isClarification: true,
+          isLLMKnowledge: false,
         },
         toolCalls,
         drafts,
@@ -305,7 +433,14 @@ export async function runAgent(
 
     const parsed = parseModelOutput(result.text);
     if (!parsed.ok) {
-      // Retry once more with a parse-error hint, otherwise bail.
+      // Phase 1A — refund the very first parse failure per run so the
+      // model gets one real retry instead of losing 25% of its tool
+      // budget to a malformed JSON envelope. Subsequent parse failures
+      // are iteration-consuming so a stuck model still terminates.
+      if (parseRetriesUsed < 1) {
+        parseRetriesUsed += 1;
+        iterations -= 1;
+      }
       turns.push({
         role: 'tool-result',
         content: `previous response failed validation: ${parsed.error}. Return strict JSON.`,
@@ -389,6 +524,40 @@ export async function runAgent(
       continue;
     }
 
+    // Phase 1B — research-only LLM-knowledge fallback.
+    // Chart mode rejects with a wrong_mode_fallback tool-result and
+    // keeps looping so the model is forced back into the
+    // tool/answer/clarification flow. Research mode converts the
+    // action into an AgentAnswer with `isLLMKnowledge: true` plus a
+    // synthetic `llm-intrinsic` source pill.
+    if (parsed.value.action === 'answer-from-knowledge') {
+      if (mode === 'chart') {
+        turns.push({
+          role: 'tool-result',
+          content: JSON.stringify({
+            tool: 'answer-from-knowledge',
+            result: { error: 'wrong_mode_fallback:answer-from-knowledge_is_research_only' },
+          }),
+        });
+        continue;
+      }
+      return {
+        answer: {
+          text: parsed.value.text,
+          sources: [
+            { kind: 'llm-intrinsic', id: 'sonnet-4-5', label: 'LLM training knowledge' },
+          ],
+          isClarification: false,
+          isLLMKnowledge: true,
+        },
+        toolCalls,
+        drafts,
+        reasoningSteps,
+        iterations,
+        stub,
+      };
+    }
+
     // action === 'answer'
     const sources = parsed.value.sources ?? [];
     return {
@@ -396,6 +565,7 @@ export async function runAgent(
         text: parsed.value.text,
         sources,
         isClarification: sources.length === 0,
+        isLLMKnowledge: false,
       },
       toolCalls,
       drafts,
@@ -411,6 +581,7 @@ export async function runAgent(
       text: "I couldn't gather enough information to answer that in the available tool budget. Try rephrasing or asking a more specific question.",
       sources: [],
       isClarification: true,
+      isLLMKnowledge: false,
     },
     toolCalls,
     drafts,
@@ -437,11 +608,15 @@ function buildUserPrompt(
           `<context>`,
           `  patientId: ${input.patientId}`,
           `  noteId: ${input.noteId}`,
-          input.episodeId ? `  episodeId: ${input.episodeId}` : null,
+          // Phase 1A — be explicit when there is no episode of care so
+          // the model can route goal questions through
+          // lookupPatientGoals instead of looping on lookupEpisodeGoals
+          // with no episodeId to pass.
+          input.episodeId
+            ? `  episodeId: ${input.episodeId}`
+            : `  episodeId: (none — this visit has no episode of care; use lookupPatientGoals for goals)`,
           `</context>`,
-        ]
-          .filter(Boolean)
-          .join('\n');
+        ].join('\n');
 
   const conversation = turns
     .map((t) => {
@@ -467,10 +642,25 @@ type ParsedAction =
   | { action: 'answer'; text: string; sources?: AskSource[] }
   /** Unit 31 — free intra-step annotation. Does NOT consume an iteration
    *  slot; the loop accumulates it into reasoningSteps and continues. */
-  | { action: 'think'; summary: string };
+  | { action: 'think'; summary: string }
+  /** Phase 1B — research-mode-only LLM-knowledge fallback. The model
+   *  emits this after literature tools have come up empty; the agent
+   *  converts it to an AgentAnswer with `isLLMKnowledge: true` plus a
+   *  synthetic `llm-intrinsic` source. Chart mode rejects this action
+   *  with a `wrong_mode_fallback` tool-result (fail-closed). */
+  | { action: 'answer-from-knowledge'; text: string; topic: string };
+
+/** Strip a markdown ```json … ``` (or bare ```) fence if present.
+ *  Defensive — Sonnet sometimes wraps JSON-mode output in a fence
+ *  despite the jsonMode flag, which would otherwise burn a full
+ *  iteration on a parse failure (see Phase 1A iteration refund). */
+function stripJsonFence(raw: string): string {
+  const m = raw.match(/^\s*```(?:json)?\s*\n([\s\S]*?)\n\s*```\s*$/);
+  return m && m[1] !== undefined ? m[1] : raw;
+}
 
 function parseModelOutput(raw: string): ParsedOutput {
-  const trimmed = raw.trim();
+  const trimmed = stripJsonFence(raw).trim();
   let json: unknown;
   try {
     json = JSON.parse(trimmed);
@@ -502,6 +692,16 @@ function parseModelOutput(raw: string): ParsedOutput {
       : obj.summary;
     return { ok: true, value: { action: 'think', summary } };
   }
+  if (obj.action === 'answer-from-knowledge') {
+    if (typeof obj.text !== 'string') {
+      return { ok: false, error: 'answer-from-knowledge action missing text' };
+    }
+    if (typeof obj.topic !== 'string') {
+      return { ok: false, error: 'answer-from-knowledge action missing topic' };
+    }
+    const topic = obj.topic.length > 80 ? obj.topic.slice(0, 80) : obj.topic;
+    return { ok: true, value: { action: 'answer-from-knowledge', text: obj.text, topic } };
+  }
   return { ok: false, error: `unknown action: ${String(obj.action)}` };
 }
 
@@ -517,7 +717,8 @@ function parseSources(raw: unknown): AskSource[] {
         s.kind === 'goal' ||
         s.kind === 'patient' ||
         s.kind === 'fhir' ||
-        s.kind === 'literature') &&
+        s.kind === 'literature' ||
+        s.kind === 'llm-intrinsic') &&
       typeof s.id === 'string' &&
       typeof s.label === 'string'
     ) {

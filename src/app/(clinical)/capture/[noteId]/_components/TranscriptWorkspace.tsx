@@ -73,7 +73,13 @@ export function TranscriptWorkspace({ className }: { className?: string }) {
 }
 
 function speakerColor(speaker: number | null) {
-  if (speaker === 0 || speaker === 1) return 'text-[var(--speaker-1)]';
+  // null = partial/unknown — render in muted foreground, not a speaker color.
+  // 0    = Soniox "unassigned" — distinct from speaker 1 so clinicians notice.
+  // 1    = first diarized speaker (typically the clinician).
+  // 2    = second diarized speaker (typically the patient).
+  if (speaker === null) return 'text-muted-foreground';
+  if (speaker === 0) return 'text-muted-foreground italic';
+  if (speaker === 1) return 'text-[var(--speaker-1)]';
   if (speaker === 2) return 'text-[var(--speaker-2)]';
   return 'text-foreground';
 }
@@ -89,10 +95,60 @@ function EmptyState({ state }: { state: ReturnType<typeof useRecordingState>['ki
         ? 'Finalizing the recording…'
         : state === 'complete'
           ? 'Capture complete.'
-          : 'Tap Start recording to begin.';
+          : 'Recording will start in a moment.';
+  // Animate the waveform while we're actively listening or warming up; keep
+  // it static for finalize/complete so the pane reads as "done", not "live".
+  const animate =
+    state === 'idle' || state === 'requesting-mic' || state === 'recording' || state === 'paused';
   return (
-    <div className="grid place-items-center h-full text-sm text-muted-foreground">
-      {copy}
+    <div className="grid place-items-center h-full">
+      <div className="flex flex-col items-center gap-4 px-4 text-center">
+        <WaveformGlyph animate={animate} />
+        <p className="text-sm text-muted-foreground max-w-xs">{copy}</p>
+      </div>
     </div>
+  );
+}
+
+/**
+ * Subtle 4-wave SVG. Stays in `text-muted-foreground/30` so it never competes
+ * with the live transcript that replaces it, but gives the pane visual
+ * intentionality (vs. a blank bordered box that looks like an error state).
+ */
+function WaveformGlyph({ animate }: { animate: boolean }) {
+  return (
+    <svg
+      width="120"
+      height="48"
+      viewBox="0 0 120 48"
+      fill="none"
+      aria-hidden="true"
+      className="text-muted-foreground/40"
+    >
+      <path
+        d="M0 24 Q 10 8, 20 24 T 40 24 T 60 24 T 80 24 T 100 24 T 120 24"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        fill="none"
+        strokeLinecap="round"
+        className={animate ? 'motion-safe:animate-pulse' : undefined}
+      />
+      <path
+        d="M0 24 Q 10 16, 20 24 T 40 24 T 60 24 T 80 24 T 100 24 T 120 24"
+        stroke="currentColor"
+        strokeWidth="1"
+        fill="none"
+        strokeLinecap="round"
+        opacity="0.5"
+      />
+      <path
+        d="M0 24 Q 10 36, 20 24 T 40 24 T 60 24 T 80 24 T 100 24 T 120 24"
+        stroke="currentColor"
+        strokeWidth="1"
+        fill="none"
+        strokeLinecap="round"
+        opacity="0.5"
+      />
+    </svg>
   );
 }

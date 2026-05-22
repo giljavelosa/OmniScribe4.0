@@ -10,6 +10,7 @@ import { StatusBanner } from '@/components/ui/status-banner';
 import { PatientIdentityHeader } from '@/components/patients/patient-identity-header';
 import { SectionProgressStrip } from '@/components/notes/section-progress-strip';
 import { OpenFollowUpsCard, type CopilotFollowUp } from '@/components/copilot/cards/open-followups-card';
+import { FollowUpsForNextVisit, type NextVisitFollowUp } from './follow-ups-for-next-visit';
 import { SseStatusChip } from '@/components/ui/sse-status-chip';
 import { useSseStream } from '@/lib/sse/use-sse-stream';
 import { LateEntryBanner } from '@/components/notes/late-entry-banner';
@@ -70,6 +71,13 @@ type Props = {
    *  surface. Optimistic chip mutations stay local to the card; the next
    *  navigation re-fetches authoritative state. */
   copilotFollowUps: CopilotFollowUp[];
+  /** Follow-up rows whose originNoteId === this note. Feeds the new
+   *  "Follow-ups for next visit" card so the clinician can pre-stage
+   *  commitments before signing. */
+  nextVisitFollowUps: NextVisitFollowUp[];
+  /** True when the Plan section's text matches the follow-up regex helper.
+   *  Controls whether the soft nudge banner shows on the new card. */
+  planHasFollowUps: boolean;
 };
 
 /**
@@ -80,7 +88,13 @@ type Props = {
  * Re-fetches /api/notes/[id] on every SECTIONS event so the SectionAccordion's
  * content stays current with what the worker wrote.
  */
-export function ReviewClient({ noteId, initial, copilotFollowUps }: Props) {
+export function ReviewClient({
+  noteId,
+  initial,
+  copilotFollowUps,
+  nextVisitFollowUps,
+  planHasFollowUps,
+}: Props) {
   const router = useRouter();
   const [snap, setSnap] = useState<ReviewSnapshot>(initial);
 
@@ -240,6 +254,12 @@ export function ReviewClient({ noteId, initial, copilotFollowUps }: Props) {
             cells={progress}
             readyForSign={readyForSign}
             noteStatus={snap.status}
+          />
+          <FollowUpsForNextVisit
+            noteId={noteId}
+            initialRows={nextVisitFollowUps}
+            planHasFollowUps={planHasFollowUps}
+            editable={!isSigned}
           />
           <OpenFollowUpsCard
             followUps={copilotFollowUps}

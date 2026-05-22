@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useRef, useState, useTransition } from 'react';
+import { useCallback, useEffect, useRef, useState, useTransition } from 'react';
 import Link from 'next/link';
 import { CornerUpRight, Loader2, Send, Sparkles, User, X } from 'lucide-react';
 
@@ -11,12 +11,37 @@ import { StatusBanner } from '@/components/ui/status-banner';
 import { cn } from '@/lib/cn';
 import { DraftCard } from './draft-card';
 import { ReasoningChain, type ReasoningStep } from './reasoning-chain';
+import { COPILOT_DISPLAY_NAME, buildGreeting } from '@/services/copilot/persona';
+import type { CopilotSurface } from './copilot-shell';
 
 /** Unit 31 — prefix the inline Redirect composer pre-fills with so the
  *  clinician sees the system's framing before typing their pivot. */
 const REDIRECT_PREFIX = 'Pivot from this answer: ';
 
-type SourceKind = 'note' | 'follow-up' | 'goal' | 'patient' | 'fhir' | 'literature';
+/** Heuristic: does this user message look like a follow-up creation request?
+ *  Matches the same vocabulary the agent's system prompt teaches the model
+ *  to route to proposeFollowUpCadence. When the agent fails to call the
+ *  right tool and falls back to a "couldn't gather information" clarification,
+ *  we surface a one-line hint pointing the clinician to the explicit
+ *  "Add follow-up" button on /review. */
+const FOLLOWUP_ACTION_HINT =
+  /\b(create|draft|propose|write|schedule|set|add)\b.*\b(follow.?up|recheck|next\s+visit)\b/i;
+function looksLikeFollowUpAction(text: string): boolean {
+  return FOLLOWUP_ACTION_HINT.test(text);
+}
+
+type SourceKind =
+  | 'note'
+  | 'follow-up'
+  | 'goal'
+  | 'patient'
+  | 'fhir'
+  | 'literature'
+  /** Phase 1B — defensive parity with research-surface. Chart mode
+   *  must never produce this kind (agent gates with
+   *  wrong_mode_fallback), but if it ever appears we render as a
+   *  neutral text chip rather than throwing. */
+  | 'llm-intrinsic';
 
 type Source = {
   kind: SourceKind;
@@ -70,15 +95,53 @@ type ChatMessage = {
 export function AskSurface({
   patientId,
   noteId,
+  clinicianName,
+  patientFirstName,
+  surface,
+  greetedRef,
 }: {
   patientId: string;
   noteId: string;
+  /** Unit 42 — used in the first-open greeting bubble + empty-state
+   *  intro. Optional so legacy mount sites still render the surface;
+   *  the persona module falls back to "Hi there" when absent. */
+  clinicianName?: string | null;
+  /** Unit 42 — patient first name only. */
+  patientFirstName?: string | null;
+  /** Unit 42 — routes greeting copy (prepare vs capture vs review vs
+   *  patient-cockpit etc.). Defaults to 'review' which produces the
+   *  most generic chart-mode greeting. */
+  surface?: CopilotSurface;
+  /** Unit 42 — session-persistent guard owned by CopilotShell so
+   *  closing + reopening the Sheet never re-greets within the same
+   *  page session. Optional so stand-alone test/storybook mounts
+   *  still greet (a fresh ref is created when absent). */
+  greetedRef?: React.MutableRefObject<boolean>;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const scrollAnchorRef = useRef<HTMLDivElement | null>(null);
+  const localGreetedRef = useRef(false);
+  const greetedRefResolved = greetedRef ?? localGreetedRef;
+
+  useEffect(() => {
+    if (greetedRefResolved.current) return;
+    if (messages.length > 0) return;
+    greetedRefResolved.current = true;
+    const greeting = buildGreeting({
+      clinicianName: clinicianName ?? null,
+      patientFirstName: patientFirstName ?? null,
+      surface: surface ?? 'review',
+      mode: 'chart',
+    });
+    setMessages([{ role: 'assistant', content: greeting }]);
+    // Intentional: greeting fires once per session (ref guard). Names
+    // updating mid-session must not re-greet — that would jarringly
+    // break the conversation flow.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const send = useCallback(
     (text: string) => {
@@ -139,22 +202,42 @@ export function AskSurface({
     [messages, noteId, patientId, pending],
   );
 
+  // Unit 42 — example chips remain visible until the clinician sends
+  // their first real message. The greeting bubble itself counts as a
+  // message, so use a role-aware check instead of `messages.length === 0`.
+  const hasUserMessage = messages.some((m) => m.role === 'user');
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
-        {messages.length === 0 && (
+        {messages.map((m, i) => {
+          // The previous user turn (if any) — used to detect "the clinician
+          // asked for a follow-up creation but the agent fell back to a
+          // clarification" so we can surface a hint pointing to the
+          // /review Add follow-up button as a safety net.
+          let priorUserText: string | null = null;
+          for (let j = i - 1; j >= 0; j -= 1) {
+            const prior = messages[j];
+            if (prior && prior.role === 'user') {
+              priorUserText = prior.content;
+              break;
+            }
+          }
+          return (
+            <MessageBubble
+              key={i}
+              message={m}
+              patientId={patientId}
+              noteId={noteId}
+              priorUserText={priorUserText}
+              onRedirect={(pivot) => send(pivot)}
+              disabled={pending}
+            />
+          );
+        })}
+        {!hasUserMessage && (
           <EmptyState onPick={(q) => send(q)} disabled={pending} />
         )}
-        {messages.map((m, i) => (
-          <MessageBubble
-            key={i}
-            message={m}
-            patientId={patientId}
-            noteId={noteId}
-            onRedirect={(pivot) => send(pivot)}
-            disabled={pending}
-          />
-        ))}
         {pending && (
           <div className="flex items-start gap-2 text-sm text-muted-foreground">
             <Sparkles className="h-3.5 w-3.5 mt-1" aria-hidden />
@@ -205,12 +288,19 @@ function MessageBubble({
   message,
   patientId,
   noteId,
+  priorUserText,
   onRedirect,
   disabled,
 }: {
   message: ChatMessage;
   patientId: string;
   noteId: string;
+  /** The text of the user turn immediately preceding this assistant
+   *  message. Used only for the follow-up-action fallback hint — when
+   *  the user asked something like "create a follow-up plan" but the
+   *  agent returned a clarification, we surface a hint pointing to the
+   *  /review Add follow-up button. Null for the user's own bubbles. */
+  priorUserText: string | null;
   /** Unit 31 — Redirect button delegates back to the parent's send()
    *  so audit + history pipeline doesn't fork. The clinician's pivot
    *  enters the conversation as a normal user message. */
@@ -374,6 +464,25 @@ function MessageBubble({
           ))}
         </div>
       )}
+      {/* Safety-net hint: the user clearly asked for a follow-up creation
+          but the agent returned a clarification with no drafts. Point them
+          to the explicit /review entry point so they're never stuck. */}
+      {!isUser &&
+        message.isClarification &&
+        (!message.drafts || message.drafts.length === 0) &&
+        priorUserText &&
+        looksLikeFollowUpAction(priorUserText) && (
+          <div className="w-full max-w-[95%] rounded-lg border border-border bg-muted/30 p-2 text-xs text-muted-foreground">
+            Need to add a follow-up directly?{' '}
+            <Link
+              href={`/review/${noteId}`}
+              className="text-foreground underline-offset-2 hover:underline"
+            >
+              Use the &quot;Add follow-up&quot; button on the review screen
+            </Link>
+            .
+          </div>
+        )}
     </div>
   );
 }
@@ -399,6 +508,10 @@ function SourceChip({ source }: { source: Source }) {
 }
 
 function EmptyState({ onPick, disabled }: { onPick: (q: string) => void; disabled: boolean }) {
+  // Unit 42 — the persona-driven greeting bubble carries the intro
+  // (built by buildGreeting). The empty-state below the bubble keeps
+  // the example chips so the clinician has discoverable starting
+  // questions, with a one-line persona intro above per the spec.
   const examples = [
     'What was the plan from her last visit?',
     'Are there any open follow-ups for this patient?',
@@ -406,11 +519,9 @@ function EmptyState({ onPick, disabled }: { onPick: (q: string) => void; disable
   ];
   return (
     <div className="space-y-3 py-2">
-      <p className="text-sm text-muted-foreground">
-        Ask anything about this patient — I&apos;ll only answer from attested sources (signed
-        notes, follow-ups, episode goals, demographics) and cite each fact.
+      <p className="text-xs text-muted-foreground italic">
+        Try asking {COPILOT_DISPLAY_NAME}:
       </p>
-      <p className="text-xs text-muted-foreground italic">Try:</p>
       <div className="flex flex-col gap-1">
         {examples.map((q) => (
           <button

@@ -37,6 +37,9 @@ type Props = {
    *  bundle. Null when patient has no verified PatientFhirIdentity or
    *  the cache is empty / fully stale; bundle renders nothing then. */
   fhirContext: ExternalEhrContext | null;
+  /** Forwarded to RecordingControls. True for a fresh LIVE PREPARING note;
+   *  triggers a 1.5s countdown then auto-fires start(). */
+  autostart?: boolean;
 };
 
 /**
@@ -57,6 +60,7 @@ export function DesktopCaptureLayout({
   nowMs,
   hasPriorSignedNote,
   fhirContext,
+  autostart,
 }: Props) {
   return (
     <div className="hidden lg:flex flex-col h-[calc(100vh-3.25rem)]">
@@ -109,7 +113,7 @@ export function DesktopCaptureLayout({
       </div>
 
       <footer className="border-t border-border bg-card px-6 py-3">
-        <RecordingControls noteId={noteId} />
+        <RecordingControls noteId={noteId} autostart={autostart} />
       </footer>
     </div>
   );

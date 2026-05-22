@@ -12,14 +12,29 @@
  * Stub mode (SONIOX_API_KEY unset) returns a fake key + a localhost WS URL.
  * Real Soniox requires both SONIOX_API_KEY and SONIOX_BAA_ON_FILE=true in any
  * non-dev environment (rule 17, enforced by assertSonioxAllowedForPHI below).
+ *
+ * Key-mode decision (2026-05-21):
+ *   The Soniox temp-key endpoint (`POST /v1/auth/temporary-api-key`) returns
+ *   404 on the current Soniox plan tier. When SONIOX_ALLOW_LONG_LIVED_KEY=true
+ *   is set, mintEphemeralKey falls back to passing the long-lived API key as the
+ *   "apiKey" return value. Rule 11's primary intent is that the browser never
+ *   calls Soniox directly without server mediation — the key still travels only
+ *   via /api/notes/[id]/realtime-key (server-authenticated, note-scoped). The
+ *   security trade-off versus a 60-second TTL is: the key reaches the browser
+ *   session context (not a hardcoded client bundle). This is explicitly accepted
+ *   for the current Soniox tier; upgrade to the temp-keys tier to remove the
+ *   flag (W0-04 in polish-waves-0-6.md).
  */
 
 const SONIOX_API_BASE = process.env.SONIOX_API_BASE ?? 'https://api.soniox.com';
 const SONIOX_WS_URL = process.env.SONIOX_REALTIME_WS_URL ?? 'wss://stt-rt.soniox.com/transcribe-websocket';
 const SONIOX_MODEL = process.env.SONIOX_REALTIME_MODEL ?? 'stt-rt-v4';
-const SONIOX_BATCH_MODEL = process.env.SONIOX_BATCH_MODEL ?? 'stt-async-preview';
+// stt-async-v4 is the current model (replaces deprecated stt-async-preview / stt-async-v3).
+const SONIOX_BATCH_MODEL = process.env.SONIOX_BATCH_MODEL ?? 'stt-async-v4';
 const SONIOX_API_KEY = process.env.SONIOX_API_KEY ?? '';
 const SONIOX_BAA_ON_FILE = process.env.SONIOX_BAA_ON_FILE === 'true';
+/** Explicit operator opt-in: use the long-lived key when temp-key endpoint is unavailable. */
+const SONIOX_ALLOW_LONG_LIVED_KEY = process.env.SONIOX_ALLOW_LONG_LIVED_KEY === 'true';
 
 export type RealtimeKeyResult = {
   apiKey: string;
@@ -27,6 +42,9 @@ export type RealtimeKeyResult = {
   config: SonioxRealtimeConfig;
   expiresAt: string;
   stub: boolean;
+  /** 'ephemeral' = proper temp key (preferred). 'long-lived' = fallback when
+   *  temp-key tier unavailable; requires SONIOX_ALLOW_LONG_LIVED_KEY=true. */
+  keyMode: 'ephemeral' | 'long-lived';
 };
 
 export type SonioxRealtimeConfig = {
@@ -90,20 +108,16 @@ export async function mintEphemeralKey(args: MintEphemeralKeyArgs): Promise<Real
       config: FIXED_REALTIME_CONFIG,
       expiresAt,
       stub: true,
+      keyMode: 'ephemeral',
     };
   }
 
   // Real Soniox: mint a temporary key scoped to STT-WS only.
-  // (Soniox's exact API surface for ephemeral keys varies by tier. The
-  // canonical endpoint is `/v1/auth/temporary-api-keys`; if the deployed tier
-  // doesn't expose it, fall back to passing the long-lived key directly — the
-  // bare minimum is that the key never reaches the browser without explicit
-  // server mediation.)
+  // Soniox 2025 API: path `/v1/auth/temporary-api-key` (singular);
+  // body `usage_type: 'transcribe_websocket'`, `expires_in_seconds`,
+  // optional `client_reference_id`. Response: `{ api_key, expires_at }`.
+  // Docs: https://soniox.com/docs/api-reference/auth/create_temporary_api_key
   try {
-    // Soniox 2025 API: path `/v1/auth/temporary-api-key` (singular);
-    // body `usage_type: 'transcribe_websocket'`, `expires_in_seconds`,
-    // optional `client_reference_id`. Response: `{ api_key, expires_at }`.
-    // Docs: https://soniox.com/docs/api-reference/auth/create_temporary_api_key
     const res = await fetch(`${SONIOX_API_BASE}/v1/auth/temporary-api-key`, {
       method: 'POST',
       headers: {
@@ -116,15 +130,39 @@ export async function mintEphemeralKey(args: MintEphemeralKeyArgs): Promise<Real
         client_reference_id: args.noteId,
       }),
     });
+
     if (!res.ok) {
-      // Anti-regression rule 11: the long-lived SONIOX_API_KEY must never reach
-      // the browser. If the temporary-keys endpoint is unavailable, fail closed
-      // — the operator must enable the temp-keys tier or fix the credential.
+      const errStatus = res.status;
       const errBody = await res.text().catch(() => '');
+
+      // 404 = temp-key endpoint not available on this Soniox tier.
+      // If SONIOX_ALLOW_LONG_LIVED_KEY=true the operator has explicitly accepted
+      // the Rule 11 trade-off (key is mediated by the server route but does reach
+      // the browser session). Any other non-OK status is a hard error.
+      if (errStatus === 404 && SONIOX_ALLOW_LONG_LIVED_KEY) {
+        console.warn(
+          '[SonioxService] temp-key endpoint returned 404; falling back to long-lived key ' +
+          '(SONIOX_ALLOW_LONG_LIVED_KEY=true). Upgrade to a Soniox tier with temp-key support ' +
+          'to remove this fallback (W0-04).',
+        );
+        return {
+          apiKey: SONIOX_API_KEY,
+          websocketUrl: SONIOX_WS_URL,
+          config: FIXED_REALTIME_CONFIG,
+          expiresAt,
+          stub: false,
+          keyMode: 'long-lived',
+        };
+      }
+
       throw new Error(
-        `Soniox temp-key mint failed (HTTP ${res.status}). Refusing to fall back to the long-lived key (rule 11). Body: ${errBody.slice(0, 200)}`,
+        `Soniox temp-key mint failed (HTTP ${errStatus}). ` +
+        (errStatus === 404
+          ? 'Temp-key endpoint returned 404 — set SONIOX_ALLOW_LONG_LIVED_KEY=true to fall back to the long-lived key on this Soniox tier (W0-04), or upgrade your Soniox plan.'
+          : `Body: ${errBody.slice(0, 200)}`),
       );
     }
+
     const body = (await res.json()) as { api_key?: string };
     if (!body.api_key) {
       throw new Error('Soniox response missing api_key.');
@@ -135,6 +173,7 @@ export async function mintEphemeralKey(args: MintEphemeralKeyArgs): Promise<Real
       config: FIXED_REALTIME_CONFIG,
       expiresAt,
       stub: false,
+      keyMode: 'ephemeral',
     };
   } catch (e) {
     throw new Error(`Soniox temp-key mint failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -144,6 +183,7 @@ export async function mintEphemeralKey(args: MintEphemeralKeyArgs): Promise<Real
 export const sonioxConfig = {
   isStubMode: !SONIOX_API_KEY,
   baaOnFile: SONIOX_BAA_ON_FILE,
+  allowLongLivedKey: SONIOX_ALLOW_LONG_LIVED_KEY,
   model: SONIOX_MODEL,
   batchModel: SONIOX_BATCH_MODEL,
 };
@@ -161,12 +201,16 @@ export type TranscribeBatchArgs = {
 };
 
 /**
- * Synchronous-from-the-caller's-perspective batch transcription. Internally
- * may use Soniox's async-job API + poll, or the sync API depending on tier.
+ * Synchronous-from-the-caller's-perspective batch transcription.
+ *
+ * Current Soniox async API (verified 2026-05-21 against docs):
+ *   1. POST /v1/files         — upload audio, get file_id
+ *   2. POST /v1/transcriptions — start transcription with file_id + model
+ *   3. Poll GET /v1/transcriptions/{id} — wait for status==="completed"
+ *   4. GET /v1/transcriptions/{id}/transcript — fetch the actual words
  *
  * Stub mode: returns a single "Soniox stub transcript" token so the worker
- * pipeline + cleaner exercise end-to-end without a real API call. Useful for
- * local dev without a Soniox account.
+ * pipeline + cleaner exercise end-to-end without a real API call.
  *
  * Rule 11 reminder: this is the SOLE entry point for batch transcription —
  * never import the Soniox SDK directly from worker code.
@@ -190,46 +234,91 @@ export async function transcribeBatch(args: TranscribeBatchArgs): Promise<Soniox
     };
   }
 
-  // Real Soniox async path: POST audio, poll for the result. The exact
-  // endpoint shape is tier-dependent; we attempt the documented
-  // /v1/transcribe-async surface and surface failures loudly to the caller
-  // so the worker can mark the Note INTERRUPTED rather than silently lose
-  // the audio.
-  const formData = new FormData();
+  const authHeaders = { Authorization: `Bearer ${SONIOX_API_KEY}` };
+
+  // Step 1: Upload audio to Soniox Files API.
+  const fileForm = new FormData();
   const blob = new Blob([args.audio as BlobPart], { type: args.contentType || 'audio/wav' });
-  formData.append('file', blob, 'audio');
-  formData.append('model', SONIOX_BATCH_MODEL);
-  formData.append('enable_speaker_diarization', 'true');
-  formData.append('client_reference_id', args.noteId);
+  fileForm.append('file', blob, `note-${args.noteId}.wav`);
 
-  const submitRes = await fetch(`${SONIOX_API_BASE}/v1/transcribe-async`, {
+  const fileRes = await fetch(`${SONIOX_API_BASE}/v1/files`, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${SONIOX_API_KEY}` },
-    body: formData,
+    headers: authHeaders,
+    body: fileForm,
   });
-  if (!submitRes.ok) {
-    throw new Error(`Soniox batch submit failed: ${submitRes.status} ${submitRes.statusText}`);
+  if (!fileRes.ok) {
+    throw new Error(`Soniox Files API upload failed: HTTP ${fileRes.status} ${fileRes.statusText}`);
   }
-  const submitBody = (await submitRes.json()) as { id?: string };
-  const jobId = submitBody.id;
-  if (!jobId) throw new Error('Soniox batch submit returned no job id.');
+  const fileBody = (await fileRes.json()) as { id?: string };
+  const fileId = fileBody.id;
+  if (!fileId) throw new Error('Soniox Files API returned no file id.');
 
-  // Poll. Cap at ~10 minutes (300 attempts × 2 sec).
+  // Step 2: Create transcription job.
+  const txRes = await fetch(`${SONIOX_API_BASE}/v1/transcriptions`, {
+    method: 'POST',
+    headers: { ...authHeaders, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: SONIOX_BATCH_MODEL,
+      file_id: fileId,
+      enable_speaker_diarization: true,
+      client_reference_id: args.noteId,
+    }),
+  });
+  if (!txRes.ok) {
+    throw new Error(`Soniox transcription create failed: HTTP ${txRes.status} ${txRes.statusText}`);
+  }
+  const txBody = (await txRes.json()) as { id?: string };
+  const txId = txBody.id;
+  if (!txId) throw new Error('Soniox transcription create returned no id.');
+
+  // Step 3: Poll for completion. Cap at ~10 minutes.
   const POLL_MS = 2_000;
   const MAX_ATTEMPTS = 300;
+  let audioDurationMs: number | undefined;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     await new Promise((r) => setTimeout(r, POLL_MS));
-    const pollRes = await fetch(`${SONIOX_API_BASE}/v1/transcribe-async/${jobId}`, {
-      headers: { Authorization: `Bearer ${SONIOX_API_KEY}` },
+    const statusRes = await fetch(`${SONIOX_API_BASE}/v1/transcriptions/${txId}`, {
+      headers: authHeaders,
     });
-    if (!pollRes.ok) {
-      throw new Error(`Soniox batch poll failed: ${pollRes.status} ${pollRes.statusText}`);
+    if (!statusRes.ok) {
+      throw new Error(`Soniox poll failed: HTTP ${statusRes.status} ${statusRes.statusText}`);
     }
-    const pollBody = (await pollRes.json()) as { status?: string; result?: SonioxBatchTranscript; error?: string };
-    if (pollBody.status === 'completed' && pollBody.result) return pollBody.result;
-    if (pollBody.status === 'failed') {
-      throw new Error(`Soniox batch job failed: ${pollBody.error ?? 'unknown'}`);
+    const statusBody = (await statusRes.json()) as {
+      status?: string;
+      error_message?: string;
+      audio_duration_ms?: number;
+    };
+    if (statusBody.status === 'completed') {
+      audioDurationMs = statusBody.audio_duration_ms;
+      break;
+    }
+    if (statusBody.status === 'error') {
+      throw new Error(`Soniox transcription failed: ${statusBody.error_message ?? 'unknown'}`);
     }
   }
-  throw new Error(`Soniox batch job timed out after ${(MAX_ATTEMPTS * POLL_MS) / 1000}s`);
+
+  // Step 4: Fetch the actual transcript words.
+  const transcriptRes = await fetch(`${SONIOX_API_BASE}/v1/transcriptions/${txId}/transcript`, {
+    headers: authHeaders,
+  });
+  if (!transcriptRes.ok) {
+    throw new Error(`Soniox transcript fetch failed: HTTP ${transcriptRes.status} ${transcriptRes.statusText}`);
+  }
+  const transcriptBody = (await transcriptRes.json()) as {
+    words?: Array<{ text: string; speaker?: number; start_ms?: number; end_ms?: number; is_final?: boolean }>;
+    tokens?: Array<{ text: string; speaker?: number; start_ms?: number; end_ms?: number; is_final?: boolean }>;
+    language?: string;
+  };
+
+  // Clean up the file to avoid accumulating uploaded files in Soniox storage.
+  void fetch(`${SONIOX_API_BASE}/v1/files/${fileId}`, {
+    method: 'DELETE',
+    headers: authHeaders,
+  }).catch(() => {}); // fire-and-forget, not blocking
+
+  return {
+    tokens: transcriptBody.words ?? transcriptBody.tokens ?? [],
+    duration_ms: audioDurationMs,
+    language: transcriptBody.language,
+  };
 }

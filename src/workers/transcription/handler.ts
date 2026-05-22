@@ -53,6 +53,12 @@ export async function handle(job: Job<TranscriptionJobData>) {
       transcriptRaw: true,
       transcriptClean: true,
       audioFileKey: true,
+      audioSegments: {
+        where: { isDeleted: false },
+        orderBy: { segmentIndex: 'asc' },
+        take: 1,
+        select: { id: true, mimeType: true, durationMs: true },
+      },
     },
   });
   if (!note) {
@@ -75,16 +81,26 @@ export async function handle(job: Job<TranscriptionJobData>) {
       );
     } else if (type === 'transcribe-uploaded-audio') {
       if (!note.audioFileKey) throw new Error('transcribe-uploaded-audio: audioFileKey missing');
+      const segment = note.audioSegments[0] ?? null;
+      const contentType = segment?.mimeType ?? 'audio/wav';
       const audio = await getAudioBytes(note.audioFileKey);
-      const raw = await transcribeBatch({
-        audio,
-        contentType: 'audio/wav',
-        noteId,
-      });
-      await prisma.note.update({
-        where: { id: noteId },
-        data: { transcriptRaw: raw as unknown as Prisma.InputJsonValue },
-      });
+      const raw = await transcribeBatch({ audio, contentType, noteId });
+
+      // Back-fill the segment's durationMs from the Soniox response now that
+      // we have it. OrgUsageDaily.transcriptionMinutes relies on this field.
+      const sonioxDurationMs = raw.duration_ms ?? 0;
+      await prisma.$transaction([
+        prisma.note.update({
+          where: { id: noteId },
+          data: { transcriptRaw: raw as unknown as Prisma.InputJsonValue },
+        }),
+        ...(segment && sonioxDurationMs > 0
+          ? [prisma.audioSegment.update({
+              where: { id: segment.id },
+              data: { durationMs: sonioxDurationMs, sampleRate: 16_000 },
+            })]
+          : []),
+      ]);
       cleaned = cleanBatchTranscript(raw);
     } else if (type === 'cleanup-pasted-transcript') {
       if (!note.transcriptClean) {

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Circle, Mic, MicOff, Loader2, CheckCircle2, AlertCircle, Pause } from 'lucide-react';
+import { Circle, Mic, MicOff, Loader2, CheckCircle2, AlertCircle, Pause, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { useRecordingState } from '../_hooks/capture-state';
 
@@ -44,6 +44,13 @@ function computeVisual(state: ReturnType<typeof useRecordingState>) {
         label: 'Recording',
         secondary: state.isStub ? 'Soniox stub — transcript disabled' : null,
         iconClass: 'text-[var(--status-success-fg)] motion-safe:animate-pulse',
+      };
+    case 'reconnecting':
+      return {
+        Icon: RefreshCw,
+        label: 'Reconnecting…',
+        secondary: `attempt ${state.attempt} of 3`,
+        iconClass: 'animate-spin text-[var(--status-warning-fg)]',
       };
     case 'paused':
       return { Icon: Pause, label: 'Paused', secondary: null, iconClass: 'text-[var(--status-warning-fg)]' };

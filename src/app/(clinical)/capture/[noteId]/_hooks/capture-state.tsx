@@ -14,8 +14,9 @@
  *
  * State machine (discriminated union per code-standards.md):
  *   idle → requesting-mic → recording ⇄ paused → finalizing → complete
- *                                             ↘                   ↗
- *                                              error ←─────────────
+ *                             ↕                                     ↗
+ *                          reconnecting → recording (on success)
+ *                                       ↘ error (on exhaustion)
  */
 
 import {
@@ -35,6 +36,7 @@ export type RecordingState =
   | { kind: 'idle' }
   | { kind: 'requesting-mic' }
   | { kind: 'recording'; startedAt: number; isStub: boolean }
+  | { kind: 'reconnecting'; startedAt: number; isStub: boolean; attempt: number }
   | { kind: 'paused'; pausedAt: number }
   | { kind: 'finalizing' }
   | { kind: 'drafting' }
@@ -46,6 +48,13 @@ export type TranscriptSegment = {
   text: string;
   speaker: number | null;
   isFinal: boolean;
+};
+
+type SonioxKeyData = {
+  apiKey: string;
+  websocketUrl: string;
+  config: Record<string, unknown>;
+  stub: boolean;
 };
 
 type CaptureStateValue = {
@@ -66,6 +75,10 @@ type CaptureStateValue = {
 const CaptureStateContext = createContext<CaptureStateValue | null>(null);
 
 const SAMPLE_RATE = 16_000;
+const MAX_RECONNECT_ATTEMPTS = 3;
+const RECONNECT_DELAY_MS = 700;
+/** ms to wait after stopping audio before closing WS so Soniox can finalize tokens. */
+const WS_DRAIN_WAIT_MS = 800;
 
 export function CaptureStateProvider({
   noteId,
@@ -90,11 +103,19 @@ export function CaptureStateProvider({
   const audioBuffersRef = useRef<Int16Array[]>([]);
   const audioLevelRef = useRef(0);
   const audioLevelRafRef = useRef<number | null>(null);
-  // Track the original recording start + total paused duration so the elapsed
-  // timer reflects cumulative recording time across pause/resume cycles.
+
+  // Elapsed timer — original start + accumulated paused time.
   const recordingStartedAtRef = useRef<number | null>(null);
   const pausedAtRef = useRef<number | null>(null);
   const accumulatedPausedMsRef = useRef(0);
+
+  // Reconnect state
+  const wsClosedByUsRef = useRef(false); // true when we intentionally close
+  const reconnectAttemptsRef = useRef(0);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastKeyDataRef = useRef<SonioxKeyData | null>(null);
+  const isStubRef = useRef(false);
+  const startedAtRef = useRef<number>(0);
 
   // Smoothing animation loop — keep AudioLevelBars at 60fps without
   // re-rendering on every worklet message.
@@ -116,7 +137,11 @@ export function CaptureStateProvider({
     if (audioContextRef.current?.state !== 'closed') {
       void audioContextRef.current?.close();
     }
-    if (wsRef.current?.readyState === WebSocket.OPEN) wsRef.current.close();
+    if (wsRef.current?.readyState === WebSocket.OPEN ||
+        wsRef.current?.readyState === WebSocket.CONNECTING) {
+      wsClosedByUsRef.current = true;
+      wsRef.current.close();
+    }
     workletRef.current = null;
     sourceNodeRef.current = null;
     mediaStreamRef.current = null;
@@ -124,8 +149,71 @@ export function CaptureStateProvider({
     wsRef.current = null;
   }, []);
 
-  // Browser cleanup on unmount.
   useEffect(() => teardown, [teardown]);
+
+  /** Open (or reopen) a WS with the given key data. Shared by start() and
+   *  resume()/reconnect(). Attaches the standard event handlers. */
+  const openWebSocket = useCallback((keyData: SonioxKeyData) => {
+    if (keyData.stub) return; // stub mode — no WS
+
+    const ws = new WebSocket(keyData.websocketUrl);
+    wsRef.current = ws;
+
+    ws.onopen = () => {
+      ws.send(JSON.stringify({ api_key: keyData.apiKey, ...keyData.config }));
+    };
+
+    ws.onmessage = (e) => parseSonioxMessage(e.data, setTranscript, setPartial);
+
+    ws.onerror = () => {
+      // onerror is always followed by onclose — handle everything there.
+    };
+
+    ws.onclose = () => {
+      // Expected close: we called teardown() or pause(). Do nothing.
+      if (wsClosedByUsRef.current) {
+        wsClosedByUsRef.current = false;
+        return;
+      }
+
+      // Unexpected close during active recording — try to reconnect.
+      setState((s) => {
+        if (s.kind !== 'recording' && s.kind !== 'reconnecting') return s;
+        const attempt = reconnectAttemptsRef.current + 1;
+        if (attempt > MAX_RECONNECT_ATTEMPTS) {
+          return { kind: 'error', reason: 'transcription disconnected' };
+        }
+        return { kind: 'reconnecting', startedAt: startedAtRef.current, isStub: isStubRef.current, attempt };
+      });
+
+      reconnectAttemptsRef.current += 1;
+      if (reconnectAttemptsRef.current > MAX_RECONNECT_ATTEMPTS) return;
+
+      reconnectTimerRef.current = setTimeout(async () => {
+        try {
+          const keyRes = await fetch(`/api/notes/${noteId}/realtime-key`, { method: 'POST' });
+          if (!keyRes.ok) throw new Error('realtime-key re-mint failed');
+          const { data } = (await keyRes.json()) as { data: SonioxKeyData & { noteStatus: string } };
+          const freshKey: SonioxKeyData = {
+            apiKey: data.apiKey,
+            websocketUrl: data.websocketUrl,
+            config: data.config,
+            stub: data.stub,
+          };
+          lastKeyDataRef.current = freshKey;
+          openWebSocket(freshKey);
+          setState((s) =>
+            s.kind === 'reconnecting'
+              ? { kind: 'recording', startedAt: s.startedAt, isStub: s.isStub }
+              : s,
+          );
+          reconnectAttemptsRef.current = 0;
+        } catch {
+          setState({ kind: 'error', reason: 'transcription reconnect failed' });
+        }
+      }, RECONNECT_DELAY_MS);
+    };
+  }, [noteId]);
 
   const start = useCallback(async () => {
     if (state.kind !== 'idle' && state.kind !== 'error') return;
@@ -139,8 +227,16 @@ export function CaptureStateProvider({
         throw new Error(body?.error?.message ?? `realtime-key returned ${keyRes.status}`);
       }
       const { data } = (await keyRes.json()) as {
-        data: { apiKey: string; websocketUrl: string; config: Record<string, unknown>; stub: boolean };
+        data: SonioxKeyData & { noteStatus: string };
       };
+      const keyData: SonioxKeyData = {
+        apiKey: data.apiKey,
+        websocketUrl: data.websocketUrl,
+        config: data.config,
+        stub: data.stub,
+      };
+      lastKeyDataRef.current = keyData;
+      isStubRef.current = data.stub;
       setIsStub(data.stub);
 
       // 2. Mic + AudioContext + worklet.
@@ -156,25 +252,8 @@ export function CaptureStateProvider({
       const worklet = new AudioWorkletNode(ctx, 'pcm-worklet');
       workletRef.current = worklet;
 
-      // 3. WebSocket to Soniox (skip in stub mode — fake key would 401 anyway).
-      if (!data.stub) {
-        const ws = new WebSocket(data.websocketUrl);
-        wsRef.current = ws;
-        ws.onopen = () => {
-          // Init message: per Soniox protocol, send api_key + config as JSON
-          // before any audio bytes.
-          ws.send(JSON.stringify({ api_key: data.apiKey, ...data.config }));
-        };
-        ws.onmessage = (e) => parseSonioxMessage(e.data, setTranscript, setPartial);
-        ws.onerror = () => {
-          setState({ kind: 'error', reason: 'transcription connection failed' });
-        };
-        ws.onclose = () => {
-          // If we're still recording, mark as error so the UI can banner.
-          // Reconnect path can be added in a later commit.
-          setState((s) => (s.kind === 'recording' ? { kind: 'error', reason: 'transcription disconnected' } : s));
-        };
-      }
+      // 3. WebSocket to Soniox (skipped in stub mode).
+      openWebSocket(keyData);
 
       // 4. Pump worklet output → WS + collect for the final upload.
       worklet.port.onmessage = (e) => {
@@ -188,19 +267,31 @@ export function CaptureStateProvider({
       source.connect(worklet);
 
       const startedAt = Date.now();
+      startedAtRef.current = startedAt;
       recordingStartedAtRef.current = startedAt;
       accumulatedPausedMsRef.current = 0;
+      reconnectAttemptsRef.current = 0;
       setState({ kind: 'recording', startedAt, isStub: data.stub });
     } catch (e) {
       teardown();
       setState({ kind: 'error', reason: e instanceof Error ? e.message : String(e) });
     }
-  }, [noteId, state.kind, teardown]);
+  }, [noteId, state.kind, teardown, openWebSocket]);
 
   const pause = useCallback(() => {
     if (state.kind !== 'recording') return;
     isPausedRef.current = true;
     pausedAtRef.current = Date.now();
+
+    // Close the WS intentionally so Soniox doesn't idle-timeout during a long
+    // pause and trigger a spurious reconnect. We'll re-open on resume.
+    if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN ||
+        wsRef.current.readyState === WebSocket.CONNECTING)) {
+      wsClosedByUsRef.current = true;
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+
     setState({ kind: 'paused', pausedAt: Date.now() });
     void fetch(`/api/notes/${noteId}/recording-state`, {
       method: 'POST',
@@ -216,32 +307,53 @@ export function CaptureStateProvider({
       accumulatedPausedMsRef.current += Date.now() - pausedAtRef.current;
       pausedAtRef.current = null;
     }
-    // startedAt is the effective start: original start + paused time, so
-    // (now - startedAt) yields elapsed recording duration only.
     const original = recordingStartedAtRef.current ?? Date.now();
-    setState({
-      kind: 'recording',
-      startedAt: original + accumulatedPausedMsRef.current,
-      isStub,
-    });
-    void fetch(`/api/notes/${noteId}/recording-state`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'resume' }),
-    }).catch(() => {});
-  }, [noteId, state.kind, isStub]);
+    const startedAt = original + accumulatedPausedMsRef.current;
+    startedAtRef.current = startedAt;
+
+    // Re-mint a fresh key (the previous one may have expired) and reopen WS.
+    try {
+      const keyRes = await fetch(`/api/notes/${noteId}/recording-state`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'resume' }),
+      }).catch(() => null);
+      void keyRes; // fire-and-forget for audit; we handle the WS separately
+
+      const reKeyRes = await fetch(`/api/notes/${noteId}/realtime-key`, { method: 'POST' });
+      if (reKeyRes.ok) {
+        const { data } = (await reKeyRes.json()) as { data: SonioxKeyData & { noteStatus: string } };
+        const freshKey: SonioxKeyData = {
+          apiKey: data.apiKey,
+          websocketUrl: data.websocketUrl,
+          config: data.config,
+          stub: data.stub,
+        };
+        lastKeyDataRef.current = freshKey;
+        openWebSocket(freshKey);
+      }
+    } catch {
+      // WS re-open is best-effort; audio recording continues regardless.
+    }
+
+    setState({ kind: 'recording', startedAt, isStub });
+  }, [noteId, state.kind, isStub, openWebSocket]);
 
   const finish = useCallback(async () => {
     if (state.kind !== 'recording' && state.kind !== 'paused') return;
     setState({ kind: 'finalizing' });
+
     try {
+      // Stop new audio from flowing to the WS, then wait briefly so Soniox can
+      // finalize any in-flight tokens before we tear down the connection.
+      isPausedRef.current = true;
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        await new Promise<void>((resolve) => setTimeout(resolve, WS_DRAIN_WAIT_MS));
+      }
+
       const chunkCount = audioBuffersRef.current.length;
       const totalSamples = audioBuffersRef.current.reduce((n, c) => n + c.length, 0);
       const wavBlob = encodeWavBlob(audioBuffersRef.current, SAMPLE_RATE);
-      // Diagnostic — pins down a finalize failure at a glance. A healthy
-      // recording logs hundreds of chunks + a multi-KB WAV; "0 chunks /
-      // 44 bytes" means no PCM ever reached the accumulation buffer (mic
-      // muted, permission denied, or the worklet never produced frames).
       console.info(
         `[capture] finalize: chunks=${chunkCount} samples=${totalSamples} wavBytes=${wavBlob.size}`,
       );
@@ -281,12 +393,18 @@ export function CaptureStateProvider({
   }, [noteId, partial, state.kind, teardown, transcript]);
 
   const reset = useCallback(() => {
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
     teardown();
     audioBuffersRef.current = [];
     isPausedRef.current = false;
     recordingStartedAtRef.current = null;
     pausedAtRef.current = null;
     accumulatedPausedMsRef.current = 0;
+    reconnectAttemptsRef.current = 0;
+    lastKeyDataRef.current = null;
     setTranscript([]);
     setPartial('');
     setAudioLevel(0);
@@ -363,7 +481,6 @@ function parseSonioxMessage(
       }
     }
     if (finals.length) {
-      // Coalesce same-speaker finals into one segment so the UI shows running text, not one word per row.
       setTranscript((prev) => {
         const next = prev.slice();
         for (const f of finals) {

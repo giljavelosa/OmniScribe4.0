@@ -77,7 +77,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     action: 'REALTIME_KEY_ISSUED',
     resourceType: 'Note',
     resourceId: note.id,
-    metadata: { expiresInSeconds: 60, stub: mint.stub },
+    metadata: { expiresInSeconds: 60, stub: mint.stub, keyMode: mint.keyMode },
   });
 
   return NextResponse.json({
@@ -87,6 +87,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       config: mint.config,
       expiresAt: mint.expiresAt,
       stub: mint.stub,
+      keyMode: mint.keyMode,
       noteStatus: nextStatus,
     },
   });

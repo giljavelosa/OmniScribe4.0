@@ -123,8 +123,10 @@ Build the `prisma/schema.prisma` file with these models grouped by domain. Migra
 ### Episodes & Goals
 - `EpisodeOfCare` — patient + clinician + dept; diagnosis + body part; start/end; `EpisodeStatus` (ACTIVE/RECERT_DUE/DISCHARGED/CANCELLED).
 - `EpisodeGoal` — `goalText`, `goalType` (STG/LTG), baseline/target/current, `GoalStatus`, origin/resolved note references.
-- `GoalProgressEntry` — per-goal progress update linked to a `Note`.
+- `GoalProgressEntry` — per-goal progress update; `measureValue`, `statusAtEntry`, `deltaNote`, `recordedAt`, `recordedByOrgUserId`.
 - `FollowUp` — extracted from plan sections; `FollowUpStatus` (OPEN/MET/CARRIED/DROPPED/CLOSED_BY_DISCHARGE); origin note + optional closing note.
+
+> **UI scope rule (enforced as of Sprint 0.10):** The Episodes tab on `/patients/[id]` is gated to patients who have at least one `REHAB`-division episode. The plan-of-care structure (recert cycles, visit authorizations, STG/LTG goals) is a Rehab / therapy construct. Medical and BH episodes exist in the data model and continue to feed AI prompts, the prior-context brief, and the Safety Band problems list — they are never hidden from the AI or the data layer, only from the dedicated Episodes UI tab. When Medical and BH receive their own plan-of-care UI in a future wave, the tab gate will be updated.
 
 ### Voice ID
 - `VoiceProfile` — TitaNet enrollment per user × org; `embedding vector(192)`, `displayName`, `defaultRole` (CLINICIAN/OTHER); BIPA consent versioning; soft-delete + 30-day hard-delete grace.

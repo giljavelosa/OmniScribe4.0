@@ -174,7 +174,13 @@ export default async function VisitViewerPage({
           generatedAt: a.generatedAt.toISOString(),
         }))}
       />
-      <CopilotShell surface="visit" noteId={note.id} patientId={note.patientId} />
+      <CopilotShell
+        surface="visit"
+        noteId={note.id}
+        patientId={note.patientId}
+        clinicianName={session.user.name ?? null}
+        patientFirstName={note.patient.firstName}
+      />
     </>
   );
 }

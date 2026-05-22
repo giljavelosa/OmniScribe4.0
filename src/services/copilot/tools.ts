@@ -37,6 +37,11 @@ export type AskToolName =
   | 'lookupSignedNote'
   | 'lookupFollowUp'
   | 'lookupEpisodeGoals'
+  // Phase 1A — patient-scoped fan-out across all of a patient's
+  // episodes. Use this when a visit has no episodeOfCare (ad-hoc /
+  // one-off visits) or when the clinician asks about goals across
+  // multiple concurrent episodes.
+  | 'lookupPatientGoals'
   | 'lookupPatientDemographics'
   // Unit 28 — FHIR-backed lookups against verified PatientFhirIdentity
   | 'lookupFhirCondition'
@@ -52,10 +57,13 @@ export type AskToolName =
   | 'suggestReferralLetterContent';
 
 export type AskSource = {
-  /** 'fhir' added in Unit 28; 'literature' added in Unit 29 — kind
-   *  dispatches the chat surface's render per pill (note → /review link;
-   *  literature → external PMC link or text chip; fhir + others → text chip). */
-  kind: 'note' | 'follow-up' | 'goal' | 'patient' | 'fhir' | 'literature';
+  /** 'fhir' added in Unit 28; 'literature' added in Unit 29; 'llm-intrinsic'
+   *  added in Phase 1B for the research-mode LLM-knowledge fallback —
+   *  rendered as a yellow chip + accompanied by a yellow "LLM knowledge"
+   *  badge above the bubble so the clinician sees the trust signal twice.
+   *  Chart mode never produces an llm-intrinsic source (fail-closed via
+   *  the agent's wrong_mode_fallback gate). */
+  kind: 'note' | 'follow-up' | 'goal' | 'patient' | 'fhir' | 'literature' | 'llm-intrinsic';
   id: string;
   label: string;
 };
@@ -97,6 +105,10 @@ const lookupFollowUpArgs = z.object({
 
 const lookupEpisodeGoalsArgs = z.object({
   episodeId: z.string().min(1).max(64),
+});
+
+const lookupPatientGoalsArgs = z.object({
+  patientId: z.string().min(1).max(64),
 });
 
 const lookupPatientDemographicsArgs = z.object({
@@ -304,6 +316,52 @@ export async function runTool(
             currentMeasure: g.currentMeasure,
             targetMeasure: g.targetMeasure,
           })),
+        };
+      }
+
+      // Phase 1A — patient-scoped goal fan-out. Solves the ad-hoc-visit
+      // case where note.encounter.episodeOfCareId === null, so the
+      // model has no episodeId to pass to lookupEpisodeGoals and
+      // otherwise exhausts its iteration budget retrying.
+      case 'lookupPatientGoals': {
+        const args = lookupPatientGoalsArgs.parse(argsRaw);
+        const patient = await prisma.patient.findUnique({
+          where: { id: args.patientId },
+          select: { id: true, orgId: true },
+        });
+        if (!patient) return { ok: false, error: 'patient_not_found' };
+        assertOrgScoped(patient.orgId, ctx.orgId);
+        const episodes = await prisma.episodeOfCare.findMany({
+          where: { patientId: args.patientId, orgId: ctx.orgId },
+          select: { id: true, diagnosis: true },
+        });
+        if (episodes.length === 0) {
+          return { ok: true, rowCount: 0, data: { goals: [] } };
+        }
+        const episodeById = new Map(episodes.map((e) => [e.id, e]));
+        const goals = await prisma.episodeGoal.findMany({
+          where: {
+            episodeId: { in: episodes.map((e) => e.id) },
+            status: { in: ['ACTIVE', 'PARTIALLY_MET'] },
+          },
+          orderBy: { createdAt: 'asc' },
+          take: 20,
+        });
+        return {
+          ok: true,
+          rowCount: goals.length,
+          data: {
+            goals: goals.map((g) => ({
+              id: g.id,
+              text: g.goalText,
+              status: g.status,
+              type: g.goalType,
+              currentMeasure: g.currentMeasure,
+              targetMeasure: g.targetMeasure,
+              episodeId: g.episodeId,
+              episodeDiagnosis: episodeById.get(g.episodeId)?.diagnosis ?? null,
+            })),
+          },
         };
       }
 

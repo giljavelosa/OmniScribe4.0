@@ -10,12 +10,14 @@ import { cn } from '@/lib/cn';
  * Used throughout the app: /processing/[noteId], async note generation,
  * voice-id matching, brief precompute. ui-context.md "Loading & Progress".
  */
-const sizes = cva('text-muted-foreground/40', {
+const sizes = cva('', {
   variants: {
     size: {
-      sm: 'h-[44px] w-[44px]',
-      md: 'h-[62px] w-[62px]',
-      lg: 'h-[84px] w-[84px]',
+      // /40 reads as a calm secondary; /60 at lg gives the dedicated processing
+      // page a stronger center of gravity without crossing into "loud".
+      sm: 'h-[44px] w-[44px] text-muted-foreground/40',
+      md: 'h-[62px] w-[62px] text-muted-foreground/40',
+      lg: 'h-[84px] w-[84px] text-muted-foreground/60',
     },
   },
   defaultVariants: { size: 'md' },

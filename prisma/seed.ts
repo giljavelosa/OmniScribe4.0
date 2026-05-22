@@ -29,6 +29,8 @@ import {
   GoalStatus,
   NoteArtifactKind,
   PatientAddressKind,
+  ExternalContextSource,
+  ExternalContextStatus,
 } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import { generate as generateTotp } from 'otplib';
@@ -37,6 +39,8 @@ import {
   SEED_PATIENT_DEMOGRAPHICS,
   DEMO_CLINIC_ORG_ID,
   ACME_VISIT_CORPUS,
+  CASCADIA_VISIT_CORPUS,
+  RIVERBEND_VISIT_CORPUS,
   buildFinalJson,
   buildTranscriptClean,
   buildPatientBrief,
@@ -46,9 +50,15 @@ import {
   RACHEL_KIM_ACME_BRIEF,
   ROBERT_HAYES_ACME_BRIEF,
   ELENA_SANTOS_ACME_BRIEF,
+  MARCUS_THOMPSON_BRIEF,
+  PRIYA_DESAI_BRIEF,
+  JAMAL_CARTER_BRIEF,
+  LINDA_FOSTER_BRIEF,
   type SeedVisitCorpus,
 } from './seed-corpus';
 import { seedAcmeOrganization, seedAcmeAdditionalEpisodes } from './seed-acme-org';
+import { seedCascadiaOrganization } from './seed-cascadia-org';
+import { seedRiverbendOrganization } from './seed-riverbend-org';
 import type { PriorContextBriefContent } from '../src/types/brief';
 
 const prisma = new PrismaClient();
@@ -325,9 +335,19 @@ async function main() {
       where: { email: u.email },
       update: {
         passwordHash,
-        mfaSecret: u.mfaEnabled ? DEMO_ADMIN_MFA_SECRET : null,
-        mfaEnabled: u.mfaEnabled,
-        mfaRecoveryCodes: u.mfaEnabled ? (adminRecoveryCodes.hashed as unknown as object) : undefined,
+        // Only re-stamp the canonical test secret for users pre-enrolled in the
+        // seed definition (admin@demo.local). For all other seed users, leave
+        // mfaEnabled / mfaSecret / mfaRecoveryCodes untouched so that any real
+        // enrollment completed during a dev session survives a re-seed.
+        // Without this guard, every `npx prisma db seed` call resets
+        // mfaEnabled=false, forcing the MFA setup screen on every sign-in.
+        ...(u.mfaEnabled
+          ? {
+              mfaSecret: DEMO_ADMIN_MFA_SECRET,
+              mfaEnabled: true,
+              mfaRecoveryCodes: adminRecoveryCodes.hashed as unknown as object,
+            }
+          : {}),
         platformRole: u.platformRole ?? PlatformRole.NONE,
       },
       create: {
@@ -878,7 +898,11 @@ async function main() {
   // BH: Adjustment disorder.
   const jpRehabEpisode = await prisma.episodeOfCare.upsert({
     where: { id: 'seed-episode-jp-rehab' },
-    update: { bodyPart: 'Right shoulder' },
+    update: {
+      bodyPart: 'Right shoulder',
+      visitsAuthorized: 16,
+      recertDueAt: new Date(Date.now() + 32 * 86_400_000),
+    },
     create: {
       id: 'seed-episode-jp-rehab',
       orgId: org.id,
@@ -889,12 +913,19 @@ async function main() {
       diagnosis: 'Right rotator cuff strain',
       bodyPart: 'Right shoulder',
       status: EpisodeStatus.ACTIVE,
+      visitsAuthorized: 16,
+      visitsCompleted: 5,
+      recertDueAt: new Date(Date.now() + 32 * 86_400_000),
     },
   });
   // Second active rehab episode — left knee OA, concurrent with shoulder PT.
   const jpKneeEpisode = await prisma.episodeOfCare.upsert({
     where: { id: 'seed-episode-jp-knee' },
-    update: { bodyPart: 'Left knee' },
+    update: {
+      bodyPart: 'Left knee',
+      visitsAuthorized: 12,
+      recertDueAt: new Date(Date.now() + 18 * 86_400_000),
+    },
     create: {
       id: 'seed-episode-jp-knee',
       orgId: org.id,
@@ -905,6 +936,9 @@ async function main() {
       diagnosis: 'Left knee osteoarthritis',
       bodyPart: 'Left knee',
       status: EpisodeStatus.ACTIVE,
+      visitsAuthorized: 12,
+      visitsCompleted: 7,
+      recertDueAt: new Date(Date.now() + 18 * 86_400_000),
     },
   });
   await prisma.episodeGoal.upsert({
@@ -921,6 +955,202 @@ async function main() {
       status: GoalStatus.ACTIVE,
     },
   });
+
+  // ── STG goal for knee episode ──────────────────────────────────────────────
+  await prisma.episodeGoal.upsert({
+    where: { id: 'seed-goal-jp-knee-stg' },
+    update: {},
+    create: {
+      id: 'seed-goal-jp-knee-stg',
+      episodeId: jpKneeEpisode.id,
+      goalType: GoalType.STG,
+      goalText: 'Achieve ≤3/10 knee pain on stairs and TUG <12.5 sec within 4 weeks.',
+      baselineMeasure: 'Pain 6/10, TUG 13.8s',
+      targetMeasure: 'Pain ≤3/10, TUG <12.5s',
+      currentMeasure: 'Pain 4/10, TUG 12.4s',
+      status: GoalStatus.PARTIALLY_MET,
+    },
+  });
+
+  // ── Shoulder episode goals ─────────────────────────────────────────────────
+  await prisma.episodeGoal.upsert({
+    where: { id: 'seed-goal-jp-rehab-stg' },
+    update: {},
+    create: {
+      id: 'seed-goal-jp-rehab-stg',
+      episodeId: jpRehabEpisode.id,
+      goalType: GoalType.STG,
+      goalText: 'Achieve 160° shoulder flexion and full overhead reach without pain by week 6.',
+      baselineMeasure: 'Flexion 110° at eval, pain 6/10 overhead',
+      targetMeasure: 'Flexion 160°, pain ≤2/10',
+      currentMeasure: '140°, pain 3/10',
+      status: GoalStatus.ACTIVE,
+    },
+  });
+  await prisma.episodeGoal.upsert({
+    where: { id: 'seed-goal-jp-rehab-ltg' },
+    update: {},
+    create: {
+      id: 'seed-goal-jp-rehab-ltg',
+      episodeId: jpRehabEpisode.id,
+      goalType: GoalType.LTG,
+      goalText: 'Full return to overhead work activities without pain or compensation within 12 weeks.',
+      baselineMeasure: 'Unable to reach above shoulder height; pain 6/10',
+      targetMeasure: 'Full overhead reach, pain ≤1/10',
+      currentMeasure: 'Reaches to forehead level, pain 3/10',
+      status: GoalStatus.ACTIVE,
+    },
+  });
+
+  // ── GoalProgressEntry trail for knee LTG ──────────────────────────────────
+  const kneeTrailEntries = [
+    { id: 'seed-gpe-jp-knee-1', daysAgo: 42, measure: '6/10 pain, TUG 13.8s', status: GoalStatus.ACTIVE, note: 'Initial evaluation — baseline values documented.' },
+    { id: 'seed-gpe-jp-knee-2', daysAgo: 28, measure: '5/10 pain, TUG 13.1s', status: GoalStatus.ACTIVE, note: 'Progressing with quad sets + SLR. Tolerating 3×12 reps.' },
+    { id: 'seed-gpe-jp-knee-3', daysAgo: 14, measure: '4.5/10 pain, TUG 12.6s', status: GoalStatus.ACTIVE, note: 'Added terminal knee extension. Stairs improving.' },
+    { id: 'seed-gpe-jp-knee-4', daysAgo: 3, measure: '4/10 pain, TUG 12.4s', status: GoalStatus.ACTIVE, note: 'Progressing toward goal. Cane-free on level surfaces.' },
+  ];
+  for (const e of kneeTrailEntries) {
+    await prisma.goalProgressEntry.upsert({
+      where: { id: e.id },
+      update: { measureValue: e.measure, deltaNote: e.note },
+      create: {
+        id: e.id,
+        goalId: 'seed-goal-jp-knee',
+        measureValue: e.measure,
+        statusAtEntry: e.status,
+        deltaNote: e.note,
+        recordedAt: new Date(Date.now() - e.daysAgo * 86_400_000),
+        recordedByOrgUserId: clinicianRowByEmail['pt.smith@demo.local']!.orgUserId,
+      },
+    });
+  }
+
+  // ── GoalProgressEntry trail for shoulder STG ──────────────────────────────
+  const shoulderTrailEntries = [
+    { id: 'seed-gpe-jp-rehab-stg-1', daysAgo: 35, measure: '110°, pain 6/10', status: GoalStatus.ACTIVE, note: 'Initial eval — AROM limited by pain at 110°.' },
+    { id: 'seed-gpe-jp-rehab-stg-2', daysAgo: 21, measure: '120°, pain 5/10', status: GoalStatus.ACTIVE, note: 'Progressing with posterior capsule stretching + ER band.' },
+    { id: 'seed-gpe-jp-rehab-stg-3', daysAgo: 7, measure: '140°, pain 3/10', status: GoalStatus.ACTIVE, note: 'Significant gain — now reaching to top of head level.' },
+  ];
+  for (const e of shoulderTrailEntries) {
+    await prisma.goalProgressEntry.upsert({
+      where: { id: e.id },
+      update: { measureValue: e.measure, deltaNote: e.note },
+      create: {
+        id: e.id,
+        goalId: 'seed-goal-jp-rehab-stg',
+        measureValue: e.measure,
+        statusAtEntry: e.status,
+        deltaNote: e.note,
+        recordedAt: new Date(Date.now() - e.daysAgo * 86_400_000),
+        recordedByOrgUserId: clinicianRowByEmail['pt.smith@demo.local']!.orgUserId,
+      },
+    });
+  }
+
+  // ── SnapshotOverride entries — knee episode (populates the inline strip) ───
+  const jpKneeSnaps = [
+    { id: 'seed-snap-jp-pain',     measureKey: 'pain-nrs',           value: '4',    unit: '/10',    daysAgo: 3 },
+    { id: 'seed-snap-jp-rom',      measureKey: 'rom-primary',        value: '110',  unit: '°',      daysAgo: 3 },
+    { id: 'seed-snap-jp-strength', measureKey: 'strength-primary',   value: '4',    unit: '/5',     daysAgo: 3 },
+    { id: 'seed-snap-jp-gait',     measureKey: 'gait-speed',         value: '0.96', unit: 'm/s',    daysAgo: 3 },
+    { id: 'seed-snap-jp-koos',     measureKey: 'outcome-tool-score', value: '58',   unit: 'KOOS',   daysAgo: 3 },
+  ];
+  for (const s of jpKneeSnaps) {
+    const recordedAt = new Date(Date.now() - s.daysAgo * 86_400_000);
+    await prisma.snapshotOverride.upsert({
+      where: { id: s.id },
+      update: { valueJson: s.value, unit: s.unit },
+      create: {
+        id: s.id,
+        orgId: org.id,
+        patientId: 'seed-patient-medical',
+        episodeId: jpKneeEpisode.id,
+        measureKey: s.measureKey,
+        valueJson: s.value as unknown as object,
+        unit: s.unit,
+        recordedAt,
+        enteredByOrgUserId: clinicianRowByEmail['pt.smith@demo.local']!.orgUserId,
+      },
+    });
+  }
+
+  // ── ExternalContext (Prior Records) for James Park ─────────────────────────
+  const jpPtOrgUserId = clinicianRowByEmail['clinician@demo.local']!.orgUserId;
+  const jpExternalContexts = [
+    {
+      id: 'seed-ec-jp-ortho-referral',
+      dateOfRecord: new Date(Date.now() - 65 * 86_400_000),
+      source: ExternalContextSource.OUTSIDE_PROVIDER,
+      sourceLabel: 'Orthopedic Associates — pre-surgical evaluation (Dr. R. Williams)',
+      transcriptClean:
+        `Referring clinician note — Orthopedic Associates (Dr. R. Williams)\n` +
+        `Patient: James Park, DOB 04/12/1971\n` +
+        `Reason for referral: Pre-surgical evaluation for left knee osteoarthritis\n\n` +
+        `Summary: Patient presents with left knee OA (Kellgren-Lawrence grade 3 on standing AP). ` +
+        `Conservative management with PT and NSAIDs ongoing ×6 months with partial response. ` +
+        `Candidate for TKA if structured PT does not achieve functional goals.\n\n` +
+        `Recommend 8-week outpatient PT prior to surgical decision. ` +
+        `If ROM and pain NRS do not reach targets, proceed with TKA consult.\n\n` +
+        `Key findings at eval: ROM 95° flexion, 0° extension. Pain NRS 7/10 stairs. TUG 16.2s.`,
+    },
+    {
+      id: 'seed-ec-jp-patient-diary',
+      dateOfRecord: new Date(Date.now() - 28 * 86_400_000),
+      source: ExternalContextSource.PATIENT_SUPPLIED,
+      sourceLabel: 'Patient-recorded weekly symptoms log',
+      transcriptClean:
+        `[Patient voice memo transcript — 28 days ago]\n\n` +
+        `"Hi, this is James. Weekly update as requested. Did home exercises Mon/Tue/Thu/Sat — missed Wed for work. ` +
+        `Knee feels a bit better. Stairs still tough in the morning, maybe 5/10. ` +
+        `By afternoon drops to 3–4 after I warm up. Quad sets and TKE three times a day like you said. ` +
+        `Ice pack really helps after. Question: can I use the recumbent bike at the gym? Will ask next session."`,
+    },
+    {
+      id: 'seed-ec-jp-prior-pcp',
+      dateOfRecord: new Date(Date.now() - 90 * 86_400_000),
+      source: ExternalContextSource.OUTSIDE_PROVIDER,
+      sourceLabel: 'Prior PCP records — Capitol Medical Group (Dr. A. Chen)',
+      transcriptClean:
+        `Transferred records summary — Capitol Medical Group\n` +
+        `Patient: James Park (DOB 04/12/1971)\n\n` +
+        `HTN: Diagnosed 2022, started lisinopril 10 mg, titrated to 20 mg 2023. ` +
+        `Last BP at Capitol: 142/88 (2023-11-15).\n` +
+        `MUSCULOSKELETAL: Left knee pain first documented 2021; X-ray early OA. Referred orthopedics 2023.\n` +
+        `MEDICATIONS (last Capitol visit): Lisinopril 20 mg, Ibuprofen 400 mg PRN, Rosuvastatin 10 mg.\n` +
+        `ALLERGIES: NKDA (confirmed multiple visits).\n` +
+        `SOCIAL: Non-smoker, ~2–3 drinks/week, logistics management.`,
+    },
+    {
+      id: 'seed-ec-jp-clinician-notes',
+      dateOfRecord: new Date(Date.now() - 14 * 86_400_000),
+      source: ExternalContextSource.CLINICIAN_NOTES,
+      sourceLabel: 'Dr. Brown: phone triage note — BP spike concern',
+      transcriptClean:
+        `Clinician triage note — Dr. Maya Brown, 2 weeks ago\n\n` +
+        `Patient called re: BP reading 148/94 at home (evening, after stressful day at work). ` +
+        `Denies chest pain, headache, vision changes, dyspnea. No new medications. ` +
+        `Lisinopril compliance confirmed. Advised to re-check BP next morning after adequate sleep. ` +
+        `Follow-up reading reported as 131/84. Plan: continue current regimen, check repeat BMP in 6 weeks. ` +
+        `Patient reassured. No ER visit needed.`,
+    },
+  ];
+  for (const ec of jpExternalContexts) {
+    await prisma.externalContext.upsert({
+      where: { id: ec.id },
+      update: { transcriptClean: ec.transcriptClean },
+      create: {
+        id: ec.id,
+        orgId: org.id,
+        patientId: 'seed-patient-medical',
+        dateOfRecord: ec.dateOfRecord,
+        source: ec.source,
+        sourceLabel: ec.sourceLabel,
+        transcriptClean: ec.transcriptClean,
+        status: ExternalContextStatus.READY,
+        addedByOrgUserId: jpPtOrgUserId,
+      },
+    });
+  }
   const jpBhEpisode = await prisma.episodeOfCare.upsert({
     where: { id: 'seed-episode-jp-bh' },
     update: {},
@@ -1057,6 +1287,12 @@ async function main() {
   // Acme Specialty Care — additional multi-episode rows for Rachel, Robert, Elena.
   await seedAcmeAdditionalEpisodes(prisma, acmeCtx);
 
+  // Cascadia Health Network — third org with Marcus + Priya.
+  const cascadiaCtx = await seedCascadiaOrganization(prisma, hashPassword);
+
+  // Riverbend Integrated Care — fourth org with Jamal + Linda.
+  const riverbendCtx = await seedRiverbendOrganization(prisma, hashPassword);
+
   const deptByKey = {
     medical: deptMedical.id,
     rehab: deptRehab.id,
@@ -1072,6 +1308,8 @@ async function main() {
 
   await seedVisitCorpus(SEED_VISIT_CORPUS, demoCtx, 'Demo Clinic');
   await seedVisitCorpus(ACME_VISIT_CORPUS, acmeCtx, 'Acme Specialty Care');
+  await seedVisitCorpus(CASCADIA_VISIT_CORPUS, cascadiaCtx, 'Cascadia Health Network');
+  await seedVisitCorpus(RIVERBEND_VISIT_CORPUS, riverbendCtx, 'Riverbend Integrated Care');
 
   await seedBriefsAndFollowUps([
     { builder: JAMES_PARK_BRIEF, noteId: 'seed-visit-jp-md-2', orgId: org.id },
@@ -1080,6 +1318,10 @@ async function main() {
     { builder: RACHEL_KIM_ACME_BRIEF, noteId: 'seed-acme-visit-rk-md-2', orgId: acmeCtx.orgId },
     { builder: ROBERT_HAYES_ACME_BRIEF, noteId: 'seed-acme-visit-rh-pt-2', orgId: acmeCtx.orgId },
     { builder: ELENA_SANTOS_ACME_BRIEF, noteId: 'seed-acme-visit-es-bh-2', orgId: acmeCtx.orgId },
+    { builder: MARCUS_THOMPSON_BRIEF, noteId: 'seed-cascadia-visit-mt-md-headline', orgId: cascadiaCtx.orgId },
+    { builder: PRIYA_DESAI_BRIEF, noteId: 'seed-cascadia-visit-pd-md-headline', orgId: cascadiaCtx.orgId },
+    { builder: JAMAL_CARTER_BRIEF, noteId: 'seed-riverbend-visit-jc-md-headline', orgId: riverbendCtx.orgId },
+    { builder: LINDA_FOSTER_BRIEF, noteId: 'seed-riverbend-visit-lf-md-headline', orgId: riverbendCtx.orgId },
   ]);
 
   // Sanity: generate a TOTP token against the seeded secret so devs know

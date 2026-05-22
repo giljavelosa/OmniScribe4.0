@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { requireFeatureAccess } from '@/lib/authz/server';
 import { writeAuditLog } from '@/lib/audit/log';
 import { runAgent, type AgentTurn } from '@/services/copilot/agent';
+import { PERSONA_VERSION } from '@/services/copilot/persona';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -130,6 +131,13 @@ export async function POST(req: Request) {
       toolCallCount: result.toolCalls.length,
       reasoningStepCount: result.reasoningSteps.length,
       mode: 'research',
+      // Phase 1B — auditor-queryable signal for the LLM-knowledge
+      // fallback path. 'llm-intrinsic' when the model exhausted the
+      // vetted corpus and answered from training knowledge; null on
+      // every literature-cited answer. PHI-free.
+      fallback: result.answer.isLLMKnowledge ? 'llm-intrinsic' : null,
+      // Unit 42 — auditor-queryable persona version stamp. PHI-free.
+      personaVersion: PERSONA_VERSION,
     },
   });
 

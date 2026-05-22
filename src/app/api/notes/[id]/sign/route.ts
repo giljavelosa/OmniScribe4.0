@@ -99,8 +99,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // opens SignFollowUpSweep, resolves each one (Met / Drop / Carry), then
   // re-tries this POST with sweepAcknowledged=true.
   if (!parsed.data.sweepAcknowledged) {
+    // Exclude rows whose originNoteId === THIS note. Those rows are commitments
+    // the clinician pre-staged on /review for the NEXT visit; they should not
+    // be force-closed at the sign of the visit that CREATES them. The sweep is
+    // for inherited OPEN rows from prior visits.
     const openFollowUps = await prisma.followUp.findMany({
-      where: { patientId: note.patientId, orgId: authorizationUser.orgId, status: 'OPEN' },
+      where: {
+        patientId: note.patientId,
+        orgId: authorizationUser.orgId,
+        status: 'OPEN',
+        originNoteId: { not: noteId },
+      },
       orderBy: { createdAt: 'desc' },
       take: 50,
       include: { originNote: { select: { signedAt: true } } },

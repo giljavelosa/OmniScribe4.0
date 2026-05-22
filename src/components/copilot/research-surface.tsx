@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useRef, useState, useTransition } from 'react';
+import { useCallback, useEffect, useRef, useState, useTransition } from 'react';
 import { BookOpen, CornerUpRight, ExternalLink, Loader2, Send, User, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -9,12 +9,25 @@ import { StatusBadge } from '@/components/ui/status-badge';
 import { StatusBanner } from '@/components/ui/status-banner';
 import { cn } from '@/lib/cn';
 import { ReasoningChain, type ReasoningStep } from './reasoning-chain';
+import { COPILOT_DISPLAY_NAME, buildGreeting } from '@/services/copilot/persona';
+import type { CopilotSurface } from './copilot-shell';
 
 /** Unit 31 — same redirect prefix as AskSurface so the clinician sees
  *  one consistent system framing across both chart + research modes. */
 const REDIRECT_PREFIX = 'Pivot from this answer: ';
 
-type SourceKind = 'note' | 'follow-up' | 'goal' | 'patient' | 'fhir' | 'literature';
+type SourceKind =
+  | 'note'
+  | 'follow-up'
+  | 'goal'
+  | 'patient'
+  | 'fhir'
+  | 'literature'
+  /** Phase 1B — research-mode LLM-knowledge fallback. The synthetic
+   *  pill renders yellow and is paired with a yellow "LLM knowledge"
+   *  badge above the bubble (two trust signals so the clinician can't
+   *  miss the framing). */
+  | 'llm-intrinsic';
 
 type Source = {
   kind: SourceKind;
@@ -29,6 +42,10 @@ type ChatMessage = {
   toolCalls?: number;
   isClarification?: boolean;
   stub?: boolean;
+  /** Phase 1B — true when the agent emitted answer-from-knowledge
+   *  after the vetted-literature corpus came up empty. UI must show
+   *  both the bubble-top badge AND the source pill. */
+  isLLMKnowledge?: boolean;
   /** Unit 31 — chain-of-thought steps; rendered as a collapsible
    *  chip under the bubble. Mirrors AskSurface. */
   reasoningSteps?: ReasoningStep[];
@@ -50,12 +67,40 @@ type ChatMessage = {
  * tab, so switching back and forth keeps both conversations alive
  * within a single Sheet-open session.
  */
-export function ResearchSurface() {
+export function ResearchSurface({
+  clinicianName,
+  surface,
+  greetedRef,
+}: {
+  /** Unit 42 — clinician display name for the persona greeting.
+   *  Optional; falls back to "Hi there" when absent. */
+  clinicianName?: string | null;
+  /** Unit 42 — for typing parity with AskSurface. Research mode is
+   *  patient-agnostic so the value only routes greeting copy. */
+  surface?: CopilotSurface;
+  /** Unit 42 — session-persistent guard owned by CopilotShell. */
+  greetedRef?: React.MutableRefObject<boolean>;
+} = {}) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const scrollAnchorRef = useRef<HTMLDivElement | null>(null);
+  const localGreetedRef = useRef(false);
+  const greetedRefResolved = greetedRef ?? localGreetedRef;
+
+  useEffect(() => {
+    if (greetedRefResolved.current) return;
+    if (messages.length > 0) return;
+    greetedRefResolved.current = true;
+    const greeting = buildGreeting({
+      clinicianName: clinicianName ?? null,
+      surface: surface ?? 'review',
+      mode: 'research',
+    });
+    setMessages([{ role: 'assistant', content: greeting }]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const send = useCallback(
     (text: string) => {
@@ -83,7 +128,12 @@ export function ResearchSurface() {
         }
         const body = (await res.json()) as {
           data: {
-            answer: { text: string; sources: Source[]; isClarification: boolean };
+            answer: {
+              text: string;
+              sources: Source[];
+              isClarification: boolean;
+              isLLMKnowledge?: boolean;
+            };
             toolCalls: Array<{ tool: string; rowCount: number; resultOk: boolean }>;
             reasoningSteps?: ReasoningStep[];
             stub: boolean;
@@ -98,6 +148,7 @@ export function ResearchSurface() {
             sources: a.sources,
             toolCalls: body.data.toolCalls.length,
             isClarification: a.isClarification,
+            isLLMKnowledge: a.isLLMKnowledge ?? false,
             stub: body.data.stub,
             reasoningSteps: body.data.reasoningSteps ?? [],
           },
@@ -108,12 +159,11 @@ export function ResearchSurface() {
     [messages, pending],
   );
 
+  const hasUserMessage = messages.some((m) => m.role === 'user');
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
-        {messages.length === 0 && (
-          <EmptyState onPick={(q) => send(q)} disabled={pending} />
-        )}
         {messages.map((m, i) => (
           <MessageBubble
             key={i}
@@ -122,6 +172,9 @@ export function ResearchSurface() {
             disabled={pending}
           />
         ))}
+        {!hasUserMessage && (
+          <EmptyState onPick={(q) => send(q)} disabled={pending} />
+        )}
         {pending && (
           <div className="flex items-start gap-2 text-sm text-muted-foreground">
             <BookOpen className="h-3.5 w-3.5 mt-1" aria-hidden />
@@ -215,6 +268,17 @@ function MessageBubble({
                 'bg-[var(--status-warning-bg)] text-foreground',
           )}
         >
+          {/* Phase 1B — first of two trust signals (the other is the
+              llm-intrinsic source pill in the sources row). Renders
+              ABOVE the bubble text so the framing is the first thing
+              the clinician reads. */}
+          {!isUser && message.isLLMKnowledge && (
+            <div className="mb-1">
+              <StatusBadge variant="warning" noIcon>
+                LLM knowledge
+              </StatusBadge>
+            </div>
+          )}
           <p className="whitespace-pre-wrap">{message.content}</p>
           {message.stub && (
             <p className="mt-1 text-[10px] uppercase tracking-wide text-[var(--status-warning-fg)]">
@@ -326,10 +390,23 @@ function SourceChip({ source }: { source: Source }) {
       </a>
     );
   }
+  // Phase 1B — yellow tint matches the bubble-top "LLM knowledge"
+  // badge; the duplication is intentional so the clinician sees the
+  // trust framing twice.
+  if (source.kind === 'llm-intrinsic') {
+    return (
+      <StatusBadge variant="warning" noIcon>
+        {source.label}
+      </StatusBadge>
+    );
+  }
   return <StatusBadge variant="neutral" noIcon>{source.label}</StatusBadge>;
 }
 
 function EmptyState({ onPick, disabled }: { onPick: (q: string) => void; disabled: boolean }) {
+  // Unit 42 — the persona greeting bubble carries the intro; the
+  // empty-state below the bubble keeps the example chips. One-line
+  // persona intro above the chips per the spec.
   const examples = [
     'Recent evidence on NSAIDs in chronic kidney disease',
     'USPSTF guidelines for colorectal cancer screening',
@@ -337,11 +414,9 @@ function EmptyState({ onPick, disabled }: { onPick: (q: string) => void; disable
   ];
   return (
     <div className="space-y-3 py-2">
-      <p className="text-sm text-muted-foreground">
-        Research mode — ask about evidence in the medical literature. Answers cite published
-        sources only and are NEVER tailored to a specific patient (use the Chart tab for that).
+      <p className="text-xs text-muted-foreground italic">
+        Try asking {COPILOT_DISPLAY_NAME}:
       </p>
-      <p className="text-xs text-muted-foreground italic">Try:</p>
       <div className="flex flex-col gap-1">
         {examples.map((q) => (
           <button

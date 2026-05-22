@@ -44,3 +44,6 @@ pnpm-debug.log*
 .turbo/
 .eslintcache
 tsconfig.tsbuildinfo
+
+# Claude Code workspace state (worktree mirrors + local IDE settings)
+.claude/
