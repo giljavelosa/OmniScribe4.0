@@ -98,6 +98,8 @@ export function ResearchSurface({
       surface: surface ?? 'review',
       mode: 'research',
     });
+    // Intentional: greeting fires once per session (ref guard).
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMessages([{ role: 'assistant', content: greeting }]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

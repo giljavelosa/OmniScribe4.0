@@ -43,6 +43,9 @@ export function ProcessingClient({ noteId, initialStatus, patientDisplayName }: 
   const [retried, setRetried] = useState(false);
 
   // Track how long the status has been stuck in the active pipeline.
+  // useRef's initializer evaluates once per instance — equivalent to a
+  // lazy initializer for capturing mount time.
+  // eslint-disable-next-line react-hooks/purity
   const lastStatusChangeRef = useRef(Date.now());
   const [stuckMs, setStuckMs] = useState(0);
 

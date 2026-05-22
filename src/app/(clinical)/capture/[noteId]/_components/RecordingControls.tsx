@@ -52,6 +52,9 @@ export function RecordingControls({ noteId, autostart = false }: Props) {
     if (state.kind !== 'recording') return;
     const startedAt = state.startedAt;
     const t = setInterval(() => setElapsedMs(Date.now() - startedAt), 5_000);
+    // Initial tick — intentional immediate state set so the UI doesn't show
+    // 0 for the first 5s after the effect runs.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setElapsedMs(Date.now() - startedAt);
     return () => clearInterval(t);
   }, [state.kind, state.kind === 'recording' ? (state as { startedAt: number }).startedAt : 0]); // eslint-disable-line react-hooks/exhaustive-deps

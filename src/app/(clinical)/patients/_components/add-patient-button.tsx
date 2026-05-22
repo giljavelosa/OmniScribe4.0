@@ -101,8 +101,12 @@ export function AddPatientButton({ sites, defaultSiteId }: Props) {
   // Duplicate check — debounced 600ms, runs when name + DOB are filled
   useEffect(() => {
     if (dupTimerRef.current) clearTimeout(dupTimerRef.current);
+    // Reset stale duplicate state when name/dob deps change — intentional
+    // sync at the start of the debounce window, not a derived value.
+    /* eslint-disable react-hooks/set-state-in-effect */
     setDuplicates([]);
     setConfirmedAnyway(false);
+    /* eslint-enable react-hooks/set-state-in-effect */
 
     const ln = lastName.trim();
     const fn = firstName.trim();
@@ -140,7 +144,6 @@ export function AddPatientButton({ sites, defaultSiteId }: Props) {
         // Non-blocking — duplicate check failure should never block creation
       }
     }, 600);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [firstName, lastName, dob]);
 
   function submit() {

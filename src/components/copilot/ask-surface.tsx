@@ -136,10 +136,11 @@ export function AskSurface({
       surface: surface ?? 'review',
       mode: 'chart',
     });
-    setMessages([{ role: 'assistant', content: greeting }]);
     // Intentional: greeting fires once per session (ref guard). Names
     // updating mid-session must not re-greet — that would jarringly
     // break the conversation flow.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setMessages([{ role: 'assistant', content: greeting }]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

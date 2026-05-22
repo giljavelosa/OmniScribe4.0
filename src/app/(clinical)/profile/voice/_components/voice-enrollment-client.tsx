@@ -196,7 +196,7 @@ export function VoiceEnrollmentClient({ currentConsentVersion, enrollment }: Pro
           {!e.hasEmbedding && (
             <StatusBanner variant="info" className="text-xs">
               Voice-ID embedding is computing in the background — typically takes 1–2 minutes.
-              Speaker labels will appear on the next visit's transcript.
+              Speaker labels will appear on the next visit&apos;s transcript.
             </StatusBanner>
           )}
         </div>
@@ -290,7 +290,7 @@ export function VoiceEnrollmentClient({ currentConsentVersion, enrollment }: Pro
       <div className="rounded-xl border border-border bg-card p-5 space-y-4">
         <p className="text-sm font-medium">BIPA biometric data consent</p>
         <p className="text-sm text-muted-foreground leading-relaxed">
-          OmniScribe will collect and store a biometric voice "embedding" — a 192-number mathematical
+          OmniScribe will collect and store a biometric voice &quot;embedding&quot; — a 192-number mathematical
           representation of your voice. It is used solely for labeling transcript speakers in your
           clinical notes. The embedding is stored in our encrypted database; the original audio sample
           is retained for 7 years per HIPAA and never shared. You may revoke enrollment at any time;

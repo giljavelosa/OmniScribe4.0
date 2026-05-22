@@ -47,7 +47,7 @@ export function AiCommandPanel({ variant = 'desktop' }: Props) {
     });
   }
 
-  function useSuggestion(label: string) {
+  function applySuggestion(label: string) {
     setQuery(label);
     startTransition(() => {
       router.push(`/patients?query=${encodeURIComponent(label)}`);
@@ -104,7 +104,7 @@ export function AiCommandPanel({ variant = 'desktop' }: Props) {
             <button
               key={s.label}
               type="button"
-              onClick={() => useSuggestion(s.label)}
+              onClick={() => applySuggestion(s.label)}
               disabled={pending}
               className="text-left text-xs text-muted-foreground hover:text-foreground hover:bg-muted/60 rounded-md px-2 py-1.5 transition-colors min-h-[var(--touch-min)] flex items-center"
             >

@@ -201,6 +201,9 @@ export function CaptureStateProvider({
             stub: data.stub,
           };
           lastKeyDataRef.current = freshKey;
+          // Self-call for reconnect — noteId is stable for a WS session, so
+          // the closure-captured openWebSocket is the correct binding.
+          // eslint-disable-next-line react-hooks/immutability
           openWebSocket(freshKey);
           setState((s) =>
             s.kind === 'reconnecting'
