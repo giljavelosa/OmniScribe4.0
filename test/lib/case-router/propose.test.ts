@@ -39,6 +39,7 @@ function baseInput(overrides: Partial<CaseRouterInput> = {}): CaseRouterInput {
         secondaryIcd: null,
         secondaryIcdLabel: null,
         status: 'ACTIVE' as const,
+        mirrorsFhirConditionId: null,
         viewerLastActivityAt: new Date(Date.now() - 5 * 86_400_000).toISOString(),
         viewerDivisionLastActivityAt: new Date(
           Date.now() - 5 * 86_400_000,
@@ -123,6 +124,72 @@ describe('Zod schema — CaseRouterProposalSchema', () => {
     expect(result.success).toBe(true);
   });
 
+  it('Sprint 0.16: parses a "reconcile" proposal with 4 resolution options', () => {
+    const result = CaseRouterProposalSchema.safeParse({
+      action: 'reconcile',
+      reconcileProposal: {
+        driftLogId: 'drift_1',
+        caseManagementId: 'case_knee',
+        fhirConditionId: 'cond_knee',
+        driftKind: 'STATUS',
+        summary: 'OmniScribe case ACTIVE; EHR Condition resolved 2025-01-12 by Dr. Park.',
+        resolutionOptions: [
+          { kind: 'reopen-case', label: 'Reopen as recurrence', reasoning: 'Visit reads like recurrence.' },
+          { kind: 'open-new-case', label: 'Open a new case', reasoning: 'Treat as a discrete episode.' },
+          { kind: 'close-case', label: 'Close the case', reasoning: 'Sync to EHR.' },
+          { kind: 'attach-as-is', label: 'Attach as-is', reasoning: 'Defer reconciliation.' },
+        ],
+        recommendedOptionIndex: 0,
+      },
+      confidence: 'medium',
+      reasoning: 'EHR shows resolved; visit reads like recurrence.',
+      alternatives: [],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('Sprint 0.16: rejects a "reconcile" proposal with only 1 resolution option (min 2)', () => {
+    const result = CaseRouterProposalSchema.safeParse({
+      action: 'reconcile',
+      reconcileProposal: {
+        driftLogId: 'drift_1',
+        caseManagementId: 'case_knee',
+        fhirConditionId: 'cond_knee',
+        driftKind: 'STATUS',
+        summary: 's',
+        resolutionOptions: [
+          { kind: 'attach-as-is', label: 'a', reasoning: 'r' },
+        ],
+      },
+      confidence: 'medium',
+      reasoning: 'x',
+      alternatives: [],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('Sprint 0.16: rejects a "reconcile" proposal with 5 resolution options (max 4)', () => {
+    const result = CaseRouterProposalSchema.safeParse({
+      action: 'reconcile',
+      reconcileProposal: {
+        driftLogId: 'drift_1',
+        caseManagementId: 'case_knee',
+        fhirConditionId: 'cond_knee',
+        driftKind: 'ICD',
+        summary: 's',
+        resolutionOptions: Array.from({ length: 5 }).map(() => ({
+          kind: 'attach-as-is' as const,
+          label: 'a',
+          reasoning: 'r',
+        })),
+      },
+      confidence: 'medium',
+      reasoning: 'x',
+      alternatives: [],
+    });
+    expect(result.success).toBe(false);
+  });
+
   it('Sprint 0.15: rejects an "open-new-from-condition" proposal with null primaryIcd', () => {
     const result = CaseRouterProposalSchema.safeParse({
       action: 'open-new-from-condition',
@@ -191,6 +258,16 @@ describe('buildCaseRouterSystemPrompt', () => {
     expect(withoutFhir).not.toContain('EHR DIAGNOSIS LIST');
     expect(withoutFhir).not.toMatch(/PREFER the action "open-new-from-condition"/);
   });
+
+  it('Sprint 0.16: includes the drift-handling block only when driftAware=true', () => {
+    const withDrift = buildCaseRouterSystemPrompt({ driftAware: true });
+    const withoutDrift = buildCaseRouterSystemPrompt({ driftAware: false });
+    expect(withDrift).toContain('DRIFT DETECTION');
+    expect(withDrift).toMatch(/your top action MUST be\s+"reconcile"/);
+    expect(withDrift).toMatch(/Confidence for "reconcile" is bounded at "medium"/);
+    expect(withoutDrift).not.toContain('DRIFT DETECTION');
+    expect(withoutDrift).not.toMatch(/your top action MUST be\s+"reconcile"/);
+  });
 });
 
 describe('buildCaseRouterUserMessage', () => {
@@ -212,6 +289,34 @@ describe('buildCaseRouterUserMessage', () => {
     const user = buildCaseRouterUserMessage(baseInput({ assessmentSnippet: long }));
     expect(user.length).toBeLessThan(8000);
     expect(user).toContain('truncated');
+  });
+
+  it('Sprint 0.16: emits the <drift_signals> block only when driftSignals is non-empty', () => {
+    const withDrift = buildCaseRouterUserMessage(
+      baseInput({
+        driftSignals: [
+          {
+            driftLogId: 'drift_1',
+            caseManagementId: 'case_neck',
+            fhirConditionId: 'cond_neck',
+            driftKind: 'STATUS',
+            caseStatus: 'ACTIVE',
+            caseIcd: 'M54.81',
+            caseIcdLabel: 'Cervicogenic headache',
+            conditionStatus: 'resolved',
+            conditionIcd: 'M54.81',
+            conditionIcdLabel: 'Cervicogenic headache',
+            recordedDate: '2025-01-12',
+            recorderName: 'Dr. Park',
+          },
+        ],
+      }),
+    );
+    expect(withDrift).toContain('<drift_signals');
+    expect(withDrift).toContain('drift_1');
+    expect(withDrift).toContain('Dr. Park');
+    // Non-drift path stays byte-clean.
+    expect(buildCaseRouterUserMessage(baseInput())).not.toContain('<drift_signals');
   });
 
   it('Sprint 0.15: emits the <fhir_conditions> block only when fhirConditions is non-empty', () => {
@@ -376,6 +481,112 @@ describe('CaseRouterService.propose — stub fallback', () => {
     expect(result.modelVersion).toBe('fallback');
     expect(result.fallbackCause).toMatch(/unknown_fhirConditionId/);
     expect(result.proposal.confidence).toBe('low');
+  });
+
+  it('Sprint 0.16: falls back when the model emits a reconcile with an unknown driftLogId', async () => {
+    const llm = {
+      generate: async () => ({
+        text: JSON.stringify({
+          action: 'reconcile',
+          reconcileProposal: {
+            driftLogId: 'drift_made_up',
+            caseManagementId: 'case_neck',
+            fhirConditionId: 'cond_neck',
+            driftKind: 'STATUS',
+            summary: 's',
+            resolutionOptions: [
+              { kind: 'reopen-case', label: 'a', reasoning: 'r' },
+              { kind: 'attach-as-is', label: 'b', reasoning: 'r' },
+            ],
+          },
+          confidence: 'medium',
+          reasoning: 'x',
+          alternatives: [],
+        }),
+        model: 'sonnet-id',
+        latencyMs: 100,
+        tokensIn: 50,
+        tokensOut: 5,
+      }),
+      generateStream: async function* () {},
+    };
+    const svc = new CaseRouterService(llm as never);
+    const result = await svc.propose(
+      baseInput({
+        driftSignals: [
+          {
+            driftLogId: 'drift_real',
+            caseManagementId: 'case_neck',
+            fhirConditionId: 'cond_neck',
+            driftKind: 'STATUS',
+            caseStatus: 'ACTIVE',
+            caseIcd: 'M54.81',
+            caseIcdLabel: 'Cervicogenic headache',
+            conditionStatus: 'resolved',
+            conditionIcd: 'M54.81',
+            conditionIcdLabel: 'Cervicogenic headache',
+            recordedDate: '2025-01-12',
+            recorderName: 'Dr. Park',
+          },
+        ],
+      }),
+    );
+    expect(result.modelVersion).toBe('fallback');
+    expect(result.fallbackCause).toMatch(/unknown_driftLogId/);
+  });
+
+  it('Sprint 0.16: coerces "high" confidence DOWN to "medium" on a reconcile proposal (spec decision 7)', async () => {
+    const llm = {
+      generate: async () => ({
+        text: JSON.stringify({
+          action: 'reconcile',
+          reconcileProposal: {
+            driftLogId: 'drift_real',
+            caseManagementId: 'case_neck',
+            fhirConditionId: 'cond_neck',
+            driftKind: 'STATUS',
+            summary: 's',
+            resolutionOptions: [
+              { kind: 'reopen-case', label: 'a', reasoning: 'r' },
+              { kind: 'attach-as-is', label: 'b', reasoning: 'r' },
+            ],
+            recommendedOptionIndex: 0,
+          },
+          confidence: 'high', // out-of-bounds for reconcile.
+          reasoning: 'x',
+          alternatives: [],
+        }),
+        model: 'sonnet-id',
+        latencyMs: 100,
+        tokensIn: 50,
+        tokensOut: 5,
+      }),
+      generateStream: async function* () {},
+    };
+    const svc = new CaseRouterService(llm as never);
+    const result = await svc.propose(
+      baseInput({
+        driftSignals: [
+          {
+            driftLogId: 'drift_real',
+            caseManagementId: 'case_neck',
+            fhirConditionId: 'cond_neck',
+            driftKind: 'STATUS',
+            caseStatus: 'ACTIVE',
+            caseIcd: 'M54.81',
+            caseIcdLabel: 'Cervicogenic headache',
+            conditionStatus: 'resolved',
+            conditionIcd: 'M54.81',
+            conditionIcdLabel: 'Cervicogenic headache',
+            recordedDate: '2025-01-12',
+            recorderName: 'Dr. Park',
+          },
+        ],
+      }),
+    );
+    expect(result.modelVersion).toBe('sonnet');
+    expect(result.proposal.confidence).toBe('medium');
+    expect(result.proposal.action).toBe('reconcile');
   });
 
   it('Sprint 0.15: accepts a well-formed open-new-from-condition with a known fhirConditionId', async () => {

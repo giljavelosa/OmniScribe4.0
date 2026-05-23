@@ -33,8 +33,15 @@ import type { PriorContextBriefContent } from '@/types/brief';
  * `lastUpdated` in addition to `conditionId` + `ehrSystem`. v1 rows
  * still parse (the new fields are nullable), but a `cleo-state` event
  * picks up the richer shape on next rebuild.
+ *
+ * v3 (Sprint 0.16): `observedPatternsJson` gains the
+ * `case_fhir_status_drift` kind for each unresolved
+ * `CaseFhirDriftLog` row. Existing v2 rows are still readable (the
+ * new kind extends an enum on a discriminator); a `cleo-state` event
+ * (sign / case-router-accept / drift-resolve) picks up the richer
+ * shape on next rebuild.
  */
-export const CLEO_STATE_GENERATOR_VERSION = 'cleo-state-v2';
+export const CLEO_STATE_GENERATOR_VERSION = 'cleo-state-v3';
 
 // =============================================================================
 // Zod schemas — caseAwarenessJson / observedPatternsJson / conversationFactsJson
@@ -92,6 +99,9 @@ const ObservedPatternBaseSchema = z.object({
     'measure_trend',
     'recert_due_soon',
     'goal_stalled',
+    // Sprint 0.16 — `CaseFhirDriftLog` row exists + is unresolved for
+    // a mirrored case on this patient.
+    'case_fhir_status_drift',
   ]),
   /** Short label for the card UI ("Sleep mentioned in last 3 visits"). */
   label: z.string().min(1).max(160),
@@ -192,6 +202,9 @@ type Tx = Pick<
   // cache. Pinned to the narrow Pick so test fixtures can mock just this
   // call without standing up the whole prisma surface.
   | 'fhirCachedResource'
+  // Sprint 0.16 — surface unresolved drift logs as the
+  // `case_fhir_status_drift` observed pattern.
+  | 'caseFhirDriftLog'
 >;
 
 /**
@@ -408,6 +421,23 @@ export async function buildStateProjections(
     }),
   };
 
+  // Sprint 0.16 — unresolved FHIR drift logs become observed patterns.
+  // Patient-wide query (drifts aren't per-clinician); the projection
+  // exposes them to whatever clinician's state we're rebuilding so the
+  // Cleo's-read card can surface them regardless of who detected the
+  // drift originally.
+  const openDriftLogs = await client.caseFhirDriftLog.findMany({
+    where: { orgId, patientId, resolvedAt: null },
+    orderBy: { detectedAt: 'desc' },
+    select: {
+      id: true,
+      caseManagementId: true,
+      fhirConditionId: true,
+      driftKind: true,
+      detectedAt: true,
+    },
+  });
+
   // ---- Observed patterns ----
   const patterns: ObservedPattern[] = [];
 
@@ -417,6 +447,7 @@ export async function buildStateProjections(
     ...detectMeasureTrend(briefContent ?? null, latestBrief?.noteId ?? null),
     ...detectRecertDueSoon(episodes),
     ...detectGoalStalled(episodes),
+    ...detectCaseFhirDrift(openDriftLogs),
   );
 
   const observedPatterns: ObservedPatternsJson = { patterns };
@@ -660,6 +691,44 @@ export function detectGoalStalled(
     }
   }
   return out;
+}
+
+/**
+ * Detector 5 (Sprint 0.16) — `case_fhir_status_drift`.
+ *
+ * One pattern entry per unresolved `CaseFhirDriftLog` row. The
+ * loader at the call site filters `resolvedAt IS NULL` (open drifts
+ * only); this detector is a pure projection from those rows.
+ *
+ * `observedInNoteIds` is left empty — drift isn't anchored to a note;
+ * it's an event between OmniScribe + EHR. The `detail` carries the
+ * driftLogId so the Cleo's-read card / Cases tab can deep-link into
+ * the appropriate review surface.
+ */
+export function detectCaseFhirDrift(
+  driftLogs: Array<{
+    id: string;
+    caseManagementId: string;
+    fhirConditionId: string;
+    driftKind: 'STATUS' | 'ICD';
+    detectedAt: Date;
+  }>,
+): ObservedPattern[] {
+  return driftLogs.map((log) => ({
+    kind: 'case_fhir_status_drift' as const,
+    label: `EHR drift on case (${log.driftKind.toLowerCase()})`,
+    detail: {
+      driftLogId: log.id,
+      caseManagementId: log.caseManagementId,
+      fhirConditionId: log.fhirConditionId,
+      driftKind: log.driftKind,
+      detectedAt: log.detectedAt.toISOString(),
+    },
+    observedInNoteIds: [],
+    count: 1,
+    firstSeen: log.detectedAt.toISOString(),
+    lastSeen: log.detectedAt.toISOString(),
+  }));
 }
 
 // =============================================================================

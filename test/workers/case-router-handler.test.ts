@@ -20,6 +20,8 @@ const copilotPatientStateFindUnique = vi.fn();
 const orgEhrConnectionCount = vi.fn();
 const patientFhirIdentityFindFirst = vi.fn();
 const fhirCachedResourceFindMany = vi.fn();
+const caseFhirDriftLogCreate = vi.fn();
+const caseFhirDriftLogUpdateMany = vi.fn();
 const writeAuditLog = vi.fn();
 const proposeMock = vi.fn();
 
@@ -47,6 +49,13 @@ vi.mock('@/lib/prisma', () => ({
     },
     fhirCachedResource: {
       findMany: (...a: unknown[]) => fhirCachedResourceFindMany(...a),
+    },
+    // Sprint 0.16 — drift-log writes (per-signal create + post-run
+    // updateMany back-fill of detectedByRunId). Tests that don't
+    // exercise the drift path never trigger these mocks.
+    caseFhirDriftLog: {
+      create: (...a: unknown[]) => caseFhirDriftLogCreate(...a),
+      updateMany: (...a: unknown[]) => caseFhirDriftLogUpdateMany(...a),
     },
   },
 }));
@@ -92,6 +101,8 @@ beforeEach(() => {
   orgEhrConnectionCount.mockReset();
   patientFhirIdentityFindFirst.mockReset();
   fhirCachedResourceFindMany.mockReset();
+  caseFhirDriftLogCreate.mockReset();
+  caseFhirDriftLogUpdateMany.mockReset();
   writeAuditLog.mockReset();
   proposeMock.mockReset();
   // Sprint 0.14 default: no state row → backward-compatible Sprint-0.13
@@ -104,6 +115,9 @@ beforeEach(() => {
   orgEhrConnectionCount.mockResolvedValue(0);
   patientFhirIdentityFindFirst.mockResolvedValue(null);
   fhirCachedResourceFindMany.mockResolvedValue([]);
+  // Sprint 0.16 default: no drift writes. Drift-detect tests below
+  // override caseFhirDriftLog.create per-test to return synthetic ids.
+  caseFhirDriftLogUpdateMany.mockResolvedValue({ count: 0 });
 });
 
 describe('case-router worker handler', () => {
@@ -513,6 +527,278 @@ describe('case-router worker handler', () => {
     // returned null and we stopped there.
     expect(patientFhirIdentityFindFirst).toHaveBeenCalled();
     expect(fhirCachedResourceFindMany).not.toHaveBeenCalled();
+  });
+
+  // ===========================================================================
+  // Sprint 0.16 — drift-detection paths.
+  // ===========================================================================
+
+  it('Sprint 0.16: detects STATUS drift on a mirrored case → writes CaseFhirDriftLog + audits CASE_FHIR_DRIFT_DETECTED + threads driftSignals into agent input', async () => {
+    noteFindFirst.mockResolvedValueOnce({
+      id: 'note_drift',
+      orgId: 'org_1',
+      patientId: 'pat_drift',
+      status: 'DRAFT',
+      division: 'MEDICAL',
+      draftJson: null,
+      finalJson: null,
+      patient: { id: 'pat_drift' },
+      encounter: { id: 'enc_d', caseManagementId: 'case_pending', clinicianOrgUserId: 'ou_1' },
+    });
+    orgUserFindUnique.mockResolvedValueOnce({ professionType: 'MD', division: 'MEDICAL' });
+    caseManagementFindMany.mockResolvedValueOnce([
+      {
+        id: 'case_knee',
+        primaryIcd: 'M17.11',
+        primaryIcdLabel: 'Right knee OA',
+        secondaryIcd: null,
+        secondaryIcdLabel: null,
+        status: 'ACTIVE',
+        mirrorsFhirConditionId: 'cond_knee',
+        encounters: [],
+      },
+    ]);
+
+    // FHIR enabled at org. Cache has one resolved Condition (the
+    // mirrored knee Condition). Active fetch returns that one row,
+    // filters it out (non-active) and returns `ok: true, conditions:
+    // []` — NOT a degraded path. Drift detection then runs against
+    // the SAME row via the mirrored-fetch helper, which doesn't apply
+    // the active-only filter.
+    orgEhrConnectionCount.mockResolvedValueOnce(1);
+    patientFhirIdentityFindFirst.mockResolvedValue({
+      id: 'pfi_1',
+      fhirPatientId: 'fhir-pat-1',
+    });
+    const resolvedConditionRow = {
+      fhirResourceId: 'cond_knee',
+      resource: {
+        raw: {
+          resourceType: 'Condition',
+          id: 'cond_knee',
+          recorder: { display: 'Dr. Park' },
+          meta: { lastUpdated: '2025-01-12T10:00:00Z' },
+        },
+        simplified: {
+          code: 'M17.11',
+          display: 'Right knee OA',
+          clinicalStatus: 'resolved',
+          onsetDate: '2020-04-01',
+          recordedDate: '2025-01-12',
+        },
+      },
+      fetchedAt: new Date(),
+    };
+    // 1st call: fetchPatientConditions (active-only filter, returns
+    // ok+empty since the row is resolved). 2nd call:
+    // fetchMirroredConditions (no status filter, returns the row).
+    fhirCachedResourceFindMany
+      .mockResolvedValueOnce([resolvedConditionRow])
+      .mockResolvedValueOnce([resolvedConditionRow]);
+
+    caseFhirDriftLogCreate.mockResolvedValueOnce({ id: 'drift_1' });
+
+    proposeMock.mockResolvedValueOnce({
+      proposal: {
+        action: 'reconcile',
+        reconcileProposal: {
+          driftLogId: 'drift_1',
+          caseManagementId: 'case_knee',
+          fhirConditionId: 'cond_knee',
+          driftKind: 'STATUS',
+          summary: 'EHR resolved 2025-01-12 by Dr. Park; OmniScribe case ACTIVE.',
+          resolutionOptions: [
+            { kind: 'reopen-case', label: 'Reopen as recurrence', reasoning: 'r' },
+            { kind: 'attach-as-is', label: 'Attach as-is', reasoning: 'r' },
+          ],
+          recommendedOptionIndex: 0,
+        },
+        confidence: 'medium',
+        reasoning: 'EHR shows resolved; visit reads like recurrence.',
+        alternatives: [],
+      },
+      modelVersion: 'sonnet',
+      modelId: 'sonnet',
+      stub: false,
+    });
+    caseRouterRunUpsert.mockResolvedValueOnce({ id: 'run_drift' });
+
+    await handle(makeJob({ noteId: 'note_drift' }));
+
+    // CaseFhirDriftLog row written with the snapshot from both sides.
+    expect(caseFhirDriftLogCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          orgId: 'org_1',
+          patientId: 'pat_drift',
+          caseManagementId: 'case_knee',
+          fhirConditionId: 'cond_knee',
+          driftKind: 'STATUS',
+          caseStatusAtDetection: 'ACTIVE',
+          caseIcdAtDetection: 'M17.11',
+          conditionStatusAtDetection: 'resolved',
+          conditionIcdAtDetection: 'M17.11',
+        }),
+      }),
+    );
+    // CASE_FHIR_DRIFT_DETECTED audit fires (rule 8 — never swallowed).
+    expect(writeAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'CASE_FHIR_DRIFT_DETECTED',
+        metadata: expect.objectContaining({
+          driftLogId: 'drift_1',
+          caseManagementId: 'case_knee',
+          fhirConditionId: 'cond_knee',
+          driftKind: 'STATUS',
+          personaVersion: 'miss-cleo-v1',
+        }),
+      }),
+    );
+    // Agent received the drift signal.
+    const proposeCall = proposeMock.mock.calls[0]![0] as {
+      driftSignals: Array<{ driftLogId: string; driftKind: string }>;
+    };
+    expect(proposeCall.driftSignals?.[0]?.driftLogId).toBe('drift_1');
+    expect(proposeCall.driftSignals?.[0]?.driftKind).toBe('STATUS');
+    // Reconcile-proposed audit fires.
+    expect(writeAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'CASE_ROUTER_RECONCILE_PROPOSED',
+        metadata: expect.objectContaining({
+          driftLogId: 'drift_1',
+          driftKind: 'STATUS',
+          optionsCount: 2,
+          personaVersion: 'miss-cleo-v1',
+        }),
+      }),
+    );
+    // Back-fill detectedByRunId on the drift log after run.create.
+    expect(caseFhirDriftLogUpdateMany).toHaveBeenCalledWith({
+      where: { id: { in: ['drift_1'] } },
+      data: { detectedByRunId: 'run_drift' },
+    });
+  });
+
+  it('Sprint 0.16: non-mirrored case → skips drift detection entirely (backward-compatible with Sprint 0.15)', async () => {
+    noteFindFirst.mockResolvedValueOnce({
+      id: 'note_no_mirror',
+      orgId: 'org_1',
+      patientId: 'pat_no_mirror',
+      status: 'DRAFT',
+      division: 'MEDICAL',
+      draftJson: null,
+      finalJson: null,
+      patient: { id: 'pat_no_mirror' },
+      encounter: { id: 'enc_n', caseManagementId: 'case_pending', clinicianOrgUserId: 'ou_1' },
+    });
+    orgUserFindUnique.mockResolvedValueOnce({ professionType: 'MD', division: 'MEDICAL' });
+    caseManagementFindMany.mockResolvedValueOnce([
+      {
+        id: 'case_native',
+        primaryIcd: 'M17.11',
+        primaryIcdLabel: 'Right knee OA',
+        secondaryIcd: null,
+        secondaryIcdLabel: null,
+        status: 'ACTIVE',
+        mirrorsFhirConditionId: null, // no mirror → no drift detection
+        encounters: [],
+      },
+    ]);
+    orgEhrConnectionCount.mockResolvedValueOnce(1);
+    patientFhirIdentityFindFirst.mockResolvedValueOnce(null);
+
+    proposeMock.mockResolvedValueOnce({
+      proposal: {
+        action: 'attach',
+        caseManagementId: 'case_native',
+        confidence: 'high',
+        reasoning: 'attach',
+        alternatives: [],
+      },
+      modelVersion: 'sonnet',
+      modelId: 'sonnet',
+      stub: false,
+    });
+    caseRouterRunUpsert.mockResolvedValueOnce({ id: 'run_n' });
+
+    await handle(makeJob({ noteId: 'note_no_mirror' }));
+
+    expect(caseFhirDriftLogCreate).not.toHaveBeenCalled();
+    expect(writeAuditLog).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'CASE_FHIR_DRIFT_DETECTED' }),
+    );
+    expect(writeAuditLog).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'CASE_ROUTER_RECONCILE_PROPOSED' }),
+    );
+    // The CASE_ROUTER_PROPOSED audit records "0 drift signals" — auditor lens.
+    expect(writeAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'CASE_ROUTER_PROPOSED',
+        metadata: expect.objectContaining({ driftSignalsCount: 0 }),
+      }),
+    );
+  });
+
+  it('Sprint 0.16: FHIR-unavailable (active fetch failed) → drift detection is skipped (no log rows, no reconcile)', async () => {
+    noteFindFirst.mockResolvedValueOnce({
+      id: 'note_fhir_down',
+      orgId: 'org_1',
+      patientId: 'pat_fhir_down',
+      status: 'DRAFT',
+      division: 'MEDICAL',
+      draftJson: null,
+      finalJson: null,
+      patient: { id: 'pat_fhir_down' },
+      encounter: { id: 'enc_d', caseManagementId: 'case_pending', clinicianOrgUserId: 'ou_1' },
+    });
+    orgUserFindUnique.mockResolvedValueOnce({ professionType: 'MD', division: 'MEDICAL' });
+    caseManagementFindMany.mockResolvedValueOnce([
+      {
+        id: 'case_knee',
+        primaryIcd: 'M17.11',
+        primaryIcdLabel: 'Right knee OA',
+        secondaryIcd: null,
+        secondaryIcdLabel: null,
+        status: 'ACTIVE',
+        mirrorsFhirConditionId: 'cond_knee',
+        encounters: [],
+      },
+    ]);
+
+    // FHIR enabled, link verified, but cache read throws.
+    orgEhrConnectionCount.mockResolvedValueOnce(1);
+    patientFhirIdentityFindFirst.mockResolvedValueOnce({
+      id: 'pfi_1',
+      fhirPatientId: 'fhir-pat-1',
+    });
+    fhirCachedResourceFindMany.mockRejectedValueOnce(new Error('cache exploded'));
+
+    proposeMock.mockResolvedValueOnce({
+      proposal: {
+        action: 'open-new',
+        newCase: { primaryIcd: null, primaryIcdLabel: 'Routing in progress' },
+        confidence: 'low',
+        reasoning: 'unclear',
+        alternatives: [],
+      },
+      modelVersion: 'sonnet',
+      modelId: 'sonnet',
+      stub: false,
+    });
+    caseRouterRunUpsert.mockResolvedValueOnce({ id: 'run_d' });
+
+    await handle(makeJob({ noteId: 'note_fhir_down' }));
+
+    // Drift detection short-circuits when active-fetch is unhealthy.
+    expect(caseFhirDriftLogCreate).not.toHaveBeenCalled();
+    // Existing FHIR-unavailable audit still fires (from Sprint 0.15).
+    expect(writeAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'CASE_ROUTER_FHIR_UNAVAILABLE' }),
+    );
+    // No reconcile audit.
+    expect(writeAuditLog).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'CASE_ROUTER_RECONCILE_PROPOSED' }),
+    );
   });
 
   it('rethrows on agent failure so BullMQ retries (rule 10), with a PHI-free audit row', async () => {

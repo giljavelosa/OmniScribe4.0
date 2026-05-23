@@ -133,3 +133,138 @@ describe('CaseRoutingPanel — Sprint 0.15 FHIR-backed action', () => {
     expect(screen.queryByText(/EHR-verified · recorded/i)).not.toBeInTheDocument();
   });
 });
+
+// =============================================================================
+// Sprint 0.16 — reconcile rendering.
+// =============================================================================
+
+function reconcileRun(
+  overrides: Partial<CaseRouterRunDTO> = {},
+): CaseRouterRunDTO {
+  return {
+    id: 'run_reconcile',
+    confidence: 'MEDIUM',
+    reasoning: 'EHR shows Dr. Park resolved 2025-01-12.',
+    modelVersion: 'sonnet',
+    createdAt: new Date().toISOString(),
+    acceptedAction: null,
+    acceptedAt: null,
+    proposalJson: {
+      action: 'reconcile',
+      confidence: 'medium',
+      reasoning: 'EHR shows Dr. Park resolved 2025-01-12.',
+      alternatives: [],
+      reconcileProposal: {
+        driftLogId: 'drift_1',
+        caseManagementId: 'case_knee',
+        fhirConditionId: 'cond_knee',
+        driftKind: 'STATUS',
+        summary:
+          'Your OmniScribe case M17.11 — Right knee OA — is ACTIVE. The EHR Condition was marked resolved 2025-01-12 by Dr. Park.',
+        resolutionOptions: [
+          {
+            kind: 'reopen-case',
+            label: 'Reopen the case as a recurrence',
+            reasoning: 'Visit reads like recurrence.',
+          },
+          {
+            kind: 'open-new-case',
+            label: 'Open a new case for M17.11',
+            reasoning: 'Treat as a discrete episode.',
+          },
+          {
+            kind: 'close-case',
+            label: 'Close the OmniScribe case',
+            reasoning: 'Sync to EHR.',
+          },
+          {
+            kind: 'attach-as-is',
+            label: 'Attach to the case as-is',
+            reasoning: 'Defer reconciliation.',
+          },
+        ],
+        recommendedOptionIndex: 0,
+      },
+    },
+    ...overrides,
+  };
+}
+
+describe('CaseRoutingPanel — Sprint 0.16 reconcile rendering', () => {
+  it('renders the amber drift banner with the agent summary + driftKind chip', () => {
+    render(
+      <CaseRoutingPanel
+        noteId="note_d"
+        initial={reconcileRun()}
+        initialActiveCases={[]}
+        initialCurrentCaseId="case_pending"
+      />,
+    );
+    // Banner copy.
+    expect(screen.getByText(/EHR ↔ OmniScribe drift detected/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/marked resolved 2025-01-12 by Dr\. Park/i),
+    ).toBeInTheDocument();
+    // driftKind chip.
+    expect(screen.getByText(/drift kind: STATUS/i)).toBeInTheDocument();
+    // Amber posture — warning role on the banner.
+    expect(screen.getByRole('alert')).toBeInTheDocument();
+  });
+
+  it('renders all four resolution options with reasoning subtitles', () => {
+    render(
+      <CaseRoutingPanel
+        noteId="note_d"
+        initial={reconcileRun()}
+        initialActiveCases={[]}
+        initialCurrentCaseId="case_pending"
+      />,
+    );
+    expect(screen.getByText(/Reopen the case as a recurrence/i)).toBeInTheDocument();
+    expect(screen.getByText(/Open a new case for M17\.11/i)).toBeInTheDocument();
+    expect(screen.getByText(/Close the OmniScribe case/i)).toBeInTheDocument();
+    expect(screen.getByText(/Attach to the case as-is/i)).toBeInTheDocument();
+    // Reasoning subtitle.
+    expect(screen.getByText(/Visit reads like recurrence\./)).toBeInTheDocument();
+  });
+
+  it('pre-selects the option at recommendedOptionIndex', () => {
+    render(
+      <CaseRoutingPanel
+        noteId="note_d"
+        initial={reconcileRun({
+          proposalJson: {
+            ...reconcileRun().proposalJson,
+            reconcileProposal: {
+              ...reconcileRun().proposalJson.reconcileProposal!,
+              recommendedOptionIndex: 2, // pick the 3rd radio (close-case)
+            },
+          },
+        })}
+        initialActiveCases={[]}
+        initialCurrentCaseId="case_pending"
+      />,
+    );
+    const radios = screen.getAllByRole('radio') as HTMLInputElement[];
+    // 4 reconcile options.
+    expect(radios).toHaveLength(4);
+    expect(radios[0]!.checked).toBe(false);
+    expect(radios[1]!.checked).toBe(false);
+    expect(radios[2]!.checked).toBe(true);
+    expect(radios[3]!.checked).toBe(false);
+  });
+
+  it('does NOT render the standard alternatives section (reconcile replaces attach at the top level)', () => {
+    render(
+      <CaseRoutingPanel
+        noteId="note_d"
+        initial={reconcileRun()}
+        initialActiveCases={[]}
+        initialCurrentCaseId="case_pending"
+      />,
+    );
+    // The "Change manually…" button (manual fallback) is part of the
+    // standard ProposalCard path; the reconcile path should not render it.
+    expect(screen.queryByText(/Change manually/i)).not.toBeInTheDocument();
+  });
+});

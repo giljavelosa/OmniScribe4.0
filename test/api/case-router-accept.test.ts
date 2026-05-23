@@ -439,6 +439,374 @@ describe('POST /api/notes/[id]/case-router/accept', () => {
     );
   });
 
+  // ===========================================================================
+  // Sprint 0.16 — reconcile resolution branches.
+  // ===========================================================================
+
+  it('Sprint 0.16: resolves a STATUS drift with "reopen-case" — flips drifted case to ACTIVE + rebinds + resolves drift log + audits', async () => {
+    authedAsClinician();
+    noteFindFirst.mockResolvedValueOnce({
+      id: 'note_drift',
+      orgId: 'org_1',
+      patientId: 'pat_drift',
+      status: 'DRAFT',
+      clinicianOrgUserId: 'ou_1',
+      encounterId: 'enc_d',
+      encounter: { id: 'enc_d', caseManagementId: 'case_pending_d' },
+    });
+    caseRouterRunFindFirst.mockResolvedValueOnce({
+      id: 'run_d',
+      orgId: 'org_1',
+      noteId: 'note_drift',
+      acceptedAction: null,
+      proposalJson: {
+        action: 'reconcile',
+        reconcileProposal: {
+          driftLogId: 'drift_1',
+          caseManagementId: 'case_knee',
+          fhirConditionId: 'cond_knee',
+          driftKind: 'STATUS',
+          summary: 's',
+          resolutionOptions: [
+            { kind: 'reopen-case', label: 'Reopen as recurrence', reasoning: 'r' },
+            { kind: 'attach-as-is', label: 'Attach as-is', reasoning: 'r' },
+          ],
+          recommendedOptionIndex: 0,
+        },
+        confidence: 'medium',
+        reasoning: 'x',
+        alternatives: [],
+      },
+    });
+
+    const tx = {
+      caseManagement: {
+        findUnique: vi.fn().mockResolvedValueOnce({
+          id: 'case_pending_d',
+          status: 'PENDING_ROUTER',
+        }),
+        findFirst: vi.fn().mockResolvedValueOnce({
+          id: 'case_knee',
+          status: 'CLOSED',
+        }),
+        update: vi.fn().mockResolvedValue({}),
+        delete: vi.fn().mockResolvedValueOnce({}),
+      },
+      encounter: {
+        update: vi.fn().mockResolvedValueOnce({}),
+      },
+      caseRouterRun: {
+        update: vi.fn().mockResolvedValueOnce({}),
+      },
+      caseFhirDriftLog: {
+        findFirst: vi.fn().mockResolvedValueOnce({
+          id: 'drift_1',
+          caseManagementId: 'case_knee',
+          resolvedAt: null,
+        }),
+        update: vi.fn().mockResolvedValueOnce({}),
+      },
+    };
+    txMock.mockImplementationOnce(async (cb: (tx: unknown) => Promise<unknown>) => cb(tx));
+
+    const res = await POST(
+      buildRequest({
+        caseRouterRunId: 'run_d',
+        decision: {
+          kind: 'reconcile',
+          driftLogId: 'drift_1',
+          resolution: { kind: 'reopen-case' },
+        },
+      }),
+      { params: Promise.resolve({ id: 'note_drift' }) },
+    );
+    expect(res.status).toBe(200);
+    // Drifted case flipped back to ACTIVE.
+    expect(tx.caseManagement.update).toHaveBeenCalledWith({
+      where: { id: 'case_knee' },
+      data: { status: 'ACTIVE' },
+    });
+    // Encounter rebound + pending case deleted.
+    expect(tx.encounter.update).toHaveBeenCalledWith({
+      where: { id: 'enc_d' },
+      data: { caseManagementId: 'case_knee' },
+    });
+    expect(tx.caseManagement.delete).toHaveBeenCalledWith({
+      where: { id: 'case_pending_d' },
+    });
+    // Drift log resolved.
+    expect(tx.caseFhirDriftLog.update).toHaveBeenCalledWith({
+      where: { id: 'drift_1' },
+      data: expect.objectContaining({
+        resolvedAction: 'reopen-case',
+        resolvedByUserId: 'user_1',
+      }),
+    });
+    // Drift-resolved audit fires with persona version.
+    expect(writeAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'CASE_FHIR_DRIFT_RESOLVED',
+        metadata: expect.objectContaining({
+          driftLogId: 'drift_1',
+          caseManagementId: 'case_knee',
+          resolutionKind: 'reopen-case',
+          personaVersion: 'miss-cleo-v1',
+        }),
+      }),
+    );
+  });
+
+  it('Sprint 0.16: resolves a STATUS drift with "close-case" — closes drifted case + promotes pending', async () => {
+    authedAsClinician();
+    noteFindFirst.mockResolvedValueOnce({
+      id: 'note_drift',
+      orgId: 'org_1',
+      patientId: 'pat_drift',
+      status: 'DRAFT',
+      clinicianOrgUserId: 'ou_1',
+      encounterId: 'enc_d',
+      encounter: { id: 'enc_d', caseManagementId: 'case_pending_d' },
+    });
+    caseRouterRunFindFirst.mockResolvedValueOnce({
+      id: 'run_d',
+      orgId: 'org_1',
+      noteId: 'note_drift',
+      acceptedAction: null,
+      proposalJson: {
+        action: 'reconcile',
+        reconcileProposal: {
+          driftLogId: 'drift_1',
+          caseManagementId: 'case_knee',
+          fhirConditionId: 'cond_knee',
+          driftKind: 'STATUS',
+          summary: 's',
+          resolutionOptions: [
+            { kind: 'close-case', label: 'Close', reasoning: 'r' },
+            { kind: 'attach-as-is', label: 'Attach as-is', reasoning: 'r' },
+          ],
+        },
+        confidence: 'medium',
+        reasoning: 'x',
+        alternatives: [],
+      },
+    });
+
+    const tx = {
+      caseManagement: {
+        findUnique: vi.fn().mockResolvedValueOnce({
+          id: 'case_pending_d',
+          status: 'PENDING_ROUTER',
+        }),
+        findFirst: vi.fn().mockResolvedValueOnce({
+          id: 'case_knee',
+          status: 'ACTIVE',
+        }),
+        update: vi.fn().mockResolvedValue({}),
+      },
+      caseRouterRun: { update: vi.fn().mockResolvedValueOnce({}) },
+      caseFhirDriftLog: {
+        findFirst: vi.fn().mockResolvedValueOnce({
+          id: 'drift_1',
+          caseManagementId: 'case_knee',
+          resolvedAt: null,
+        }),
+        update: vi.fn().mockResolvedValueOnce({}),
+      },
+    };
+    txMock.mockImplementationOnce(async (cb: (tx: unknown) => Promise<unknown>) => cb(tx));
+
+    const res = await POST(
+      buildRequest({
+        caseRouterRunId: 'run_d',
+        decision: {
+          kind: 'reconcile',
+          driftLogId: 'drift_1',
+          resolution: { kind: 'close-case', reason: 'EHR resolved 2025-01-12' },
+        },
+      }),
+      { params: Promise.resolve({ id: 'note_drift' }) },
+    );
+    expect(res.status).toBe(200);
+    // Drifted case closed with reason carried through.
+    expect(tx.caseManagement.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'case_knee' },
+        data: expect.objectContaining({
+          status: 'CLOSED',
+          closeReason: 'EHR resolved 2025-01-12',
+        }),
+      }),
+    );
+    // Pending case promoted (post-reconcile placeholder).
+    expect(tx.caseManagement.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'case_pending_d' },
+        data: expect.objectContaining({ status: 'ACTIVE' }),
+      }),
+    );
+    expect(writeAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'CASE_FHIR_DRIFT_RESOLVED',
+        metadata: expect.objectContaining({ resolutionKind: 'close-case' }),
+      }),
+    );
+  });
+
+  it('Sprint 0.16: resolves an ICD drift with "update-case-icd" — updates the case ICD + binds + resolves log', async () => {
+    authedAsClinician();
+    noteFindFirst.mockResolvedValueOnce({
+      id: 'note_drift',
+      orgId: 'org_1',
+      patientId: 'pat_drift',
+      status: 'DRAFT',
+      clinicianOrgUserId: 'ou_1',
+      encounterId: 'enc_d',
+      encounter: { id: 'enc_d', caseManagementId: 'case_pending_d' },
+    });
+    caseRouterRunFindFirst.mockResolvedValueOnce({
+      id: 'run_d',
+      orgId: 'org_1',
+      noteId: 'note_drift',
+      acceptedAction: null,
+      proposalJson: {
+        action: 'reconcile',
+        reconcileProposal: {
+          driftLogId: 'drift_1',
+          caseManagementId: 'case_knee',
+          fhirConditionId: 'cond_knee',
+          driftKind: 'ICD',
+          summary: 's',
+          resolutionOptions: [
+            { kind: 'update-case-icd', label: 'Update', reasoning: 'r' },
+            { kind: 'attach-as-is', label: 'Attach', reasoning: 'r' },
+          ],
+        },
+        confidence: 'medium',
+        reasoning: 'x',
+        alternatives: [],
+      },
+    });
+
+    const tx = {
+      caseManagement: {
+        findUnique: vi.fn().mockResolvedValueOnce({
+          id: 'case_pending_d',
+          status: 'PENDING_ROUTER',
+        }),
+        findFirst: vi.fn().mockResolvedValueOnce({
+          id: 'case_knee',
+          status: 'ACTIVE',
+        }),
+        update: vi.fn().mockResolvedValue({}),
+        delete: vi.fn().mockResolvedValueOnce({}),
+      },
+      encounter: { update: vi.fn().mockResolvedValueOnce({}) },
+      caseRouterRun: { update: vi.fn().mockResolvedValueOnce({}) },
+      caseFhirDriftLog: {
+        findFirst: vi.fn().mockResolvedValueOnce({
+          id: 'drift_1',
+          caseManagementId: 'case_knee',
+          resolvedAt: null,
+        }),
+        update: vi.fn().mockResolvedValueOnce({}),
+      },
+    };
+    txMock.mockImplementationOnce(async (cb: (tx: unknown) => Promise<unknown>) => cb(tx));
+
+    const res = await POST(
+      buildRequest({
+        caseRouterRunId: 'run_d',
+        decision: {
+          kind: 'reconcile',
+          driftLogId: 'drift_1',
+          resolution: {
+            kind: 'update-case-icd',
+            newIcd: 'M17.12',
+            newIcdLabel: 'Left knee OA',
+          },
+        },
+      }),
+      { params: Promise.resolve({ id: 'note_drift' }) },
+    );
+    expect(res.status).toBe(200);
+    expect(tx.caseManagement.update).toHaveBeenCalledWith({
+      where: { id: 'case_knee' },
+      data: { primaryIcd: 'M17.12', primaryIcdLabel: 'Left knee OA' },
+    });
+    expect(tx.caseFhirDriftLog.update).toHaveBeenCalledWith({
+      where: { id: 'drift_1' },
+      data: expect.objectContaining({ resolvedAction: 'update-case-icd' }),
+    });
+  });
+
+  it('Sprint 0.16: 409 when the drift log is already resolved (concurrent review race)', async () => {
+    authedAsClinician();
+    noteFindFirst.mockResolvedValueOnce({
+      id: 'note_drift',
+      orgId: 'org_1',
+      patientId: 'pat_drift',
+      status: 'DRAFT',
+      clinicianOrgUserId: 'ou_1',
+      encounterId: 'enc_d',
+      encounter: { id: 'enc_d', caseManagementId: 'case_pending_d' },
+    });
+    caseRouterRunFindFirst.mockResolvedValueOnce({
+      id: 'run_d',
+      orgId: 'org_1',
+      noteId: 'note_drift',
+      acceptedAction: null,
+      proposalJson: {
+        action: 'reconcile',
+        reconcileProposal: {
+          driftLogId: 'drift_done',
+          caseManagementId: 'case_knee',
+          fhirConditionId: 'cond_knee',
+          driftKind: 'STATUS',
+          summary: 's',
+          resolutionOptions: [
+            { kind: 'reopen-case', label: 'a', reasoning: 'r' },
+            { kind: 'attach-as-is', label: 'b', reasoning: 'r' },
+          ],
+        },
+        confidence: 'medium',
+        reasoning: 'x',
+        alternatives: [],
+      },
+    });
+
+    const tx = {
+      caseManagement: {
+        findUnique: vi.fn().mockResolvedValueOnce({
+          id: 'case_pending_d',
+          status: 'PENDING_ROUTER',
+        }),
+      },
+      caseFhirDriftLog: {
+        findFirst: vi.fn().mockResolvedValueOnce({
+          id: 'drift_done',
+          caseManagementId: 'case_knee',
+          resolvedAt: new Date('2025-01-15'), // already resolved
+        }),
+      },
+    };
+    txMock.mockImplementationOnce(async (cb: (tx: unknown) => Promise<unknown>) => cb(tx));
+
+    const res = await POST(
+      buildRequest({
+        caseRouterRunId: 'run_d',
+        decision: {
+          kind: 'reconcile',
+          driftLogId: 'drift_done',
+          resolution: { kind: 'reopen-case' },
+        },
+      }),
+      { params: Promise.resolve({ id: 'note_drift' }) },
+    );
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error.code).toBe('drift_already_resolved');
+  });
+
   it('refuses to mutate after a SIGNED note (routing locked)', async () => {
     authedAsClinician();
     noteFindFirst.mockResolvedValueOnce({

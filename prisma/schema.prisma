@@ -145,6 +145,8 @@ model Organization {
   // Sprint 0.14 — Miss Cleo's per-(patient × clinician) memory + chat threads.
   copilotPatientStates  CopilotPatientState[]
   copilotConversations  CopilotConversation[]
+  // Sprint 0.16 — FHIR reconciliation drift log (back-relation only).
+  caseFhirDriftLogs     CaseFhirDriftLog[]
 
   @@index([baaExecutedAt])
   @@index([subscriptionPlan])
@@ -297,6 +299,8 @@ model User {
   sessions            UserSession[]
   passwordResetTokens PasswordResetToken[]
   caseRouterAccepts   CaseRouterRun[]      @relation("CaseRouterAcceptedBy")
+  // Sprint 0.16 — drift logs resolved by this user (back-relation only).
+  caseFhirDriftResolutions CaseFhirDriftLog[] @relation("CaseFhirDriftResolvedBy")
 }
 
 model OrgUser {
@@ -590,6 +594,16 @@ enum CaseManagementStatus {
   PENDING_ROUTER
 }
 
+/// Sprint 0.16 — first-introduction; append-only thereafter. Future kinds
+/// (e.g. RECORDER, ONSET_DATE, ALLERGY, MEDICATION) extend additively.
+enum CaseFhirDriftKind {
+  /// `Condition.clinicalStatus` disagrees with the derived state from
+  /// `CaseManagement.status` (e.g. case ACTIVE + Condition resolved).
+  STATUS
+  /// `Condition.code` (latest coded) differs from `CaseManagement.primaryIcd`.
+  ICD
+}
+
 /// Sprint 0.13 — confidence the case-router agent expressed in its proposal.
 /// HIGH = pre-select + primary "Confirm" CTA. MEDIUM = pre-select + reasoning
 /// expanded by default. LOW = no pre-selection; clinician picks from peers.
@@ -713,6 +727,8 @@ model Patient {
   // Sprint 0.14 — Miss Cleo memory + chat threads anchored to this patient.
   copilotPatientStates     CopilotPatientState[]
   copilotConversations     CopilotConversation[]
+  // Sprint 0.16 — FHIR reconciliation drift log (back-relation only).
+  caseFhirDriftLogs        CaseFhirDriftLog[]
 
   @@unique([orgId, mrn])
   @@index([orgId, lastName, firstName])
@@ -903,6 +919,8 @@ model CaseManagement {
 
   episodes   EpisodeOfCare[]
   encounters Encounter[]
+  // Sprint 0.16 — FHIR reconciliation drift log (back-relation only).
+  fhirDriftLogs CaseFhirDriftLog[]
 
   @@index([orgId, patientId, status])
   @@index([orgId, primaryIcd])
@@ -943,8 +961,77 @@ model CaseRouterRun {
   acceptedAt       DateTime?
   acceptedByUserId String?
   acceptedBy       User?             @relation("CaseRouterAcceptedBy", fields: [acceptedByUserId], references: [id])
+  // Sprint 0.16 — drift logs written during this run (back-relation only).
+  driftLogs        CaseFhirDriftLog[]
 
   @@index([orgId, createdAt])
+}
+
+/// Sprint 0.16 — FHIR Phase D₂ reconciliation log.
+///
+/// One row per detected drift between an OmniScribe `CaseManagement` and
+/// its mirrored FHIR `Condition`. Written by the case-router worker on
+/// the same run that produced the `reconcile` proposal; resolved by the
+/// accept endpoint when the clinician picks a resolution option.
+///
+/// Anti-regression rule 8: every write here (detect + resolve) pairs with
+/// an audit row (`CASE_FHIR_DRIFT_DETECTED` / `CASE_FHIR_DRIFT_RESOLVED`)
+/// that NEVER lives inside a swallowing try-catch.
+///
+/// Anti-regression rule 20: the snapshots below are populated from
+/// `verified` `PatientFhirIdentity` cache rows (see Sprint 0.15's fetcher);
+/// no draft Note or unverified resource ever lands here.
+///
+/// Open vs. resolved is the `resolvedAt IS NULL` predicate; the
+/// `(caseManagementId, resolvedAt)` index supports "open drifts on this
+/// case" queries (Cleo's state-builder + the chart-side drift banner).
+model CaseFhirDriftLog {
+  id               String            @id @default(cuid())
+  orgId            String
+  organization     Organization      @relation(fields: [orgId], references: [id])
+  patientId        String
+  patient          Patient           @relation(fields: [patientId], references: [id])
+  caseManagementId String
+  caseManagement   CaseManagement    @relation(fields: [caseManagementId], references: [id])
+  fhirConditionId  String
+
+  driftKind        CaseFhirDriftKind
+
+  /// Snapshot at detection — both sides. Lets a regulator reconstruct
+  /// "what did the two systems each say at the moment Cleo flagged it?"
+  /// without joining the live FHIR cache or replaying the worker.
+  caseStatusAtDetection        CaseManagementStatus
+  caseIcdAtDetection           String?
+  caseIcdLabelAtDetection      String?
+  /// FHIR clinicalStatus code as observed (`active` / `recurrence` /
+  /// `relapse` / `resolved` / `remission`). String — the FHIR R4 value-set
+  /// is too broad to enum-lock yet.
+  conditionStatusAtDetection   String
+  conditionIcdAtDetection      String
+  conditionIcdLabelAtDetection String
+
+  detectedAt       DateTime          @default(now())
+  /// FK to the `CaseRouterRun` that detected this drift. Nullable to
+  /// reserve room for Sprint 0.18's background-sweep detector — for
+  /// Sprint 0.16 this is ALWAYS set.
+  detectedByRunId  String?
+  detectedByRun    CaseRouterRun?    @relation(fields: [detectedByRunId], references: [id])
+
+  /// Resolution — null until the clinician picks an option at /review.
+  /// Pair updated atomically with the case mutation inside the accept
+  /// endpoint's transaction.
+  resolvedAt       DateTime?
+  /// 'reopen-case' | 'open-new-case' | 'close-case' | 'attach-as-is' |
+  /// 'update-case-icd' — the enum of resolution kinds the agent + UI
+  /// surface. Kept as a string (vs. a DB enum) so future kinds add
+  /// without a migration.
+  resolvedAction   String?
+  resolvedByUserId String?
+  resolvedBy       User?             @relation("CaseFhirDriftResolvedBy", fields: [resolvedByUserId], references: [id])
+
+  @@index([orgId, patientId, resolvedAt])
+  @@index([caseManagementId, resolvedAt])
+  @@index([detectedAt])
 }
 
 model Encounter {

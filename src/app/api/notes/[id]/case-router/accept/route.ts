@@ -68,6 +68,34 @@ const decisionSchema = z.discriminatedUnion('kind', [
     recordedDate: z.string().min(1).max(40),
     recorderName: z.string().max(160).nullable(),
   }),
+  // Sprint 0.16 — FHIR Phase D₂ reconcile. Always carries an explicit
+  // `driftLogId` + a `resolution` discriminated by the resolution-kind
+  // enum (see the case-router's `reconcileProposal.resolutionOptions`).
+  // The UI sends this on Confirm whether the clinician accepted the
+  // agent's `recommendedOptionIndex` or picked a different option from
+  // the radio list — the API treats both paths as explicit decisions.
+  z.object({
+    kind: z.literal('reconcile'),
+    driftLogId: z.string().min(1).max(64),
+    resolution: z.discriminatedUnion('kind', [
+      z.object({ kind: z.literal('reopen-case') }),
+      z.object({ kind: z.literal('attach-as-is') }),
+      z.object({
+        kind: z.literal('close-case'),
+        reason: z.string().max(200).optional(),
+      }),
+      z.object({
+        kind: z.literal('open-new-case'),
+        primaryIcd: z.string().min(1).max(16),
+        primaryIcdLabel: z.string().min(1).max(280),
+      }),
+      z.object({
+        kind: z.literal('update-case-icd'),
+        newIcd: z.string().min(1).max(16),
+        newIcdLabel: z.string().min(1).max(280),
+      }),
+    ]),
+  }),
 ]);
 
 const bodySchema = z.object({
@@ -210,6 +238,200 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           });
         }
         appliedId = targetCase.id;
+      } else if (eff.kind === 'reconcile') {
+        // Sprint 0.16 — FHIR Phase D₂ reconciliation. The clinician
+        // picked one of the five resolution options against a specific
+        // open drift log. We:
+        //   1. Load the drift log row, verify it's open + matches
+        //      the patient + org.
+        //   2. Execute the resolution-specific case mutation +
+        //      encounter rebind (per-kind contract below).
+        //   3. Resolve the drift log row atomically with the mutation.
+        //   4. Emit `CASE_FHIR_DRIFT_RESOLVED` inside the same tx
+        //      (rule 8 — never swallowed; a throw rolls the whole
+        //      reconciliation back).
+        const driftLog = await tx.caseFhirDriftLog.findFirst({
+          where: {
+            id: eff.driftLogId,
+            orgId: authorizationUser.orgId,
+            patientId: note.patientId,
+          },
+          select: {
+            id: true,
+            caseManagementId: true,
+            resolvedAt: true,
+          },
+        });
+        if (!driftLog) throw new TargetCaseError('case_not_found');
+        if (driftLog.resolvedAt) {
+          throw new ReconcileAlreadyResolvedError();
+        }
+
+        const driftedCaseId = driftLog.caseManagementId;
+        const driftedCase = await tx.caseManagement.findFirst({
+          where: {
+            id: driftedCaseId,
+            orgId: authorizationUser.orgId,
+            patientId: note.patientId,
+          },
+          select: { id: true, status: true },
+        });
+        if (!driftedCase) throw new TargetCaseError('case_not_found');
+
+        const resolution = eff.resolution;
+        switch (resolution.kind) {
+          case 'reopen-case': {
+            // Flip the drifted case back to ACTIVE. Bind the encounter
+            // to it. If the encounter was on a PENDING_ROUTER row,
+            // delete that row to avoid orphaned pending cases.
+            await tx.caseManagement.update({
+              where: { id: driftedCase.id },
+              data: { status: CaseManagementStatus.ACTIVE },
+            });
+            if (currentCase.id !== driftedCase.id) {
+              await tx.encounter.update({
+                where: { id: note.encounter!.id },
+                data: { caseManagementId: driftedCase.id },
+              });
+              if (currentCase.status === CaseManagementStatus.PENDING_ROUTER) {
+                await tx.caseManagement.delete({ where: { id: currentCase.id } });
+              }
+            }
+            appliedId = driftedCase.id;
+            break;
+          }
+          case 'attach-as-is': {
+            // No status change on the drifted case (the clinician
+            // chose to defer reconciliation). Just bind the encounter.
+            if (currentCase.id !== driftedCase.id) {
+              await tx.encounter.update({
+                where: { id: note.encounter!.id },
+                data: { caseManagementId: driftedCase.id },
+              });
+              if (currentCase.status === CaseManagementStatus.PENDING_ROUTER) {
+                await tx.caseManagement.delete({ where: { id: currentCase.id } });
+              }
+            }
+            appliedId = driftedCase.id;
+            break;
+          }
+          case 'close-case': {
+            // Close the drifted case (sync OmniScribe to the EHR's
+            // resolved state). The encounter still needs to land
+            // somewhere; per spec we promote the pending case
+            // in-place to ACTIVE with no coded ICD so the visit isn't
+            // orphaned. The clinician adds coding later from /review.
+            await tx.caseManagement.update({
+              where: { id: driftedCase.id },
+              data: {
+                status: CaseManagementStatus.CLOSED,
+                closedAt: new Date(),
+                closedByOrgUserId: authorizationUser.orgUserId,
+                closeReason: resolution.reason ?? 'EHR-resolved (drift reconcile)',
+              },
+            });
+            if (
+              currentCase.id !== driftedCase.id &&
+              currentCase.status === CaseManagementStatus.PENDING_ROUTER
+            ) {
+              await tx.caseManagement.update({
+                where: { id: currentCase.id },
+                data: {
+                  status: CaseManagementStatus.ACTIVE,
+                  primaryIcdLabel: 'Needs coding (post-reconcile)',
+                },
+              });
+              appliedId = currentCase.id;
+            } else {
+              appliedId = driftedCase.id;
+            }
+            break;
+          }
+          case 'open-new-case': {
+            // Same shape as the existing `open-new` branch — promote
+            // pending in-place when bound, else create fresh + rebind.
+            // The drifted case is left untouched; the drift remains and
+            // will surface again on the next routing run.
+            if (currentCase.status === CaseManagementStatus.PENDING_ROUTER) {
+              await tx.caseManagement.update({
+                where: { id: currentCase.id },
+                data: {
+                  status: CaseManagementStatus.ACTIVE,
+                  primaryIcd: resolution.primaryIcd,
+                  primaryIcdLabel: resolution.primaryIcdLabel,
+                },
+              });
+              appliedId = currentCase.id;
+            } else {
+              const created = await tx.caseManagement.create({
+                data: {
+                  orgId: authorizationUser.orgId,
+                  patientId: note.patientId,
+                  primaryIcd: resolution.primaryIcd,
+                  primaryIcdLabel: resolution.primaryIcdLabel,
+                  status: CaseManagementStatus.ACTIVE,
+                  openedByOrgUserId: authorizationUser.orgUserId,
+                },
+                select: { id: true },
+              });
+              await tx.encounter.update({
+                where: { id: note.encounter!.id },
+                data: { caseManagementId: created.id },
+              });
+              appliedId = created.id;
+            }
+            break;
+          }
+          case 'update-case-icd': {
+            // ICD-drift resolution: update the drifted case's
+            // primaryIcd to match the EHR-coded value. Bind encounter
+            // to it.
+            await tx.caseManagement.update({
+              where: { id: driftedCase.id },
+              data: {
+                primaryIcd: resolution.newIcd,
+                primaryIcdLabel: resolution.newIcdLabel,
+              },
+            });
+            if (currentCase.id !== driftedCase.id) {
+              await tx.encounter.update({
+                where: { id: note.encounter!.id },
+                data: { caseManagementId: driftedCase.id },
+              });
+              if (currentCase.status === CaseManagementStatus.PENDING_ROUTER) {
+                await tx.caseManagement.delete({ where: { id: currentCase.id } });
+              }
+            }
+            appliedId = driftedCase.id;
+            break;
+          }
+        }
+
+        // Resolve the drift log row in the same transaction.
+        await tx.caseFhirDriftLog.update({
+          where: { id: driftLog.id },
+          data: {
+            resolvedAt: new Date(),
+            resolvedAction: resolution.kind,
+            resolvedByUserId: user.id,
+          },
+        });
+        // Rule 8 — audit inside the same tx so a throw rolls the
+        // drift-log row + the case mutation + this audit back together.
+        await writeAuditLog({
+          userId: user.id,
+          orgId: authorizationUser.orgId,
+          action: 'CASE_FHIR_DRIFT_RESOLVED',
+          resourceType: 'CaseFhirDriftLog',
+          resourceId: driftLog.id,
+          metadata: {
+            driftLogId: driftLog.id,
+            caseManagementId: driftedCase.id,
+            resolutionKind: resolution.kind,
+            personaVersion: PERSONA_VERSION,
+          },
+          tx,
+        });
       } else if (eff.kind === 'open-new-from-condition') {
         // Sprint 0.15 — promote the pending case with a verified
         // FHIR-coded ICD + link via `mirrorsFhirConditionId`. Mirrors
@@ -356,6 +578,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         { status: err.code === 'case_not_found' ? 404 : 409 },
       );
     }
+    if (err instanceof ReconcileAlreadyResolvedError) {
+      return NextResponse.json({ error: { code: err.code } }, { status: 409 });
+    }
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {
       return NextResponse.json({ error: { code: 'not_found' } }, { status: 404 });
     }
@@ -400,6 +625,26 @@ class TargetCaseError extends Error {
   }
 }
 
+/** Sprint 0.16 — thrown when a clinician tries to reconcile a drift log
+ *  that another clinician already resolved (e.g. two concurrent reviews
+ *  of separate notes on the same patient). The tx rolls back; the
+ *  client sees a 409 with `code: 'drift_already_resolved'` and can
+ *  refetch the run to render the now-resolved state. */
+class ReconcileAlreadyResolvedError extends Error {
+  readonly code = 'drift_already_resolved' as const;
+  constructor() {
+    super('drift_already_resolved');
+    this.name = 'ReconcileAlreadyResolvedError';
+  }
+}
+
+type ReconcileResolution =
+  | { kind: 'reopen-case' }
+  | { kind: 'attach-as-is' }
+  | { kind: 'close-case'; reason?: string }
+  | { kind: 'open-new-case'; primaryIcd: string; primaryIcdLabel: string }
+  | { kind: 'update-case-icd'; newIcd: string; newIcdLabel: string };
+
 type ResolvedDecision =
   | { kind: 'attach'; caseManagementId: string }
   | { kind: 'attach-with-secondary'; caseManagementId: string; icd: string; icdLabel: string }
@@ -422,6 +667,16 @@ type ResolvedDecision =
       primaryIcdLabel: string;
       recordedDate: string;
       recorderName: string | null;
+    }
+  // Sprint 0.16 — reconcile a detected drift. Carries the driftLogId
+  // (so the same tx resolves the log row + audits resolution) and the
+  // specific resolution kind the clinician picked. The case
+  // mutation depends on `resolution.kind`; see the reconcile tx branch
+  // for the per-kind contract.
+  | {
+      kind: 'reconcile';
+      driftLogId: string;
+      resolution: ReconcileResolution;
     };
 
 function resolveDecision(
@@ -510,6 +765,16 @@ function resolveDecision(
       },
     };
   }
+  if (decision.kind === 'reconcile') {
+    return {
+      ok: true,
+      value: {
+        kind: 'reconcile',
+        driftLogId: decision.driftLogId,
+        resolution: decision.resolution,
+      },
+    };
+  }
   return {
     ok: true,
     value: {
@@ -533,6 +798,14 @@ function actionDiffersFromProposal(
   if (effective.kind === 'open-new-from-condition') {
     return proposal.action !== 'open-new-from-condition';
   }
+  if (effective.kind === 'reconcile') {
+    // For reconcile, "override" means the clinician picked a different
+    // resolution kind than the agent's recommendedOptionIndex. We treat
+    // the resolution-kind change as the override discriminator (not
+    // the top-level action), so an explicit reconcile decision matches
+    // the proposal's action and isn't itself a route override.
+    return proposal.action !== 'reconcile';
+  }
   return proposal.action !== 'open-new';
 }
 
@@ -542,6 +815,12 @@ function auditDecisionLabel(decision: Decision, isOverride: boolean): string {
   if (decision.kind === 'open-new') return 'overridden-open-new';
   if (decision.kind === 'open-new-from-condition') return 'overridden-open-new-from-condition';
   if (decision.kind === 'attach-with-secondary') return 'overridden-attach-with-secondary';
+  if (decision.kind === 'reconcile') {
+    // Sprint 0.16 — for reconcile-as-override paths (clinician hit
+    // reconcile when the proposal was something else, OR vice versa),
+    // tag with the chosen resolution kind so the audit row is queryable.
+    return `overridden-reconcile-${decision.resolution.kind}`;
+  }
   // accept that resolved to a different action — rare; treat as manual override.
   return 'overridden-manual';
 }

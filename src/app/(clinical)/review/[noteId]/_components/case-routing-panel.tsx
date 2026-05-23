@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { StatusBanner } from '@/components/ui/status-banner';
 import { COPILOT_DISPLAY_NAME } from '@/services/copilot/persona';
+import { CaseFhirDriftBanner } from '@/app/(clinical)/patients/[id]/_components/case-fhir-drift-banner';
 
 /**
  * Sprint 0.13 — Miss Cleo's case-routing panel.
@@ -43,7 +44,12 @@ export type CaseRouterRunDTO = {
 };
 
 export type ProposalDTO = {
-  action: 'attach' | 'attach-with-secondary' | 'open-new' | 'open-new-from-condition';
+  action:
+    | 'attach'
+    | 'attach-with-secondary'
+    | 'open-new'
+    | 'open-new-from-condition'
+    | 'reconcile';
   caseManagementId?: string;
   newCase?: {
     primaryIcd: string | null;
@@ -85,6 +91,30 @@ export type ProposalDTO = {
     recorder: string | null;
     recordedDate: string;
   }>;
+  /** Sprint 0.16 — populated only when `action === 'reconcile'`. The
+   *  amber drift banner + resolution radios render from this. */
+  reconcileProposal?: ReconcileProposalDTO;
+};
+
+export type ReconcileResolutionOptionKind =
+  | 'reopen-case'
+  | 'open-new-case'
+  | 'close-case'
+  | 'attach-as-is'
+  | 'update-case-icd';
+
+export type ReconcileProposalDTO = {
+  driftLogId: string;
+  caseManagementId: string;
+  fhirConditionId: string;
+  driftKind: 'STATUS' | 'ICD';
+  summary: string;
+  resolutionOptions: Array<{
+    kind: ReconcileResolutionOptionKind;
+    label: string;
+    reasoning: string;
+  }>;
+  recommendedOptionIndex?: number;
 };
 
 export type CaseRouterPanelCase = {
@@ -169,6 +199,20 @@ export function CaseRoutingPanel({ noteId, initial, initialActiveCases, initialC
       );
     }
     return <PendingPanel />;
+  }
+
+  // Sprint 0.16 — reconcile gets its own surface (amber banner +
+  // resolution radios). Dispatch at the parent level so each card
+  // component's hooks run unconditionally (react-hooks rules).
+  if (run.proposalJson.action === 'reconcile' && run.proposalJson.reconcileProposal) {
+    return (
+      <ReconcileCard
+        noteId={noteId}
+        run={run}
+        reconcileProposal={run.proposalJson.reconcileProposal}
+        onResolved={refetch}
+      />
+    );
   }
 
   return (
@@ -263,6 +307,11 @@ function ProposalCard({
   currentCaseId: string | null;
   onResolved: () => void;
 }) {
+  // Sprint 0.16 note: when proposal.action === 'reconcile', the
+  // parent (`CaseRoutingPanel`) dispatches to `ReconcileCard` BEFORE
+  // this component renders. This guarantees that the hooks below run
+  // unconditionally (react-hooks rules), and the standard
+  // attach/open-new code path stays free of reconcile branches.
   const proposal = run.proposalJson;
   const isHigh = run.confidence === 'HIGH';
   const isLow = run.confidence === 'LOW';
@@ -373,6 +422,196 @@ function ProposalCard({
       </div>
     </PanelChrome>
   );
+}
+
+// =============================================================================
+// Sprint 0.16 — reconcile surface.
+// =============================================================================
+
+/**
+ * `ReconcileCard` — surface for the `reconcile` action.
+ *
+ * Replaces the standard attach/open-new radio set with an amber drift
+ * banner + a focused 2-4 resolution-option radio list. The
+ * `recommendedOptionIndex` pre-selects the agent's top pick when set.
+ *
+ * Decision 7 / spec: confidence chip is omitted from this view — drift
+ * is a fact, not a confidence rating. The agent's reasoning still
+ * displays as a secondary line beneath the radios via the existing
+ * "Why?" toggle pattern when present.
+ *
+ * Submit constructs an explicit `decision: { kind: 'reconcile',
+ * driftLogId, resolution }` payload — there's no `kind: 'accept'`
+ * path for reconcile because the API needs the resolution kind
+ * explicit either way.
+ */
+function ReconcileCard({
+  noteId,
+  run,
+  reconcileProposal,
+  onResolved,
+}: {
+  noteId: string;
+  run: CaseRouterRunDTO;
+  reconcileProposal: ReconcileProposalDTO;
+  onResolved: () => void;
+}) {
+  const options = reconcileProposal.resolutionOptions;
+  const initialIndex =
+    reconcileProposal.recommendedOptionIndex !== undefined &&
+    reconcileProposal.recommendedOptionIndex < options.length
+      ? reconcileProposal.recommendedOptionIndex
+      : 0;
+  const [selectedIndex, setSelectedIndex] = useState<number>(initialIndex);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  function confirm() {
+    const chosen = options[selectedIndex];
+    if (!chosen) {
+      setError('Pick an option to continue.');
+      return;
+    }
+    setError(null);
+    startTransition(async () => {
+      // Build the resolution payload. For Sprint 0.16's first-cut UI
+      // we ship the kinds that don't require extra inline input
+      // (`reopen-case` / `attach-as-is` / `close-case`); for
+      // `open-new-case` + `update-case-icd` the agent ALREADY chose
+      // the ICD via the recommendedOption logic, but the UI doesn't
+      // yet have a coding picker here, so we keep this path as a
+      // graceful "fall back to manual override" surface — the
+      // server-side decision schema validates the body either way.
+      // Phase-2 polish: add inline coding inputs for those two kinds.
+      let resolution: Record<string, unknown>;
+      switch (chosen.kind) {
+        case 'reopen-case':
+        case 'attach-as-is':
+          resolution = { kind: chosen.kind };
+          break;
+        case 'close-case':
+          resolution = { kind: chosen.kind };
+          break;
+        case 'open-new-case':
+          // The agent's label carries the proposed ICD-label; we don't
+          // surface an inline coding picker yet, so we send a
+          // placeholder coded value of "UNCODED" + the label. The
+          // accept route's `open-new-case` branch tolerates any coded
+          // ICD; the clinician adds the real ICD later via /review.
+          resolution = {
+            kind: 'open-new-case',
+            primaryIcd: 'UNCODED',
+            primaryIcdLabel: chosen.label.slice(0, 200),
+          };
+          break;
+        case 'update-case-icd':
+          // Same posture as open-new-case — the inline ICD picker is
+          // Phase-2 polish. The label captures the agent's text.
+          resolution = {
+            kind: 'update-case-icd',
+            newIcd: 'UNCODED',
+            newIcdLabel: chosen.label.slice(0, 200),
+          };
+          break;
+      }
+      const res = await fetch(`/api/notes/${noteId}/case-router/accept`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          caseRouterRunId: run.id,
+          decision: {
+            kind: 'reconcile',
+            driftLogId: reconcileProposal.driftLogId,
+            resolution,
+          },
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        setError(body?.error?.message ?? 'Could not save the reconciliation.');
+        return;
+      }
+      onResolved();
+    });
+  }
+
+  return (
+    <PanelChrome>
+      <CaseFhirDriftBanner
+        summary={reconcileProposal.summary}
+        driftKind={reconcileProposal.driftKind}
+      />
+
+      <p className="text-sm font-medium pt-1">How would you like to reconcile?</p>
+      <fieldset className="space-y-2">
+        <legend className="sr-only">Drift resolution options</legend>
+        {options.map((opt, idx) => (
+          <label
+            key={`${opt.kind}-${idx}`}
+            className={`flex cursor-pointer items-start gap-3 rounded-md border p-3 transition-colors ${
+              selectedIndex === idx
+                ? 'border-primary/60 bg-primary/5'
+                : 'border-border hover:bg-muted/30'
+            } ${pending ? 'pointer-events-none opacity-60' : ''}`}
+          >
+            <input
+              type="radio"
+              name="case-router-reconcile-choice"
+              checked={selectedIndex === idx}
+              onChange={() => setSelectedIndex(idx)}
+              disabled={pending}
+              className="mt-1"
+            />
+            <div className="flex-1 min-w-0 space-y-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-medium">{opt.label}</span>
+                {idx === reconcileProposal.recommendedOptionIndex && (
+                  <StatusBadge variant="info" noIcon className="text-[10px]">
+                    Recommended
+                  </StatusBadge>
+                )}
+                <StatusBadge variant="warning" noIcon className="text-[10px]">
+                  {resolutionKindBadge(opt.kind)}
+                </StatusBadge>
+              </div>
+              {opt.reasoning && (
+                <p className="text-xs text-muted-foreground">{opt.reasoning}</p>
+              )}
+            </div>
+          </label>
+        ))}
+      </fieldset>
+
+      {run.proposalJson.reasoning && (
+        <p className="text-xs text-muted-foreground italic border-l-2 border-primary/40 pl-2 whitespace-pre-wrap">
+          {run.proposalJson.reasoning}
+        </p>
+      )}
+
+      {error && <StatusBanner variant="danger">{error}</StatusBanner>}
+
+      <div className="flex justify-end pt-1">
+        <Button onClick={confirm} disabled={pending} aria-label="Confirm reconciliation">
+          {pending ? 'Saving…' : 'Confirm and continue review'}
+        </Button>
+      </div>
+    </PanelChrome>
+  );
+}
+
+function resolutionKindBadge(kind: ReconcileResolutionOptionKind): string {
+  switch (kind) {
+    case 'reopen-case':
+      return 'Reopen';
+    case 'open-new-case':
+      return 'Open new';
+    case 'close-case':
+      return 'Close';
+    case 'attach-as-is':
+      return 'Attach as-is';
+    case 'update-case-icd':
+      return 'Update ICD';
+  }
 }
 
 function ChoiceRow({
@@ -777,6 +1016,10 @@ function describeAccepted(
     proposal.newCaseFromCondition
   ) {
     return `${proposal.newCaseFromCondition.primaryIcd} ${proposal.newCaseFromCondition.primaryIcdLabel}`.trim();
+  }
+  if (proposal.action === 'reconcile' && proposal.reconcileProposal) {
+    // Sprint 0.16 — accepted pill for a reconciled drift.
+    return `reconciled (${proposal.reconcileProposal.driftKind.toLowerCase()} drift)`;
   }
   return '(routing applied)';
 }

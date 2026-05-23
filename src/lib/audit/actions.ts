@@ -281,6 +281,36 @@ export type AuditAction =
   | 'CASE_ROUTER_FHIR_CITED'
   | 'CASE_ROUTER_FHIR_UNAVAILABLE'
   | 'CASE_FHIR_LINKED'
+  // ---- Sprint 0.16: FHIR Phase D₂ — Case ↔ Condition reconciliation ----
+  //
+  // CASE_FHIR_DRIFT_DETECTED fires once per drift signal the worker
+  // persists to `CaseFhirDriftLog`. The pure detector
+  // (`detectDriftSignals`) emits one signal per drift kind on each
+  // mirrored case; the worker writes one log row + one audit row per
+  // signal. Metadata: { driftLogId, caseManagementId, fhirConditionId,
+  // driftKind ('STATUS' | 'ICD'), personaVersion }. PHI-free —
+  // fhirConditionId is an EHR-side identifier, not HIPAA Safe Harbor.
+  // The full case + condition snapshot lives on the
+  // CaseFhirDriftLog row.
+  //
+  // CASE_ROUTER_RECONCILE_PROPOSED fires once per case-router run that
+  // ships a proposal with action='reconcile'. Metadata: {
+  // caseRouterRunId, driftLogId, optionsCount, personaVersion }. Pairs
+  // with CASE_ROUTER_PROPOSED (which always fires); the auditor can
+  // distinguish "a routing decision shipped" from "Cleo flagged a
+  // drift that needs reconciliation."
+  //
+  // CASE_FHIR_DRIFT_RESOLVED fires from the accept endpoint when a
+  // clinician picks a resolution option for an open drift log. The
+  // case mutation + the drift-log resolution + this audit row are
+  // committed inside one transaction (rule 8 — never swallowed; a
+  // throw rolls the entire reconciliation back). Metadata: {
+  // driftLogId, caseManagementId, resolutionKind ('reopen-case' |
+  // 'open-new-case' | 'close-case' | 'attach-as-is' |
+  // 'update-case-icd'), personaVersion }.
+  | 'CASE_FHIR_DRIFT_DETECTED'
+  | 'CASE_ROUTER_RECONCILE_PROPOSED'
+  | 'CASE_FHIR_DRIFT_RESOLVED'
   // ---- Unit 12: Patient detail redesign ----
   | 'SNAPSHOT_OVERRIDE_CREATED'
   | 'SNAPSHOT_OVERRIDE_SUPERSEDED'

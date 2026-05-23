@@ -9,13 +9,17 @@ import {
   type CaseRouterCaseInput,
   type CaseRouterInput,
   type CaseRouterProposal,
+  type DriftSignalInput,
   type FhirConditionInput,
   type PriorCrossVisitContextInput,
   PERSONA_VERSION,
 } from '@/services/copilot/case-router';
 import {
+  detectDriftSignals,
+  fetchMirroredConditions,
   fetchPatientConditions,
   toFhirCitations,
+  type DriftSignal,
   type FhirFetchErrorKind,
 } from '@/services/copilot/case-router-fhir';
 import { isFhirRouterEnabled } from '@/lib/case-management/fhir-router-config';
@@ -144,7 +148,8 @@ export async function handle(job: Job<CaseRouterJob>) {
   let fhirConditions: FhirConditionInput[] = [];
   let fhirEhrSystem: string | null = null;
   let fhirErrorKind: FhirFetchErrorKind | null = null;
-  if (await isFhirRouterEnabled(orgId)) {
+  const fhirEnabled = await isFhirRouterEnabled(orgId);
+  if (fhirEnabled) {
     const fhirResult = await fetchPatientConditions({
       orgId,
       patientId: note.patientId,
@@ -154,6 +159,109 @@ export async function handle(job: Job<CaseRouterJob>) {
       fhirEhrSystem = fhirResult.ehrSystem;
     } else {
       fhirErrorKind = fhirResult.errorKind;
+    }
+  }
+
+  // Sprint 0.16 — drift detection. Runs only when:
+  //   (1) FHIR is enabled at the org level (so we have a working EHR),
+  //   (2) the FHIR fetcher above did NOT degrade (no `_FHIR_UNAVAILABLE`
+  //       — fetching mirrored Conditions would degrade the same way),
+  //   (3) the patient has at least one mirrored case
+  //       (`mirrorsFhirConditionId` non-null).
+  //
+  // Skipped paths return zero drift signals; the agent behaves exactly
+  // like Sprint 0.15 (backward compatibility / decision 10). The
+  // `mirroredFetchUnavailable` flag distinguishes "no mirrored cases"
+  // from "mirrored cases exist but the cache read failed" — only the
+  // latter mirrors the unhealthy state to the run's metadata.
+  const driftSignalInputs: DriftSignalInput[] = [];
+  let mirroredFetchUnavailable: FhirFetchErrorKind | null = null;
+  const mirrorIds = cases
+    .map((c) => c.mirrorsFhirConditionId)
+    .filter((v): v is string => !!v);
+  const detectedDriftLogIds: string[] = [];
+  if (
+    fhirEnabled &&
+    fhirErrorKind === null &&
+    mirrorIds.length > 0
+  ) {
+    const mirroredResult = await fetchMirroredConditions({
+      orgId,
+      patientId: note.patientId,
+      fhirConditionIds: mirrorIds,
+    });
+    if (mirroredResult.ok) {
+      const signals: DriftSignal[] = detectDriftSignals(
+        cases.map((c) => ({
+          id: c.id,
+          status: c.status,
+          primaryIcd: c.primaryIcd,
+          primaryIcdLabel: c.primaryIcdLabel,
+          mirrorsFhirConditionId: c.mirrorsFhirConditionId,
+        })),
+        mirroredResult.conditions,
+      );
+      // Pre-persist one CaseFhirDriftLog row per signal so the agent's
+      // proposal can reference each by id. Done sequentially (vs. a
+      // single createMany) because we want the auto-generated id of
+      // each row to thread through to the agent input + the
+      // CASE_FHIR_DRIFT_DETECTED audit row. `detectedByRunId` is
+      // populated later when the CaseRouterRun row exists (see the
+      // detectedDriftLogIds back-fill below).
+      for (const signal of signals) {
+        const logRow = await prisma.caseFhirDriftLog.create({
+          data: {
+            orgId,
+            patientId: note.patientId,
+            caseManagementId: signal.caseManagementId,
+            fhirConditionId: signal.fhirConditionId,
+            driftKind: signal.kind,
+            caseStatusAtDetection: signal.caseStatus,
+            caseIcdAtDetection: signal.caseIcd,
+            caseIcdLabelAtDetection: signal.caseIcdLabel,
+            conditionStatusAtDetection: signal.conditionStatus,
+            conditionIcdAtDetection: signal.conditionIcd,
+            conditionIcdLabelAtDetection: signal.conditionIcdLabel,
+          },
+          select: { id: true },
+        });
+        detectedDriftLogIds.push(logRow.id);
+        driftSignalInputs.push({
+          driftLogId: logRow.id,
+          caseManagementId: signal.caseManagementId,
+          fhirConditionId: signal.fhirConditionId,
+          driftKind: signal.kind,
+          caseStatus: signal.caseStatus,
+          caseIcd: signal.caseIcd,
+          caseIcdLabel: signal.caseIcdLabel,
+          conditionStatus: signal.conditionStatus,
+          conditionIcd: signal.conditionIcd,
+          conditionIcdLabel: signal.conditionIcdLabel,
+          recordedDate: signal.recordedDate,
+          recorderName: signal.recorderName,
+        });
+        // Rule 8 — audit is NOT wrapped in swallowing try-catch. A
+        // throw here surfaces so the worker fails + BullMQ retries.
+        await writeAuditLog({
+          orgId,
+          action: 'CASE_FHIR_DRIFT_DETECTED',
+          resourceType: 'CaseFhirDriftLog',
+          resourceId: logRow.id,
+          metadata: {
+            driftLogId: logRow.id,
+            caseManagementId: signal.caseManagementId,
+            fhirConditionId: signal.fhirConditionId,
+            driftKind: signal.kind,
+            personaVersion: PERSONA_VERSION,
+          },
+        });
+      }
+    } else {
+      // Cache read failure for the mirrored set is mirrored to the
+      // run's metadata (auditor lens), but we don't double-emit
+      // CASE_ROUTER_FHIR_UNAVAILABLE — the active-fetch path above
+      // already records the same degradation when it fires.
+      mirroredFetchUnavailable = mirroredResult.errorKind;
     }
   }
 
@@ -168,6 +276,7 @@ export async function handle(job: Job<CaseRouterJob>) {
     noteDivision: note.division as CaseRouterInput['noteDivision'],
     priorCrossVisitContext,
     fhirConditions: fhirConditions.length > 0 ? fhirConditions : undefined,
+    driftSignals: driftSignalInputs.length > 0 ? driftSignalInputs : undefined,
   };
 
   const service = new CaseRouterService();
@@ -228,6 +337,17 @@ export async function handle(job: Job<CaseRouterJob>) {
     },
   });
 
+  // Sprint 0.16 — back-fill the run id on the just-created drift logs.
+  // The log rows were written BEFORE the agent ran so their ids could
+  // thread through; now that the run exists we link them. Idempotent
+  // on retry (updateMany on a unique key set).
+  if (detectedDriftLogIds.length > 0) {
+    await prisma.caseFhirDriftLog.updateMany({
+      where: { id: { in: detectedDriftLogIds } },
+      data: { detectedByRunId: created.id },
+    });
+  }
+
   await writeAuditLog({
     orgId,
     action: 'CASE_ROUTER_PROPOSED',
@@ -250,11 +370,40 @@ export async function handle(job: Job<CaseRouterJob>) {
       // Cleo have available? Distinguishes "no FHIR data offered" from
       // "FHIR data offered but agent chose a native case."
       fhirConditionInputCount: fhirConditions.length,
+      // Sprint 0.16 — auditor lens: how many drift signals did Cleo
+      // see this run? + did the mirrored-Condition cache fail?
+      driftSignalsCount: driftSignalInputs.length,
+      ...(mirroredFetchUnavailable
+        ? { mirroredFetchErrorKind: mirroredFetchUnavailable }
+        : {}),
       // Sprint 0.12 — every AI-authored audit row carries the persona
       // version so a regulator can filter by persona.
       personaVersion: PERSONA_VERSION,
     },
   });
+
+  // Sprint 0.16 — reconcile-proposed audit. Pairs with the existing
+  // CASE_ROUTER_PROPOSED row so an auditor can distinguish "a routing
+  // decision shipped" from "Cleo flagged a drift that needs
+  // reconciliation." Metadata: PHI-free counts + ids.
+  if (
+    proposal.action === 'reconcile' &&
+    proposal.reconcileProposal
+  ) {
+    await writeAuditLog({
+      orgId,
+      action: 'CASE_ROUTER_RECONCILE_PROPOSED',
+      resourceType: 'CaseRouterRun',
+      resourceId: created.id,
+      metadata: {
+        caseRouterRunId: created.id,
+        driftLogId: proposal.reconcileProposal.driftLogId,
+        driftKind: proposal.reconcileProposal.driftKind,
+        optionsCount: proposal.reconcileProposal.resolutionOptions.length,
+        personaVersion: PERSONA_VERSION,
+      },
+    });
+  }
 
   // Sprint 0.15 — citation audit. Fires only when the run carried at
   // least one Condition through to the persisted proposalJson. PHI-free:
@@ -381,6 +530,9 @@ async function loadCasesForRouter(
       secondaryIcd: true,
       secondaryIcdLabel: true,
       status: true,
+      // Sprint 0.16 — drift detection target. Only mirrored cases can
+      // drift; null means "no EHR mirror, skip drift detection."
+      mirrorsFhirConditionId: true,
       encounters: {
         select: {
           startedAt: true,
@@ -446,6 +598,7 @@ async function loadCasesForRouter(
       secondaryIcd: c.secondaryIcd,
       secondaryIcdLabel: c.secondaryIcdLabel,
       status: c.status as CaseRouterCaseInput['status'],
+      mirrorsFhirConditionId: c.mirrorsFhirConditionId,
       viewerLastActivityAt: latest(viewerActivities),
       viewerDivisionLastActivityAt: latest(viewerDivisionActivities),
       lastActivityAt: latest(allActivities),

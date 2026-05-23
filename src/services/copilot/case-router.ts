@@ -77,6 +77,50 @@ const FhirCitationSchema = z.object({
   recordedDate: z.string().min(1).max(40),
 });
 
+/** Sprint 0.16 — one of the explicit resolution options the agent
+ *  surfaces inside a `reconcileProposal`. Five kinds total — four for
+ *  status drift, three for ICD drift (the agent picks 2-4 most
+ *  clinically-plausible options per spec decision 4). The clinician
+ *  picks one in the review panel; the accept endpoint executes the
+ *  chosen mutation atomically with the drift-log resolution. */
+const ReconcileResolutionOptionSchema = z.object({
+  kind: z.enum([
+    'reopen-case',
+    'open-new-case',
+    'close-case',
+    'attach-as-is',
+    'update-case-icd',
+  ]),
+  /** Human label rendered in the radio. Voiced as the resolution
+   *  outcome ("Reopen the case as a recurrence"), not the technical
+   *  operation. */
+  label: z.string().min(1).max(160),
+  /** 1-sentence citation — why this is a plausible resolution. */
+  reasoning: z.string().min(1).max(600),
+});
+
+/** Sprint 0.16 — `reconcile` action payload. Built by the agent when
+ *  the worker fed it a `driftSignals` block. Every drift signal the
+ *  worker persisted produces exactly one `CaseFhirDriftLog` row; the
+ *  proposal references the log by id. */
+const ReconcileProposalSchema = z.object({
+  driftLogId: z.string().min(1).max(64),
+  caseManagementId: z.string().min(1).max(64),
+  fhirConditionId: z.string().min(1).max(128),
+  driftKind: z.enum(['STATUS', 'ICD']),
+  /** 1-2 sentence human-readable summary of WHAT drifted. Rendered as
+   *  the body of the amber drift banner. Cites both sides
+   *  concretely ("EHR resolved 2025-01-12 by Dr. Park; OmniScribe
+   *  case ACTIVE with 11 recent visits"). */
+  summary: z.string().min(1).max(800),
+  /** 2-4 resolution options ranked by clinical plausibility. */
+  resolutionOptions: z.array(ReconcileResolutionOptionSchema).min(2).max(4),
+  /** Optional pointer into `resolutionOptions` — the agent's
+   *  recommended pre-selection. Index into the array; the UI
+   *  pre-checks the matching radio when present. */
+  recommendedOptionIndex: z.number().int().min(0).optional(),
+});
+
 const AlternativeSchema = z.object({
   // Sprint 0.15 — alternatives can now reference the FHIR-backed action
   // too, so the LOW-confidence fallback view can offer both "attach to
@@ -100,11 +144,18 @@ export const CaseRouterProposalSchema = z.object({
     'open-new',
     // Sprint 0.15 — FHIR-backed "open new with verified ICD" path.
     'open-new-from-condition',
+    // Sprint 0.16 — drift reconciliation. Surfaced when the agent's
+    // input carried driftSignals; ALWAYS at most MEDIUM confidence
+    // (decision 7 — the system detected the drift, the clinician
+    // chooses how to reconcile).
+    'reconcile',
   ]),
   caseManagementId: z.string().optional(),
   newCase: NewCaseSchema.optional(),
   /** Sprint 0.15 — populated only for `open-new-from-condition`. */
   newCaseFromCondition: NewCaseFromConditionSchema.optional(),
+  /** Sprint 0.16 — populated only for `reconcile`. */
+  reconcileProposal: ReconcileProposalSchema.optional(),
   secondaryIcdAddition: SecondaryIcdAdditionSchema.optional(),
   confidence: z.enum(['high', 'medium', 'low']),
   reasoning: z.string().min(1).max(2000),
@@ -130,6 +181,10 @@ export type CaseRouterCaseInput = {
   secondaryIcd: string | null;
   secondaryIcdLabel: string | null;
   status: 'ACTIVE' | 'CLOSED' | 'CANCELLED' | 'PENDING_ROUTER';
+  /** Sprint 0.15 — non-null when the case mirrors a verified FHIR
+   *  Condition. Drives Sprint 0.16's drift detection: only mirrored
+   *  cases can drift against the EHR. */
+  mirrorsFhirConditionId: string | null;
   /** ISO — most recent note activity by *this* viewing clinician. */
   viewerLastActivityAt: string | null;
   /** ISO — most recent note activity by anyone in the viewer's division. */
@@ -143,15 +198,40 @@ export type CaseRouterCaseInput = {
 /** Sprint 0.15 — verified FHIR Condition projected into the case-router
  *  agent's input shape. Optional in the input type so non-FHIR runs are
  *  byte-identical to Sprint 0.13. When non-empty, the agent gains a
- *  fourth action option and a citation guidance block. */
+ *  fourth action option and a citation guidance block.
+ *
+ *  Sprint 0.16 widens `clinicalStatus` to the FHIR-R4 union to match
+ *  the underlying fetcher's projection. `fetchPatientConditions` still
+ *  filters to `active` at runtime — the wider type is structural so a
+ *  future fetcher can pass enriched data without a contract churn. */
 export type FhirConditionInput = {
   fhirId: string;
   icd: string;
   icdLabel: string;
-  clinicalStatus: 'active';
+  clinicalStatus: 'active' | 'recurrence' | 'relapse' | 'resolved' | 'remission';
   recordedDate: string;
   recorderName: string | null;
   lastUpdated: string;
+};
+
+/** Sprint 0.16 — drift signal projected into the agent's input. The
+ *  worker pre-persists a `CaseFhirDriftLog` row per signal and threads
+ *  the row id (`driftLogId`) through; the agent echoes it on its
+ *  `reconcileProposal` so the accept endpoint can update the matching
+ *  log atomically with the case mutation. */
+export type DriftSignalInput = {
+  driftLogId: string;
+  caseManagementId: string;
+  fhirConditionId: string;
+  driftKind: 'STATUS' | 'ICD';
+  caseStatus: 'ACTIVE' | 'CLOSED' | 'CANCELLED' | 'PENDING_ROUTER';
+  caseIcd: string | null;
+  caseIcdLabel: string | null;
+  conditionStatus: 'active' | 'recurrence' | 'relapse' | 'resolved' | 'remission';
+  conditionIcd: string;
+  conditionIcdLabel: string;
+  recordedDate: string;
+  recorderName: string | null;
 };
 
 export type CaseRouterInput = {
@@ -198,6 +278,19 @@ export type CaseRouterInput = {
    * hallucinated ids in `validateProposalAgainstInput`).
    */
   fhirConditions?: FhirConditionInput[];
+  /**
+   * Sprint 0.16 — drift signals detected by `detectDriftSignals` and
+   * persisted as `CaseFhirDriftLog` rows. When present + non-empty,
+   * the system prompt grows by the drift-handling block + the agent
+   * gains the `reconcile` action. Backward-compatible: when
+   * absent/empty, the agent runs identically to Sprint 0.15.
+   *
+   * The worker writes the log rows BEFORE the agent runs so the
+   * `driftLogId` is known + threaded through; the agent echoes it on
+   * `reconcileProposal.driftLogId`. Hallucinated ids are rejected by
+   * `validateProposalAgainstInput`.
+   */
+  driftSignals?: DriftSignalInput[];
 };
 
 // =============================================================================
@@ -253,7 +346,9 @@ Three actions are available:
 
   (A fourth action, "open-new-from-condition", is available ONLY when
   the patient has verified EHR-recorded diagnoses — see the FHIR-citation
-  block below for the rules.)
+  block below for the rules. A fifth action, "reconcile", is available
+  ONLY when the input carries a drift-signal block — see the
+  drift-handling block below for when + how to use it.)
 
 Confidence rubric:
 
@@ -290,7 +385,8 @@ DO NOT:
 ═══ OUTPUT FORMAT (strict JSON, nothing else) ═══
 
 {
-  "action": "attach" | "attach-with-secondary" | "open-new" | "open-new-from-condition",
+  "action": "attach" | "attach-with-secondary" | "open-new" |
+             "open-new-from-condition" | "reconcile",
   "caseManagementId": "<id>",            // required for attach + attach-with-secondary
   "newCase": {                              // required for open-new
     "primaryIcd": "<code>" | null,
@@ -304,6 +400,20 @@ DO NOT:
     "primaryIcdLabel": "<label>",
     "recordedDate": "<YYYY-MM-DD>",
     "recorderName": "<name>" | null
+  },
+  "reconcileProposal": {                    // required for reconcile (Sprint 0.16)
+    "driftLogId": "<driftLogId from the drift-signal block>",
+    "caseManagementId": "<id>",
+    "fhirConditionId": "<fhirId>",
+    "driftKind": "STATUS" | "ICD",
+    "summary": "<1–2 sentence citation>",
+    "resolutionOptions": [                  // 2–4 entries
+      { "kind": "reopen-case" | "open-new-case" | "close-case" |
+                "attach-as-is" | "update-case-icd",
+        "label": "<verb-phrase clinicians read>",
+        "reasoning": "<one sentence>" }
+    ],
+    "recommendedOptionIndex": <int>          // optional pre-selection
   },
   "secondaryIcdAddition": {                 // required for attach-with-secondary
     "icd": "<code>",
@@ -369,24 +479,96 @@ choose that even when a matching Condition also exists. The EHR-coded
 path is an alternative to "open-new", not a replacement for "attach".
 `.trim();
 
+/**
+ * Sprint 0.16 — drift-handling guidance block. Appended to the system
+ * prompt ONLY when `input.driftSignals` is non-empty so non-drift runs
+ * are byte-identical to Sprint 0.15.
+ *
+ * The instruction is firm on three rules per the spec:
+ *   1. When a drift signal is present on the case that would otherwise
+ *      be the best `attach` target, `reconcile` is the REQUIRED top
+ *      action — never silently attach over a drift.
+ *   2. The `reconcileProposal` must reference one of the `driftLogId`
+ *      values surfaced in the drift-signal block (worker validates).
+ *   3. Confidence is bounded at `medium` (decision 7) — the system
+ *      detected the drift, the clinician resolves it.
+ *
+ * Resolution-option enums:
+ *   STATUS drift options: reopen-case, open-new-case, close-case,
+ *                         attach-as-is.
+ *   ICD drift options:    update-case-icd, open-new-case, attach-as-is.
+ *
+ * Per spec decision 4, the agent picks 2–4 of these as the most
+ * clinically plausible for THIS specific drift.
+ */
+const DRIFT_HANDLING_BLOCK = `
+═══ DRIFT DETECTION (EHR ↔ OmniScribe disagreement) ═══
+
+You ALSO have a drift-signal block listing OmniScribe cases whose
+mirrored FHIR Condition has moved out of sync. Each entry includes:
+  - driftLogId (echo verbatim on reconcileProposal.driftLogId)
+  - the case's id, status, and ICD
+  - the Condition's clinicalStatus, ICD, recordedDate, and recorderName
+  - driftKind: "STATUS" (the two systems disagree on case state) or
+    "ICD" (they disagree on the coded diagnosis)
+
+RULES:
+
+  1. When a drift signal exists on a case that would otherwise be the
+     best "attach" target for this visit, your top action MUST be
+     "reconcile" — NEVER "attach". Use the driftLogId from the signal
+     block. Do NOT invent driftLogIds; the worker rejects unknown ones.
+
+  2. The "attach" option becomes a resolution choice INSIDE the
+     reconcileProposal as kind="attach-as-is" (note the drift, don't
+     change either system). It does not appear at the proposal's top
+     level when drift is present.
+
+  3. Build reconcileProposal.summary as a 1-2 sentence citation showing
+     BOTH sides concretely — e.g. "Your OmniScribe case M17.11 — Right
+     knee OA — is ACTIVE with 11 recent visits. The matching EHR
+     Condition was marked RESOLVED on 2025-01-12 by Dr. Park." Cite
+     the recorder + recordedDate when you have them.
+
+  4. Pick 2-4 resolution options ranked by clinical plausibility.
+     For STATUS drift the menu is: reopen-case, open-new-case,
+     close-case, attach-as-is. For ICD drift the menu is:
+     update-case-icd, open-new-case, attach-as-is. You may include
+     "attach-as-is" in BOTH menus as the no-op fallback.
+
+  5. Optionally set recommendedOptionIndex to your top pick. The UI
+     pre-selects it; the clinician can still override.
+
+  6. Confidence for "reconcile" is bounded at "medium". NEVER "high".
+     The system detected the drift; the right resolution depends on
+     clinical judgment.
+
+  7. You may pair "reconcile" with alternatives that propose other
+     destinations (e.g. attach to a different non-drifting case), but
+     "reconcile" is the primary action when drift exists.
+`.trim();
+
 export const CASE_ROUTER_SYSTEM_PROMPT_TAIL = ROUTER_INSTRUCTION_BLOCK;
 
 /**
- * Build the system prompt. When `fhirAware` is true the FHIR-citation
- * guidance is appended; when false (Sprint 0.13 / 0.14 path) it is
- * omitted so the prompt is byte-identical to the prior sprint.
+ * Build the system prompt. Guidance blocks (FHIR-citation,
+ * drift-handling) are appended only when the corresponding input
+ * shape is non-empty so the prompt stays byte-identical to the prior
+ * sprint's output on the no-extra-input path.
  *
- * The boolean is intentionally a flag rather than the conditions list
- * itself so tests can assert "the FHIR block is included" independently
- * of fixture wiring.
+ * The booleans are flags (not the inputs themselves) so tests can
+ * assert "the block is included" independently of fixture wiring.
  */
-export function buildCaseRouterSystemPrompt(options: { fhirAware?: boolean } = {}): string {
+export function buildCaseRouterSystemPrompt(
+  options: { fhirAware?: boolean; driftAware?: boolean } = {},
+): string {
   const blocks: string[] = [
     buildPersonaSystemBlock('chart'),
     PERSONA_ANTI_DRIFT_BLOCK,
     ROUTER_INSTRUCTION_BLOCK,
   ];
   if (options.fhirAware) blocks.push(FHIR_CITATION_BLOCK);
+  if (options.driftAware) blocks.push(DRIFT_HANDLING_BLOCK);
   return blocks.join('\n\n');
 }
 
@@ -533,6 +715,34 @@ export function buildCaseRouterUserMessage(input: CaseRouterInput): string {
         ].join('\n')
       : '';
 
+  // Sprint 0.16 — drift-signal block (only emitted when the worker
+  // pre-persisted CaseFhirDriftLog rows). Each row carries the
+  // driftLogId the agent must echo verbatim into
+  // `reconcileProposal.driftLogId`; the worker validates against this
+  // set, so a hallucinated id falls back to LOW-confidence open-new.
+  const driftBlock =
+    input.driftSignals && input.driftSignals.length > 0
+      ? [
+          '',
+          '<drift_signals ehr_vs_omniscribe="present">',
+          ...input.driftSignals.map((s) =>
+            [
+              `  - driftLogId: ${s.driftLogId}`,
+              `    driftKind: ${s.driftKind}`,
+              `    caseManagementId: ${s.caseManagementId}`,
+              `    caseStatus: ${s.caseStatus}`,
+              `    caseIcd: ${s.caseIcd ?? 'none'} · ${s.caseIcdLabel ?? '(no label)'}`,
+              `    fhirConditionId: ${s.fhirConditionId}`,
+              `    conditionStatus: ${s.conditionStatus}`,
+              `    conditionIcd: ${s.conditionIcd} · ${s.conditionIcdLabel}`,
+              `    recordedDate: ${s.recordedDate}`,
+              `    recorder: ${s.recorderName ?? 'unspecified'}`,
+            ].join('\n'),
+          ),
+          '</drift_signals>',
+        ].join('\n')
+      : '';
+
   return [
     '<context>',
     `  noteId: ${input.noteId}`,
@@ -545,6 +755,7 @@ export function buildCaseRouterUserMessage(input: CaseRouterInput): string {
     cases,
     '</existing_cases>',
     fhirBlock,
+    driftBlock,
     '',
     '<draft_note>',
     '  <assessment>',
@@ -572,13 +783,15 @@ export class CaseRouterService {
     // Sprint 0.14 — when the cleo-state worker has built a cross-visit
     // context block for this (patient × clinician), append it to the
     // system prompt so the agent gets richer per-visit context.
-    // Sprint 0.15 — when the FHIR fetcher returned verified Conditions,
-    // append the FHIR-citation guidance block so the agent knows about
-    // the fourth action. Both are backward-compatible: absent inputs →
-    // byte-identical prompt to the prior sprint.
+    // Sprint 0.15 — FHIR-aware: append the FHIR-citation guidance block.
+    // Sprint 0.16 — drift-aware: append the drift-handling block when
+    // the worker pre-persisted drift signals. All three are backward-
+    // compatible: absent inputs → byte-identical prompt.
     const fhirAware =
       Array.isArray(input.fhirConditions) && input.fhirConditions.length > 0;
-    const baseSystem = buildCaseRouterSystemPrompt({ fhirAware });
+    const driftAware =
+      Array.isArray(input.driftSignals) && input.driftSignals.length > 0;
+    const baseSystem = buildCaseRouterSystemPrompt({ fhirAware, driftAware });
     const system = input.priorCrossVisitContext
       ? `${baseSystem}\n\n${input.priorCrossVisitContext}`
       : baseSystem;
@@ -703,6 +916,14 @@ function validateProposalAgainstInput(
   // Sprint 0.15 — known FHIR Condition ids from the input. A proposal
   // referencing an id outside this set is a hallucination; fail closed.
   const knownFhirIds = new Set((input.fhirConditions ?? []).map((c) => c.fhirId));
+  // Sprint 0.16 — known drift-log ids from the worker-pre-persisted
+  // signals. The agent MUST echo a known id on
+  // reconcileProposal.driftLogId; otherwise we coerce to the synthetic
+  // LOW-confidence fallback (the agent can't invent a row that doesn't
+  // exist).
+  const knownDriftLogIds = new Set(
+    (input.driftSignals ?? []).map((s) => s.driftLogId),
+  );
 
   if (proposal.action === 'attach' || proposal.action === 'attach-with-secondary') {
     if (!proposal.caseManagementId) {
@@ -726,6 +947,35 @@ function validateProposalAgainstInput(
       return { ok: false, error: 'validate:unknown_fhirConditionId' };
     }
   }
+  let coercedConfidence: CaseRouterProposal['confidence'] | null = null;
+  if (proposal.action === 'reconcile') {
+    const rp = proposal.reconcileProposal;
+    if (!rp) {
+      return { ok: false, error: 'validate:reconcile_missing_payload' };
+    }
+    if (!knownDriftLogIds.has(rp.driftLogId)) {
+      return { ok: false, error: 'validate:unknown_driftLogId' };
+    }
+    if (!knownCaseIds.has(rp.caseManagementId)) {
+      return { ok: false, error: 'validate:reconcile_unknown_caseManagementId' };
+    }
+    // recommendedOptionIndex (if set) must point inside resolutionOptions.
+    if (
+      rp.recommendedOptionIndex !== undefined &&
+      rp.recommendedOptionIndex >= rp.resolutionOptions.length
+    ) {
+      return { ok: false, error: 'validate:reconcile_recommended_out_of_range' };
+    }
+    // Spec decision 7 — confidence is bounded at medium for reconcile.
+    // Coerce down rather than fail — the rest of the proposal is
+    // well-formed, and an over-confident model shouldn't tank the
+    // reconciliation surface. The worker's audit metadata still
+    // captures the original confidence via fallbackCause / modelVersion
+    // diagnostics for the auditor lens.
+    if (proposal.confidence === 'high') {
+      coercedConfidence = 'medium';
+    }
+  }
   // Filter alternatives that reference unknown case ids OR unknown
   // FHIR condition ids. A `open-new-from-condition` alternative
   // pointing at an id we didn't provide is a hallucination — drop it
@@ -743,7 +993,14 @@ function validateProposalAgainstInput(
     return true;
   });
 
-  return { ok: true, value: { ...proposal, alternatives } };
+  return {
+    ok: true,
+    value: {
+      ...proposal,
+      alternatives,
+      ...(coercedConfidence ? { confidence: coercedConfidence } : {}),
+    },
+  };
 }
 
 function synthesizeStubProposal(input: CaseRouterInput): CaseRouterProposal {
