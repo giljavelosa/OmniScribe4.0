@@ -10,6 +10,7 @@ import { StatusBadge } from '@/components/ui/status-badge';
 import { StatusBanner } from '@/components/ui/status-banner';
 import { UserAvatar } from '@/components/ui/user-avatar';
 import { VisitHistoryList } from '@/components/patients/visit-history-list';
+import { AwaitingRoutingBanner } from './awaiting-routing-banner';
 import { InlineDemographics } from '@/components/patients/inline-demographics';
 import type { VisitHistoryRow } from '@/components/patients/visit-history-list';
 import type { PatientSnapshotStrip as PatientSnapshotStripData } from '@/lib/snapshots/types';
@@ -457,7 +458,8 @@ export function PatientChartTabs({
             )}
 
             {/* ── Visits ───────────────────────────────────────────────────── */}
-            <TabsContent value="visits">
+            <TabsContent value="visits" className="space-y-3">
+              <AwaitingRoutingBanner visits={visits} />
               <VisitHistoryList visits={visits} />
             </TabsContent>
 
