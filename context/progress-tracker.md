@@ -16,6 +16,16 @@
 
 ## Completed
 
+- **2026-05-22 — Sprint 0.12: Miss Cleo persona pass — AI-authored surfaces + audit metadata** (`feat(sprint-0.12): cleo-persona-pass`).
+  - **Spec**: `context/specs/sprint-0-cleo-persona-pass.md`.
+  - **What shipped**: Every AI-authored artifact in OmniScribe now attributes Miss Cleo and carries the shared `personaVersion` audit tag.
+    1. **Pre-visit brief header (`/prepare/[noteId]`)** — `BriefHeader` swaps the anonymous patient one-liner for *"✨ {COPILOT_DISPLAY_NAME}'s read on \<patient name\>"* using the `Sparkles` icon already used by `CopilotShell`. `BriefCard` gains a required `patientName` prop threaded from both `/prepare` (full name) and `/capture` (first + last initial). String is imported from `@/services/copilot/persona` — never hardcoded.
+    2. **Visit viewer Handout tab (`/visits/[noteId]`)** — `NoteArtifact` section titles read *"✨ {COPILOT_DISPLAY_NAME}'s draft patient handout"* and *"✨ {COPILOT_DISPLAY_NAME}'s draft referral letter"*. LLM-generated bodies unchanged.
+    3. **Audit metadata across three workers** — `note-brief/handler.ts` (`BRIEF_GENERATED`), `post-sign-artifacts/handler.ts` (`POST_SIGN_ARTIFACT_GENERATED`), `ai-generation/handler.ts` (`NOTE_GENERATION_STARTED` / `SECTION_GENERATED` / both `NOTE_GENERATION_COMPLETED` paths) each stamp `personaVersion: PERSONA_VERSION` ('miss-cleo-v1') on their audit rows. Filtering `AuditLog` by `metadata.personaVersion = 'miss-cleo-v1'` + `patientId = X` now reconstructs every AI-authored action across Ask / Beacon / Brief / Note-gen / Artifacts in a single query.
+  - **Locked decisions applied**: Display name + persona version sourced exclusively from `@/services/copilot/persona`; never hardcoded. `Sparkles` icon reused from `CopilotShell`. Worker prompts untouched (attribution + audit only). Scope: copy + audit-metadata only — no new infra, no new agent, no schema change.
+  - **Verify**: `npm run typecheck` clean; `npm test` 572/572; eslint clean on sprint-touched files.
+  - **Three-lens**: Clinician — same content, same workflow; the attribution makes the trust relationship explicit ("Miss Cleo read this chart for me"). Compliance — one `personaVersion` query answers *"what did the AI do for this patient?"* across all surfaces. Auditor — every AI-authored artifact is now traceable to the persona version that generated it; useful for future model rollouts and calibration analysis.
+
 - **2026-05-22 — Sprint 0.11 Phase 1: Case Management + REHAB-only episodes** (branch WIP — `feat(sprint-0.11): case-management-phase-1`).
   - **What shipped**: `CaseManagement` model + migration/backfill; required `Encounter.caseManagementId`; `EpisodeOfCare` REHAB-only with required `caseManagementId` + episode-level ICD flip fields; `/api/case-management/*`; visit start resolves case then optional rehab episode; patient chart **Cases** tab with role-aware division stratification; `NewCaseDialog` de-dup (Phase 1); `start-visit-dialog` case + rehab episode pickers; seed refactored (cases per patient, rehab episodes only); `/episodes/new` requires `?caseManagementId=`.
   - **Verify**: `npm test` 560/560; `npm run typecheck`; `npx prisma db seed`; eslint clean on sprint-touched paths.

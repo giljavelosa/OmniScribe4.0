@@ -10,6 +10,7 @@ import {
   buildReferralLetterPrompt,
   type FinalJsonShape,
 } from '@/lib/notes/build-artifact-prompt';
+import { PERSONA_VERSION } from '@/services/copilot/persona';
 
 type PostSignArtifactJob = {
   noteId: string;
@@ -129,6 +130,9 @@ export async function handle(job: Job<PostSignArtifactJob>) {
         tokensIn: result.tokensIn,
         tokensOut: result.tokensOut,
         stub: result.stub ?? false,
+        // Sprint 0.12 — persona-pass audit metadata so regulators can
+        // filter every AI-authored artifact by Miss Cleo's persona version.
+        personaVersion: PERSONA_VERSION,
       },
     });
 

@@ -3,9 +3,11 @@ import { Prisma, NoteStatus, Division } from '@prisma/client';
 
 import { prisma } from '@/lib/prisma';
 import { writeAuditLog } from '@/lib/audit/log';
+import { enqueueCaseRouterJob } from '@/lib/queue';
 import { getLLMService } from '@/services/llm';
 import { buildMasterPrompt, buildSectionPrompt, type NoteSectionDef } from '@/lib/notes/build-prompt';
 import { projectPatientForPrompt, projectEpisodeForPrompt } from '@/lib/notes/projections';
+import { PERSONA_VERSION } from '@/services/copilot/persona';
 import {
   markSectionStatus,
   appendRegeneration,
@@ -189,7 +191,15 @@ export async function handle(job: Job<AiGenerationJob>) {
     action: 'NOTE_GENERATION_STARTED',
     resourceType: 'Note',
     resourceId: noteId,
-    metadata: { requestId, templateId: template.id, sectionCount: sections.length },
+    metadata: {
+      requestId,
+      templateId: template.id,
+      sectionCount: sections.length,
+      // Sprint 0.12 — persona-pass audit metadata across every
+      // AI-authored audit row so a regulator can query "what did Miss
+      // Cleo do for this patient?" by persona version alone.
+      personaVersion: PERSONA_VERSION,
+    },
   });
 
   // Rule 1 (ATTESTATION) guard: with an empty transcript the LLM has no source
@@ -228,8 +238,17 @@ export async function handle(job: Job<AiGenerationJob>) {
       action: 'NOTE_GENERATION_COMPLETED',
       resourceType: 'Note',
       resourceId: noteId,
-      metadata: { sectionCount: sections.length, failedCount: 0, skipped: 'no_transcript' },
+      metadata: {
+        sectionCount: sections.length,
+        failedCount: 0,
+        skipped: 'no_transcript',
+        personaVersion: PERSONA_VERSION,
+      },
     });
+    // Sprint 0.13 — chain-enqueue Miss Cleo's case-router. Same pattern as
+    // enqueueNoteBriefJob from the sign route. Idempotent on noteId
+    // (queue.ts) so a retried completion collapses to one Redis entry.
+    await enqueueCaseRouterJob({ noteId, orgId });
     return { ok: true, sections: sections.length, failed: 0, skipped: 'no_transcript' };
   }
 
@@ -270,7 +289,15 @@ export async function handle(job: Job<AiGenerationJob>) {
         action: 'SECTION_GENERATED',
         resourceType: 'Note',
         resourceId: noteId,
-        metadata: { sectionId: section.id, model: result.model, latencyMs: result.latencyMs, tokensIn: result.tokensIn, tokensOut: result.tokensOut, stub: result.stub ?? false },
+        metadata: {
+          sectionId: section.id,
+          model: result.model,
+          latencyMs: result.latencyMs,
+          tokensIn: result.tokensIn,
+          tokensOut: result.tokensOut,
+          stub: result.stub ?? false,
+          personaVersion: PERSONA_VERSION,
+        },
       });
     } catch (err) {
       failedCount++;
@@ -308,8 +335,18 @@ export async function handle(job: Job<AiGenerationJob>) {
     action: 'NOTE_GENERATION_COMPLETED',
     resourceType: 'Note',
     resourceId: noteId,
-    metadata: { sectionCount: sections.length, failedCount },
+    metadata: {
+      sectionCount: sections.length,
+      failedCount,
+      personaVersion: PERSONA_VERSION,
+    },
   });
+
+  // Sprint 0.13 — chain-enqueue Miss Cleo's case-router so the review
+  // screen can render her routing proposal at the top. Idempotent on
+  // noteId (queue.ts) so a retried completion collapses to one Redis
+  // entry. Same pattern as enqueueNoteBriefJob from the sign route.
+  await enqueueCaseRouterJob({ noteId, orgId });
 
   return { ok: true, sections: sections.length, failed: failedCount };
 }

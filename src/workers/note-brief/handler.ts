@@ -8,6 +8,7 @@ import {
   BRIEF_GENERATOR_FALLBACK_VERSION,
 } from '@/services/brief/BriefGenerator';
 import { FollowupExtractor } from '@/services/brief/FollowupExtractor';
+import { PERSONA_VERSION } from '@/services/copilot/persona';
 import {
   projectPatientForBrief,
   projectEpisodeForBrief,
@@ -302,6 +303,10 @@ export async function handle(job: Job<NoteBriefJob>) {
       generatorVersion: briefResult.generatorVersion,
       attempts: briefResult.attempts,
       stub: briefResult.stub,
+      // Sprint 0.12 — persona-pass audit metadata. Filtering AuditLog by
+      // `metadata.personaVersion === 'miss-cleo-v1'` reconstructs every
+      // AI-authored action across Ask / Beacon / Brief / Note-gen / Artifacts.
+      personaVersion: PERSONA_VERSION,
       // Unit 22 / F4 — auditor lens: was this brief EHR-enriched?
       hasEhrContext: !!externalEhrContext,
       ehrResourceCount: externalEhrContext
