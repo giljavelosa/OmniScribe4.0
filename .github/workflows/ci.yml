@@ -63,6 +63,18 @@ jobs:
 
       - name: Test
         if: steps.pkg.outputs.exists == 'true'
+        env:
+          # Sprint 0.13's case-router/accept/route.ts and Sprint 0.14's
+          # cleo-state-handler test transitively import src/lib/queue.ts →
+          # src/lib/redis.ts, which throws at module-load when REDIS_URL is
+          # unset. Tests mock the queue runtime; this env block is purely so
+          # the module import doesn't blow up. Mirrors the Build step.
+          DATABASE_URL: "postgresql://placeholder:placeholder@localhost:5432/placeholder?schema=public"
+          REDIS_URL: "redis://localhost:6379"
+          NEXTAUTH_SECRET: "ci-placeholder-secret-not-used-at-runtime-32chars"
+          NEXTAUTH_URL: "http://localhost:3000"
+          RESEND_API_KEY: ""
+          RESEND_FROM: "OmniScribe <ci@example.com>"
         run: npm run test
 
       - name: Build
