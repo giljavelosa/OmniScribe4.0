@@ -11,10 +11,10 @@ import { StatusBanner } from '@/components/ui/status-banner';
 import { UserAvatar } from '@/components/ui/user-avatar';
 import {
   StartVisitDialog,
-  type StartVisitDialogEpisode,
+  type StartVisitDialogCase,
   type StartVisitSubmitArgs,
 } from '@/app/(clinical)/patients/[id]/_components/start-visit-dialog';
-import type { ScheduleStatus, VisitType } from '@prisma/client';
+import type { Division, ScheduleStatus, VisitType } from '@prisma/client';
 
 export type SchedulingCardData = {
   scheduleId: string;
@@ -30,9 +30,8 @@ export type SchedulingCardData = {
   /** Pre-link set at scheduling time. When present, the schedule-start route
    * inherits it and the picker never opens. */
   scheduleEpisodeOfCareId?: string | null;
-  /** Active episodes (status ∈ {ACTIVE, RECERT_DUE}) for the patient. Used to
-   * decide whether the picker fires when scheduleEpisodeOfCareId is null. */
-  activeEpisodes?: StartVisitDialogEpisode[];
+  activeCases?: StartVisitDialogCase[];
+  viewerDivision?: Division | null;
 };
 
 const STATUS_VARIANT = {
@@ -56,14 +55,14 @@ export function SchedulingCard({ visit }: { visit: SchedulingCardData }) {
   // ref so it survives across the dialog round-trip without re-rendering.
   const destinationRef = useRef<'prepare' | 'capture'>('prepare');
 
-  const activeEpisodes = visit.activeEpisodes ?? [];
-  // The picker only opens when (a) the schedule has no episode pre-link AND
-  // (b) the patient has 2+ active episodes AND (c) the encounter doesn't
-  // already exist (resume case skips the picker).
+  const activeCases = visit.activeCases ?? [];
+  const rehabEpisodes =
+    activeCases.length === 1 ? activeCases[0]!.episodes : [];
   const needsPicker =
-    !visit.scheduleEpisodeOfCareId &&
     !visit.hasEncounter &&
-    activeEpisodes.length >= 2;
+    (activeCases.length === 0 ||
+      activeCases.length >= 2 ||
+      (visit.viewerDivision === 'REHAB' && rehabEpisodes.length >= 2));
 
   function startDirect(destination: 'prepare' | 'capture' = 'prepare') {
     setError(null);
@@ -95,6 +94,7 @@ export function SchedulingCard({ visit }: { visit: SchedulingCardData }) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        caseManagementId: args.caseManagementId,
         episodeOfCareId: args.episodeOfCareId,
         pickerSource: args.source,
       }),
@@ -201,7 +201,8 @@ export function SchedulingCard({ visit }: { visit: SchedulingCardData }) {
 
       <StartVisitDialog
         patientId={visit.patientId}
-        activeEpisodes={activeEpisodes}
+        activeCases={activeCases}
+        viewerDivision={visit.viewerDivision ?? null}
         open={pickerOpen}
         onOpenChange={setPickerOpen}
         onStarted={onPickerStarted}

@@ -10,6 +10,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 const patientFindFirst = vi.fn();
 const departmentFindFirst = vi.fn();
+const caseManagementFindFirst = vi.fn();
 const episodeOfCareCreate = vi.fn();
 const auditLogCreate = vi.fn();
 
@@ -17,6 +18,7 @@ vi.mock('@/lib/prisma', () => ({
   prisma: {
     patient: { findFirst: (...a: unknown[]) => patientFindFirst(...a) },
     department: { findFirst: (...a: unknown[]) => departmentFindFirst(...a) },
+    caseManagement: { findFirst: (...a: unknown[]) => caseManagementFindFirst(...a) },
     episodeOfCare: { create: (...a: unknown[]) => episodeOfCareCreate(...a) },
     auditLog: { create: (...a: unknown[]) => auditLogCreate(...a) },
   },
@@ -39,14 +41,27 @@ vi.mock('@/lib/phi-access', () => ({
 
 import { POST } from '@/app/api/patients/[id]/episodes/route';
 
+const CASE_ID = 'case_1';
+
+function episodeBody(overrides: Record<string, unknown> = {}) {
+  return {
+    caseManagementId: CASE_ID,
+    diagnosis: 'Right knee OA',
+    departmentId: 'dept_rehab',
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
   patientFindFirst.mockReset();
   departmentFindFirst.mockReset();
+  caseManagementFindFirst.mockReset();
   episodeOfCareCreate.mockReset();
   auditLogCreate.mockReset();
   writeAuditLog.mockReset();
   assertOrgScoped.mockReset();
   requireFeatureAccess.mockReset();
+  caseManagementFindFirst.mockResolvedValue({ id: CASE_ID, primaryIcd: null, secondaryIcd: null });
 });
 
 function authedGuard(overrides: Partial<{ orgId: string; orgUserId: string; userId: string }> = {}) {
@@ -76,7 +91,7 @@ function makeReq(body: unknown): Request {
 const paramsFor = (id = 'pat_1') => Promise.resolve({ id });
 
 describe('POST /api/patients/[id]/episodes', () => {
-  it('400s on missing diagnosis / division / departmentId', async () => {
+  it('400s on missing caseManagementId / diagnosis / departmentId', async () => {
     requireFeatureAccess.mockResolvedValueOnce(authedGuard());
     const res = await POST(makeReq({ bodyPart: 'Knee' }), { params: paramsFor() });
     expect(res.status).toBe(400);
@@ -88,10 +103,7 @@ describe('POST /api/patients/[id]/episodes', () => {
   it('returns the guard error response when requireFeatureAccess fails', async () => {
     const errResponse = new Response('forbidden', { status: 403 });
     requireFeatureAccess.mockResolvedValueOnce({ error: errResponse });
-    const res = await POST(
-      makeReq({ diagnosis: 'd', division: 'REHAB', departmentId: 'dept' }),
-      { params: paramsFor() },
-    );
+    const res = await POST(makeReq(episodeBody()), { params: paramsFor() });
     expect(res).toBe(errResponse);
     expect(patientFindFirst).not.toHaveBeenCalled();
   });
@@ -99,10 +111,7 @@ describe('POST /api/patients/[id]/episodes', () => {
   it('404s when the patient is not found in the org', async () => {
     requireFeatureAccess.mockResolvedValueOnce(authedGuard());
     patientFindFirst.mockResolvedValueOnce(null);
-    const res = await POST(
-      makeReq({ diagnosis: 'd', division: 'REHAB', departmentId: 'dept' }),
-      { params: paramsFor() },
-    );
+    const res = await POST(makeReq(episodeBody()), { params: paramsFor() });
     expect(res.status).toBe(404);
   });
 
@@ -112,7 +121,7 @@ describe('POST /api/patients/[id]/episodes', () => {
     departmentFindFirst.mockResolvedValueOnce(null);
 
     const res = await POST(
-      makeReq({ diagnosis: 'd', division: 'REHAB', departmentId: 'missing' }),
+      makeReq(episodeBody({ departmentId: 'missing' })),
       { params: paramsFor() },
     );
     expect(res.status).toBe(400);
@@ -129,7 +138,7 @@ describe('POST /api/patients/[id]/episodes', () => {
     });
 
     const res = await POST(
-      makeReq({ diagnosis: 'Right knee OA', division: 'REHAB', departmentId: 'dept_bh' }),
+      makeReq(episodeBody({ departmentId: 'dept_bh' })),
       { params: paramsFor() },
     );
     expect(res.status).toBe(400);
@@ -137,7 +146,7 @@ describe('POST /api/patients/[id]/episodes', () => {
     expect(episodeOfCareCreate).not.toHaveBeenCalled();
   });
 
-  it('allows a MULTI department to host any division', async () => {
+  it('allows a MULTI department to host a rehab episode', async () => {
     requireFeatureAccess.mockResolvedValueOnce(authedGuard());
     patientFindFirst.mockResolvedValueOnce({ id: 'pat_1', orgId: 'org_1' });
     departmentFindFirst.mockResolvedValueOnce({
@@ -147,16 +156,16 @@ describe('POST /api/patients/[id]/episodes', () => {
     });
     episodeOfCareCreate.mockResolvedValueOnce({
       id: 'ep_new',
-      diagnosis: 'BH episode',
+      diagnosis: 'Right knee OA',
       bodyPart: null,
-      division: 'BEHAVIORAL_HEALTH',
+      division: 'REHAB',
       status: 'ACTIVE',
       departmentId: 'dept_multi',
       startedAt: new Date('2026-05-18T00:00:00Z'),
     });
 
     const res = await POST(
-      makeReq({ diagnosis: 'BH episode', division: 'BEHAVIORAL_HEALTH', departmentId: 'dept_multi' }),
+      makeReq(episodeBody({ diagnosis: 'Right knee OA', departmentId: 'dept_multi' })),
       { params: paramsFor() },
     );
     expect(res.status).toBe(200);
@@ -183,9 +192,9 @@ describe('POST /api/patients/[id]/episodes', () => {
 
     const res = await POST(
       makeReq({
+        caseManagementId: CASE_ID,
         diagnosis: 'Right knee OA, post-op month 2',
         bodyPart: 'Right knee',
-        division: 'REHAB',
         departmentId: 'dept_rehab',
       }),
       { params: paramsFor() },
@@ -206,6 +215,7 @@ describe('POST /api/patients/[id]/episodes', () => {
     expect(createArg.data).toMatchObject({
       orgId: 'org_1',
       patientId: 'pat_1',
+      caseManagementId: CASE_ID,
       clinicianOrgUserId: 'ou_1',
       departmentId: 'dept_rehab',
       division: 'REHAB',
@@ -236,22 +246,22 @@ describe('POST /api/patients/[id]/episodes', () => {
     requireFeatureAccess.mockResolvedValueOnce(authedGuard());
     patientFindFirst.mockResolvedValueOnce({ id: 'pat_1', orgId: 'org_1' });
     departmentFindFirst.mockResolvedValueOnce({
-      id: 'dept_med',
+      id: 'dept_rehab',
       orgId: 'org_1',
-      division: 'MEDICAL',
+      division: 'REHAB',
     });
     episodeOfCareCreate.mockResolvedValueOnce({
       id: 'ep_new',
-      diagnosis: 'Hypertension',
+      diagnosis: 'Right knee OA',
       bodyPart: null,
-      division: 'MEDICAL',
+      division: 'REHAB',
       status: 'ACTIVE',
-      departmentId: 'dept_med',
+      departmentId: 'dept_rehab',
       startedAt: new Date('2026-05-18T00:00:00Z'),
     });
 
     await POST(
-      makeReq({ diagnosis: 'Hypertension', division: 'MEDICAL', departmentId: 'dept_med' }),
+      makeReq(episodeBody({ diagnosis: 'Right knee OA' })),
       { params: paramsFor() },
     );
     expect(writeAuditLog).toHaveBeenCalledOnce();

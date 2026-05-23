@@ -156,7 +156,11 @@ export default async function PreparePage({ params }: { params: Promise<{ noteId
       />
 
       {briefContent ? (
-        <BriefCard content={briefContent} nowMs={nowMs} />
+        <BriefCard
+          content={briefContent}
+          patientName={`${note.patient.firstName} ${note.patient.lastName}`.trim()}
+          nowMs={nowMs}
+        />
       ) : (
         <EmptyBrief
           variant={hasPriorSignedNote ? 'unavailable' : 'first-visit'}

@@ -7,6 +7,7 @@ import { writeAuditLog } from '@/lib/audit/log';
 import { assertOrgScoped } from '@/lib/phi-access';
 import { createRoom, dailyConfig } from '@/services/telehealth/daily';
 import { startVisit } from '@/lib/encounters/start';
+import { resolveCaseManagementIdForVisit } from '@/lib/case-management/resolve';
 import { DivisionResolutionError } from '@/lib/divisions/resolve';
 
 export const runtime = 'nodejs';
@@ -89,6 +90,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   let started: { noteId: string; encounterId: string };
   try {
     started = await prisma.$transaction(async (tx) => {
+      const caseManagementId = await resolveCaseManagementIdForVisit(tx, {
+        orgId: session.orgId,
+        patientId: session.patientId,
+        episodeOfCareId: session.schedule.episodeOfCareId,
+      });
       const { encounter, note } = await startVisit({
         tx,
         orgId: session.orgId,
@@ -98,6 +104,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         roomId: session.schedule.roomId,
         scheduleId: session.scheduleId,
         actingUserId: user.id,
+        caseManagementId,
+        episodeOfCareId: session.schedule.episodeOfCareId ?? undefined,
       });
       await tx.telehealthSession.update({
         where: { id },

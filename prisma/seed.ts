@@ -56,6 +56,7 @@ import {
   LINDA_FOSTER_BRIEF,
   type SeedVisitCorpus,
 } from './seed-corpus';
+import { upsertCaseManagement, upsertRehabEpisode } from './seed-case-helpers';
 import { seedAcmeOrganization, seedAcmeAdditionalEpisodes } from './seed-acme-org';
 import { seedCascadiaOrganization } from './seed-cascadia-org';
 import { seedRiverbendOrganization } from './seed-riverbend-org';
@@ -101,9 +102,50 @@ async function seedVisitCorpus(
     const transcriptClean = buildTranscriptClean(v.transcript);
     const departmentId = ctx.deptByKey[v.departmentKey];
 
+    const legacyCaseByEpisodeId: Record<string, string> = {
+      'seed-episode-seed-patient-medical': 'seed-case-seed-patient-medical',
+      'seed-episode-jp-bh': 'seed-case-jp-bh',
+      'seed-episode-ma-medical': 'seed-case-ma-medical',
+      'seed-episode-ma-bh': 'seed-case-ma-bh',
+      'seed-episode-dm-medical': 'seed-case-dm-medical',
+      'seed-acme-episode-medical': 'seed-acme-case-seed-acme-patient',
+      'seed-acme-episode-bh': 'seed-acme-case-seed-acme-patient-bh',
+      'seed-acme-episode-rh-medical': 'seed-acme-case-rh-medical',
+      'seed-acme-episode-es-medical': 'seed-acme-case-es-medical',
+      'seed-cascadia-episode-marcus-medical': 'seed-cascadia-case-marcus-medical',
+      'seed-cascadia-episode-marcus-bh': 'seed-cascadia-case-marcus-bh',
+      'seed-cascadia-episode-priya-medical': 'seed-cascadia-case-priya-medical',
+      'seed-cascadia-episode-priya-bh': 'seed-cascadia-case-priya-bh',
+      'seed-riverbend-episode-jamal-medical': 'seed-riverbend-case-jamal-medical',
+      'seed-riverbend-episode-jamal-bh': 'seed-riverbend-case-jamal-bh',
+      'seed-riverbend-episode-linda-medical': 'seed-riverbend-case-linda-medical',
+      'seed-riverbend-episode-linda-bh': 'seed-riverbend-case-linda-bh',
+    };
+    let caseManagementId = `seed-case-${v.patientId}`;
+    let episodeOfCareId: string | null = v.episodeId ?? null;
+    if (v.episodeId) {
+      const ep = await prisma.episodeOfCare.findUnique({
+        where: { id: v.episodeId },
+        select: { id: true, caseManagementId: true },
+      });
+      if (ep) {
+        caseManagementId = ep.caseManagementId;
+        episodeOfCareId = ep.id;
+      } else {
+        caseManagementId =
+          legacyCaseByEpisodeId[v.episodeId] ?? `cm-from-ep-${v.episodeId}`;
+        const caseRow = await prisma.caseManagement.findUnique({
+          where: { id: caseManagementId },
+          select: { id: true },
+        });
+        if (!caseRow) caseManagementId = `seed-case-${v.patientId}`;
+        episodeOfCareId = null;
+      }
+    }
+
     const encounter = await prisma.encounter.upsert({
       where: { id: `seed-enc-${v.noteId}` },
-      update: { startedAt: dateOfService, endedAt: dateOfService },
+      update: { startedAt: dateOfService, endedAt: dateOfService, caseManagementId },
       create: {
         id: `seed-enc-${v.noteId}`,
         orgId,
@@ -111,7 +153,8 @@ async function seedVisitCorpus(
         clinicianOrgUserId: c.orgUserId,
         siteId,
         departmentId,
-        episodeOfCareId: v.episodeId ?? null,
+        caseManagementId,
+        episodeOfCareId,
         status: EncounterStatus.COMPLETED,
         startedAt: dateOfService,
         endedAt: dateOfService,
@@ -598,21 +641,40 @@ async function main() {
       });
     }
 
-    // One active episode per patient, anchored to the matching department.
     const bodyPart =
       p.id === 'seed-patient-rehab' ? 'Right knee' : undefined;
+    const caseRow = await prisma.caseManagement.upsert({
+      where: { id: `seed-case-${p.id}` },
+      update: { primaryIcdLabel: p.diagnosis, description: bodyPart ?? null },
+      create: {
+        id: `seed-case-${p.id}`,
+        orgId: org.id,
+        patientId: patient.id,
+        primaryIcdLabel: p.diagnosis,
+        description: bodyPart ?? null,
+        status: 'ACTIVE',
+        openedByOrgUserId: clinicianOrgUserId,
+      },
+    });
+
+    if (p.division !== Division.REHAB) {
+      continue;
+    }
+
     const episode = await prisma.episodeOfCare.upsert({
       where: { id: `seed-episode-${p.id}` },
-      update: { bodyPart },
+      update: { bodyPart, caseManagementId: caseRow.id },
       create: {
         id: `seed-episode-${p.id}`,
         orgId: org.id,
         patientId: patient.id,
+        caseManagementId: caseRow.id,
         clinicianOrgUserId,
         departmentId: p.department.id,
-        division: p.division,
+        division: Division.REHAB,
         diagnosis: p.diagnosis,
         bodyPart,
+        primaryIcdLabel: p.diagnosis,
         status: EpisodeStatus.ACTIVE,
       },
     });
@@ -896,46 +958,61 @@ async function main() {
   // Rehab x2: Right rotator cuff (shoulder) + Left knee OA — both active,
   //   demonstrates multi-episode same-division chart view.
   // BH: Adjustment disorder.
-  const jpRehabEpisode = await prisma.episodeOfCare.upsert({
-    where: { id: 'seed-episode-jp-rehab' },
-    update: {
-      bodyPart: 'Right shoulder',
-      visitsAuthorized: 16,
-      recertDueAt: new Date(Date.now() + 32 * 86_400_000),
-    },
-    create: {
-      id: 'seed-episode-jp-rehab',
-      orgId: org.id,
-      patientId: 'seed-patient-medical',
-      clinicianOrgUserId: clinicianRowByEmail['pt.smith@demo.local']!.orgUserId,
-      departmentId: deptRehab.id,
-      division: Division.REHAB,
-      diagnosis: 'Right rotator cuff strain',
-      bodyPart: 'Right shoulder',
-      status: EpisodeStatus.ACTIVE,
+  const jpShoulderCase = await upsertCaseManagement(prisma, {
+    id: 'seed-case-jp-shoulder',
+    orgId: org.id,
+    patientId: 'seed-patient-medical',
+    primaryIcdLabel: 'Right rotator cuff strain',
+    description: 'Right shoulder',
+    openedByOrgUserId: clinicianRowByEmail['pt.smith@demo.local']!.orgUserId,
+  });
+  const jpKneeCase = await upsertCaseManagement(prisma, {
+    id: 'seed-case-jp-knee',
+    orgId: org.id,
+    patientId: 'seed-patient-medical',
+    primaryIcdLabel: 'Left knee osteoarthritis',
+    description: 'Left knee',
+    openedByOrgUserId: clinicianRowByEmail['pt.smith@demo.local']!.orgUserId,
+  });
+  await upsertCaseManagement(prisma, {
+    id: 'seed-case-jp-bh',
+    orgId: org.id,
+    patientId: 'seed-patient-medical',
+    primaryIcdLabel: 'Adjustment disorder with anxious mood',
+    openedByOrgUserId: clinicianRowByEmail['lcsw.garcia@demo.local']!.orgUserId,
+  });
+
+  const jpRehabEpisode = await upsertRehabEpisode(prisma, {
+    id: 'seed-episode-jp-rehab',
+    orgId: org.id,
+    patientId: 'seed-patient-medical',
+    caseManagementId: jpShoulderCase.id,
+    clinicianOrgUserId: clinicianRowByEmail['pt.smith@demo.local']!.orgUserId,
+    departmentId: deptRehab.id,
+    diagnosis: 'Right rotator cuff strain',
+    bodyPart: 'Right shoulder',
+  });
+  await prisma.episodeOfCare.update({
+    where: { id: jpRehabEpisode.id },
+    data: {
       visitsAuthorized: 16,
       visitsCompleted: 5,
       recertDueAt: new Date(Date.now() + 32 * 86_400_000),
     },
   });
-  // Second active rehab episode — left knee OA, concurrent with shoulder PT.
-  const jpKneeEpisode = await prisma.episodeOfCare.upsert({
-    where: { id: 'seed-episode-jp-knee' },
-    update: {
-      bodyPart: 'Left knee',
-      visitsAuthorized: 12,
-      recertDueAt: new Date(Date.now() + 18 * 86_400_000),
-    },
-    create: {
-      id: 'seed-episode-jp-knee',
-      orgId: org.id,
-      patientId: 'seed-patient-medical',
-      clinicianOrgUserId: clinicianRowByEmail['pt.smith@demo.local']!.orgUserId,
-      departmentId: deptRehab.id,
-      division: Division.REHAB,
-      diagnosis: 'Left knee osteoarthritis',
-      bodyPart: 'Left knee',
-      status: EpisodeStatus.ACTIVE,
+  const jpKneeEpisode = await upsertRehabEpisode(prisma, {
+    id: 'seed-episode-jp-knee',
+    orgId: org.id,
+    patientId: 'seed-patient-medical',
+    caseManagementId: jpKneeCase.id,
+    clinicianOrgUserId: clinicianRowByEmail['pt.smith@demo.local']!.orgUserId,
+    departmentId: deptRehab.id,
+    diagnosis: 'Left knee osteoarthritis',
+    bodyPart: 'Left knee',
+  });
+  await prisma.episodeOfCare.update({
+    where: { id: jpKneeEpisode.id },
+    data: {
       visitsAuthorized: 12,
       visitsCompleted: 7,
       recertDueAt: new Date(Date.now() + 18 * 86_400_000),
@@ -1151,123 +1228,45 @@ async function main() {
       },
     });
   }
-  const jpBhEpisode = await prisma.episodeOfCare.upsert({
-    where: { id: 'seed-episode-jp-bh' },
-    update: {},
-    create: {
-      id: 'seed-episode-jp-bh',
-      orgId: org.id,
-      patientId: 'seed-patient-medical',
-      clinicianOrgUserId: clinicianRowByEmail['lcsw.garcia@demo.local']!.orgUserId,
-      departmentId: deptBh.id,
-      division: Division.BEHAVIORAL_HEALTH,
-      diagnosis: 'Adjustment disorder with anxious mood',
-      status: EpisodeStatus.ACTIVE,
-    },
+  await upsertCaseManagement(prisma, {
+    id: 'seed-case-ma-medical',
+    orgId: org.id,
+    patientId: 'seed-patient-rehab',
+    primaryIcdLabel: 'Essential hypertension; hypothyroidism',
+    openedByOrgUserId: clinicianRowByEmail['np.brown@demo.local']!.orgUserId,
   });
-  void jpBhEpisode; // used in james-park corpus via EP_BH episode ID
-
-  // Maria Alvarez — chronic medical care + post-op adjustment BH (concurrent with knee rehab).
-  await prisma.episodeOfCare.upsert({
-    where: { id: 'seed-episode-ma-medical' },
-    update: {},
-    create: {
-      id: 'seed-episode-ma-medical',
-      orgId: org.id,
-      patientId: 'seed-patient-rehab',
-      clinicianOrgUserId: clinicianRowByEmail['np.brown@demo.local']!.orgUserId,
-      departmentId: deptMedical.id,
-      division: Division.MEDICAL,
-      diagnosis: 'Essential hypertension; hypothyroidism',
-      status: EpisodeStatus.ACTIVE,
-    },
-  });
-  await prisma.episodeGoal.upsert({
-    where: { id: 'seed-goal-ma-medical' },
-    update: {},
-    create: {
-      id: 'seed-goal-ma-medical',
-      episodeId: 'seed-episode-ma-medical',
-      goalType: GoalType.LTG,
-      goalText: 'Maintain BP <130/80 and TSH in range on current regimen.',
-      baselineMeasure: 'BP 132/78, TSH 2.4',
-      targetMeasure: 'BP <130/80, TSH 0.5–4.0',
-      currentMeasure: 'BP avg 126/78',
-      status: GoalStatus.ACTIVE,
-    },
-  });
-  await prisma.episodeOfCare.upsert({
-    where: { id: 'seed-episode-ma-bh' },
-    update: {},
-    create: {
-      id: 'seed-episode-ma-bh',
-      orgId: org.id,
-      patientId: 'seed-patient-rehab',
-      clinicianOrgUserId: clinicianRowByEmail['lcsw.garcia@demo.local']!.orgUserId,
-      departmentId: deptBh.id,
-      division: Division.BEHAVIORAL_HEALTH,
-      diagnosis: 'Adjustment disorder with depressed mood — post-op social isolation',
-      status: EpisodeStatus.ACTIVE,
-    },
-  });
-  await prisma.episodeGoal.upsert({
-    where: { id: 'seed-goal-ma-bh' },
-    update: {},
-    create: {
-      id: 'seed-goal-ma-bh',
-      episodeId: 'seed-episode-ma-bh',
-      goalType: GoalType.LTG,
-      goalText: 'Reduce PHQ-9 below 5 and restore weekly social engagement.',
-      baselineMeasure: 'PHQ-9: 8',
-      targetMeasure: 'PHQ-9 <5',
-      currentMeasure: 'PHQ-9: 6',
-      status: GoalStatus.ACTIVE,
-    },
+  await upsertCaseManagement(prisma, {
+    id: 'seed-case-ma-bh',
+    orgId: org.id,
+    patientId: 'seed-patient-rehab',
+    primaryIcdLabel: 'Adjustment disorder with depressed mood — post-op social isolation',
+    openedByOrgUserId: clinicianRowByEmail['lcsw.garcia@demo.local']!.orgUserId,
   });
 
-  // Devon Mitchell — medical co-management + cervical PT (concurrent with BH GAD episode).
-  await prisma.episodeOfCare.upsert({
-    where: { id: 'seed-episode-dm-medical' },
-    update: {},
-    create: {
-      id: 'seed-episode-dm-medical',
-      orgId: org.id,
-      patientId: 'seed-patient-bh',
-      clinicianOrgUserId: clinicianOrgUserId,
-      departmentId: deptMedical.id,
-      division: Division.MEDICAL,
-      diagnosis: 'Generalized anxiety disorder — medical co-management',
-      status: EpisodeStatus.ACTIVE,
-    },
+  await upsertCaseManagement(prisma, {
+    id: 'seed-case-dm-medical',
+    orgId: org.id,
+    patientId: 'seed-patient-bh',
+    primaryIcdLabel: 'Generalized anxiety disorder — medical co-management',
+    openedByOrgUserId: clinicianOrgUserId,
   });
-  await prisma.episodeGoal.upsert({
-    where: { id: 'seed-goal-dm-medical' },
-    update: {},
-    create: {
-      id: 'seed-goal-dm-medical',
-      episodeId: 'seed-episode-dm-medical',
-      goalType: GoalType.LTG,
-      goalText: 'Optimize pharmacotherapy for GAD with GAD-7 <8.',
-      baselineMeasure: 'GAD-7: 15 at establish care',
-      targetMeasure: 'GAD-7 <8',
-      currentMeasure: 'GAD-7: 9',
-      status: GoalStatus.ACTIVE,
-    },
+  const dmCervicalCase = await upsertCaseManagement(prisma, {
+    id: 'seed-case-dm-cervical',
+    orgId: org.id,
+    patientId: 'seed-patient-bh',
+    primaryIcdLabel: 'Cervicogenic tension headaches / upper trap strain',
+    description: 'Cervical spine',
+    openedByOrgUserId: clinicianRowByEmail['pt.smith@demo.local']!.orgUserId,
   });
-  const dmRehabEpisode = await prisma.episodeOfCare.upsert({
-    where: { id: 'seed-episode-dm-rehab' },
-    update: { bodyPart: 'Cervical spine' },
-    create: {
-      id: 'seed-episode-dm-rehab',
-      orgId: org.id,
-      patientId: 'seed-patient-bh',
-      clinicianOrgUserId: clinicianRowByEmail['pt.smith@demo.local']!.orgUserId,
-      departmentId: deptRehab.id,
-      division: Division.REHAB,
-      diagnosis: 'Cervicogenic tension headaches / upper trap strain',
-      bodyPart: 'Cervical spine',
-      status: EpisodeStatus.ACTIVE,
-    },
+  const dmRehabEpisode = await upsertRehabEpisode(prisma, {
+    id: 'seed-episode-dm-rehab',
+    orgId: org.id,
+    patientId: 'seed-patient-bh',
+    caseManagementId: dmCervicalCase.id,
+    clinicianOrgUserId: clinicianRowByEmail['pt.smith@demo.local']!.orgUserId,
+    departmentId: deptRehab.id,
+    diagnosis: 'Cervicogenic tension headaches / upper trap strain',
+    bodyPart: 'Cervical spine',
   });
   await prisma.episodeGoal.upsert({
     where: { id: 'seed-goal-dm-rehab' },

@@ -2,13 +2,14 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Lock, AlertTriangle, FileText, Mic, MessageSquareText, Stethoscope } from 'lucide-react';
+import { ArrowLeft, Lock, AlertTriangle, FileText, Mic, MessageSquareText, Sparkles, Stethoscope } from 'lucide-react';
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { UserAvatar } from '@/components/ui/user-avatar';
 import type { NoteSectionDef } from '@/lib/notes/build-prompt';
+import { COPILOT_DISPLAY_NAME } from '@/services/copilot/persona';
 
 type Patient = {
   id: string;
@@ -316,7 +317,10 @@ function HandoutTab({
       {handout && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-md">Patient handout</CardTitle>
+            <CardTitle className="text-md flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-primary shrink-0" aria-hidden />
+              {COPILOT_DISPLAY_NAME}&rsquo;s draft patient handout
+            </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4 text-sm">
             {handout.plainLanguage && (
@@ -365,7 +369,10 @@ function HandoutTab({
       {referral && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-md">Referral letter</CardTitle>
+            <CardTitle className="text-md flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-primary shrink-0" aria-hidden />
+              {COPILOT_DISPLAY_NAME}&rsquo;s draft referral letter
+            </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3 text-sm">
             {referral.recipient && (

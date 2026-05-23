@@ -91,11 +91,21 @@ describeMaybe('runTool lookupPatientGoals (Phase 1A fan-out)', () => {
       });
     }
 
-    // Two concurrent episodes for PATIENT_WITH_EPISODES.
-    for (const [id, diagnosis] of [
-      [EPISODE_A, 'Low back pain'],
-      [EPISODE_B, 'Rotator cuff strain'],
+    for (const [id, diagnosis, caseId] of [
+      [EPISODE_A, 'Low back pain', 'test-case-p1a-a'],
+      [EPISODE_B, 'Rotator cuff strain', 'test-case-p1a-b'],
     ] as const) {
+      await prisma.caseManagement.upsert({
+        where: { id: caseId },
+        update: {},
+        create: {
+          id: caseId,
+          orgId: ORG_ID,
+          patientId: PATIENT_WITH_EPISODES,
+          primaryIcdLabel: diagnosis,
+          status: 'ACTIVE',
+        },
+      });
       await prisma.episodeOfCare.upsert({
         where: { id },
         update: {},
@@ -103,9 +113,10 @@ describeMaybe('runTool lookupPatientGoals (Phase 1A fan-out)', () => {
           id,
           orgId: ORG_ID,
           patientId: PATIENT_WITH_EPISODES,
+          caseManagementId: caseId,
           clinicianOrgUserId: 'test-clin-p1a',
           departmentId: DEPT_ID,
-          division: Division.MEDICAL,
+          division: Division.REHAB,
           diagnosis,
           status: EpisodeStatus.ACTIVE,
         },
@@ -149,10 +160,19 @@ describeMaybe('runTool lookupPatientGoals (Phase 1A fan-out)', () => {
       where: { episodeId: { in: [EPISODE_A, EPISODE_B] } },
     });
     await prisma.episodeOfCare.deleteMany({ where: { id: { in: [EPISODE_A, EPISODE_B] } } });
+    await prisma.caseManagement.deleteMany({
+      where: { id: { in: ['test-case-p1a-a', 'test-case-p1a-b'] } },
+    });
     await prisma.patient.deleteMany({
       where: { id: { in: [PATIENT_WITH_EPISODES, PATIENT_EMPTY, PATIENT_OTHER_ORG] } },
     });
     await prisma.department.deleteMany({ where: { id: { in: [DEPT_ID, OTHER_DEPT_ID] } } });
+    await prisma.orgUsageDaily.deleteMany({
+      where: { orgId: { in: [ORG_ID, OTHER_ORG_ID] } },
+    });
+    await prisma.orgLlmCostDaily.deleteMany({
+      where: { orgId: { in: [ORG_ID, OTHER_ORG_ID] } },
+    });
     await prisma.organization.deleteMany({ where: { id: { in: [ORG_ID, OTHER_ORG_ID] } } });
     await prisma.$disconnect();
   });

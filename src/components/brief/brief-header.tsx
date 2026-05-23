@@ -1,15 +1,24 @@
 import Link from 'next/link';
+import { Sparkles } from 'lucide-react';
+
 import type { PriorContextBriefContent } from '@/types/brief';
+import { COPILOT_DISPLAY_NAME } from '@/services/copilot/persona';
 
 /**
- * BriefHeader — patient one-liner + last-visit chip + "open source note" link.
- * Always visible at the top of the BriefCard.
+ * BriefHeader — Miss Cleo attribution + patient summary + last-visit chip.
+ *
+ * Sprint 0.12 persona pass: the brief is the first AI-authored artifact a
+ * clinician sees on /prepare, so the header attributes it to Miss Cleo via
+ * `COPILOT_DISPLAY_NAME` (never hardcode the literal string) with the same
+ * `Sparkles` icon used by `CopilotShell`. Same trust signal across surfaces.
  */
 export function BriefHeader({
+  patientName,
   patientOneLine,
   episodeLabel,
   lastVisit,
 }: {
+  patientName: string;
   patientOneLine: string | null;
   episodeLabel: string | null;
   lastVisit: PriorContextBriefContent['lastVisit'];
@@ -17,12 +26,15 @@ export function BriefHeader({
   const summaryLine = [patientOneLine, episodeLabel].filter(Boolean).join(' · ');
   return (
     <div className="space-y-1">
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <span aria-hidden="true" className="text-base">📋</span>
-        <p className="text-sm font-medium">
-          {summaryLine || 'Patient summary unavailable'}
+      <div className="flex items-center gap-2">
+        <Sparkles className="h-4 w-4 text-primary shrink-0" aria-hidden />
+        <p className="text-sm font-semibold">
+          {COPILOT_DISPLAY_NAME}&rsquo;s read on {patientName}
         </p>
       </div>
+      {summaryLine && (
+        <p className="text-sm text-muted-foreground">{summaryLine}</p>
+      )}
       <p className="text-xs text-muted-foreground">
         Last seen {formatDaysAgo(lastVisit.daysAgo)} · {lastVisit.clinicianName}
         {lastVisit.noteType ? ` · ${lastVisit.noteType}` : ''}

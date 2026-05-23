@@ -9,6 +9,10 @@ import { checkClinicianSeat, seatRequiredResponse } from '@/lib/authz/seat';
 import { writeAuditLog } from '@/lib/audit/log';
 import { startVisit, type PickerSource } from '@/lib/encounters/start';
 import { DivisionResolutionError } from '@/lib/divisions/resolve';
+import {
+  CaseResolutionError,
+  resolveCaseManagementIdForVisit,
+} from '@/lib/case-management/resolve';
 
 export const runtime = 'nodejs';
 
@@ -19,6 +23,7 @@ const bodySchema = z
      * clinician to choose and POSTs the choice here. When omitted, the
      * route falls back to schedule.episodeOfCareId (if present) or lets
      * startVisit's auto-link behavior take over. */
+    caseManagementId: z.string().min(1).optional(),
     episodeOfCareId: z.string().min(1).nullable().optional(),
     /** Records where the episode choice originated. See PickerSource. */
     pickerSource: z
@@ -42,7 +47,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // to parse so the route works whether the client sends JSON, an empty body,
   // or no Content-Type header. Bad JSON → treated as no body. Bad SHAPE (the
   // schema rejects) → 400.
-  let bodyParsed: { episodeOfCareId?: string | null; pickerSource?: PickerSource } = {};
+  let bodyParsed: {
+    caseManagementId?: string;
+    episodeOfCareId?: string | null;
+    pickerSource?: PickerSource;
+  } = {};
   const text = await req.text().catch(() => '');
   if (text.length > 0) {
     let raw: unknown;
@@ -124,6 +133,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           return { encounter: existing, note: existingNote, reused: true };
         }
       }
+      const caseManagementId = await resolveCaseManagementIdForVisit(tx, {
+        orgId: schedule.orgId,
+        patientId: schedule.patientId,
+        caseManagementId: bodyParsed.caseManagementId,
+        episodeOfCareId: episodeOfCareIdToUse ?? schedule.episodeOfCareId,
+      });
       const created = await startVisit({
         tx,
         orgId: schedule.orgId,
@@ -133,6 +148,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         roomId: schedule.roomId,
         scheduleId: schedule.id,
         actingUserId: user.id,
+        caseManagementId,
         episodeOfCareId: episodeOfCareIdToUse,
         pickerSource,
       });
@@ -147,6 +163,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       if (existing && existingNote) {
         return NextResponse.json({ data: { noteId: existingNote.id, encounterId: existing.id } });
       }
+    }
+    if (err instanceof CaseResolutionError) {
+      return NextResponse.json(
+        {
+          error: {
+            code: err.code,
+            message:
+              err.code === 'case_required'
+                ? 'Select a case management for this visit.'
+                : 'Case management not found.',
+          },
+        },
+        { status: 400 },
+      );
     }
     if (err instanceof DivisionResolutionError) {
       return NextResponse.json(

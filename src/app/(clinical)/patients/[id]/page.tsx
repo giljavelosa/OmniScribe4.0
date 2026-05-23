@@ -8,10 +8,12 @@ import { EhrLinkPanel } from '@/components/fhir/ehr-link-panel';
 import { buildSnapshotStrip } from '@/lib/snapshots/build-snapshot-strip';
 import { deriveAssessmentSnippet } from '@/lib/notes/note-text';
 import type { FinalJsonShape } from '@/lib/notes/build-artifact-prompt';
-import { professionLabel } from '@/lib/professions';
+import { divisionForProfession, professionLabel } from '@/lib/professions';
 import { CopilotShell } from '@/components/copilot/copilot-shell';
 import { PatientChartTabs } from './_components/patient-chart-tabs';
 import type { FollowUpSummary } from './_components/follow-ups-sheet';
+import type { CasePanelData } from './_components/cases-panel';
+import type { Division } from '@prisma/client';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Patient' };
@@ -37,20 +39,24 @@ export default async function PatientDetailPage({
       // Patient.siteId is just the "default site" — informational. The site
       // of record for each visit is set on the Encounter (StartVisit dialog).
       site: { select: { id: true, name: true } },
-      // Unit 11 — include DISCHARGED so the panel can Reopen + show close history.
-      episodes: {
-        where: { status: { in: ['ACTIVE', 'RECERT_DUE', 'DISCHARGED'] } },
+      caseManagements: {
+        where: { status: { in: ['ACTIVE', 'CLOSED'] } },
         include: {
-          department: true,
-          goals: {
-            orderBy: { createdAt: 'asc' },
+          episodes: {
+            where: { status: { in: ['ACTIVE', 'RECERT_DUE', 'DISCHARGED'] } },
             include: {
-              // Sprint 0.10 — progression trail for GoalDetailSheet.
-              progressEntries: { orderBy: { recordedAt: 'desc' } },
+              department: true,
+              goals: {
+                orderBy: { createdAt: 'asc' },
+                include: {
+                  progressEntries: { orderBy: { recordedAt: 'desc' } },
+                },
+              },
             },
+            orderBy: [{ status: 'asc' }, { startedAt: 'desc' }],
           },
         },
-        orderBy: [{ status: 'asc' }, { startedAt: 'desc' }],
+        orderBy: { openedAt: 'desc' },
       },
     },
   });
@@ -89,6 +95,10 @@ export default async function PatientDetailPage({
         clinicianOrgUserId: true,
         encounter: {
           select: {
+            caseManagementId: true,
+            caseManagement: {
+              select: { id: true, primaryIcd: true, primaryIcdLabel: true },
+            },
             episode: {
               select: { id: true, diagnosis: true, division: true, status: true },
             },
@@ -211,10 +221,17 @@ export default async function PatientDetailPage({
   // client re-fetching. A signed note is the canonical "visit happened"
   // anchor (mirrors VisitHistoryList). Simple single query → roll up
   // in-memory (max 10s of episodes per patient — no real cost).
-  const activeEpsForStats = patient.episodes.filter(
-    (ep) => ep.status === 'ACTIVE' || ep.status === 'RECERT_DUE',
-  );
   const orgId = session.user.orgId;
+  const viewerOrgUserId = session.user.orgUserId ?? null;
+  const viewerDivision = divisionForProfession(session.user.professionType ?? null);
+
+  const activeCasesRaw = patient.caseManagements.filter((c) => c.status === 'ACTIVE');
+  const caseIds = patient.caseManagements.map((c) => c.id);
+  const rehabEpIds = patient.caseManagements.flatMap((c) =>
+    c.episodes
+      .filter((ep) => ep.status === 'ACTIVE' || ep.status === 'RECERT_DUE')
+      .map((ep) => ep.id),
+  );
 
   // StartVisit-dialog needs the caller's pickable sites + a sensible default.
   // ORG_ADMIN+ get all non-archived sites; site-scoped roles get just their
@@ -242,51 +259,43 @@ export default async function PatientDetailPage({
     (siteScope.scope === 'enrolled' && siteScope.siteIds.length > 0
       ? siteScope.siteIds[0]!
       : startVisitSites[0]?.id ?? null);
-  const activeEpisodesForPicker = await (async () => {
-    if (activeEpsForStats.length === 0) return [];
-    const epIds = activeEpsForStats.map((e) => e.id);
-    const signedNotes = await prisma.note.findMany({
-      where: {
-        patientId: patient.id,
-        orgId,
-        status: { in: ['SIGNED', 'TRANSFERRED'] },
-        encounter: { episodeOfCareId: { in: epIds } },
-      },
-      select: {
-        signedAt: true,
-        encounter: { select: { episodeOfCareId: true } },
-      },
-    });
-    const perEpisode = new Map<string, { count: number; lastVisitAt: Date | null }>();
-    for (const ep of activeEpsForStats) perEpisode.set(ep.id, { count: 0, lastVisitAt: null });
-    for (const n of signedNotes) {
-      const epId = n.encounter?.episodeOfCareId;
-      if (!epId) continue;
-      const acc = perEpisode.get(epId);
-      if (!acc) continue;
-      acc.count += 1;
-      if (n.signedAt && (!acc.lastVisitAt || n.signedAt > acc.lastVisitAt)) {
-        acc.lastVisitAt = n.signedAt;
-      }
-    }
-    return activeEpsForStats.map((ep) => {
-      const agg = perEpisode.get(ep.id) ?? { count: 0, lastVisitAt: null };
-      return {
-        id: ep.id,
-        diagnosis: ep.diagnosis,
-        bodyPart: ep.bodyPart,
-        division: ep.division,
-        lastVisitAt: agg.lastVisitAt?.toISOString() ?? null,
-        visitCount: agg.count,
-      };
-    });
-  })();
+  const signedNotesForCases = caseIds.length
+    ? await prisma.note.findMany({
+        where: {
+          patientId: patient.id,
+          orgId,
+          status: { in: ['SIGNED', 'TRANSFERRED'] },
+          encounter: { caseManagementId: { in: caseIds } },
+        },
+        select: {
+          signedAt: true,
+          division: true,
+          clinicianOrgUserId: true,
+          encounter: {
+            select: { caseManagementId: true, episodeOfCareId: true },
+          },
+        },
+      })
+    : [];
 
-  const episodesForPanel = patient.episodes.map((ep) => ({
+  const perEpisode = new Map<string, { count: number; lastVisitAt: Date | null }>();
+  for (const epId of rehabEpIds) perEpisode.set(epId, { count: 0, lastVisitAt: null });
+  for (const n of signedNotesForCases) {
+    const epId = n.encounter?.episodeOfCareId;
+    if (!epId) continue;
+    const acc = perEpisode.get(epId);
+    if (!acc) continue;
+    acc.count += 1;
+    if (n.signedAt && (!acc.lastVisitAt || n.signedAt > acc.lastVisitAt)) {
+      acc.lastVisitAt = n.signedAt;
+    }
+  }
+
+  const mapEpisode = (ep: (typeof patient.caseManagements)[0]['episodes'][0]) => ({
     id: ep.id,
     diagnosis: ep.diagnosis,
     bodyPart: ep.bodyPart,
-    division: ep.division,
+    division: ep.division as Division,
     status: ep.status,
     recertDueAt: ep.recertDueAt?.toISOString() ?? null,
     recertIntervalDays: ep.recertIntervalDays,
@@ -302,7 +311,6 @@ export default async function PatientDetailPage({
       status: g.status,
       currentMeasure: g.currentMeasure,
       targetMeasure: g.targetMeasure,
-      // Sprint 0.10 — progression trail (newest-first from DB, for GoalDetailSheet).
       progressEntries: g.progressEntries.map((pe) => ({
         id: pe.id,
         measureValue: pe.measureValue,
@@ -311,7 +319,92 @@ export default async function PatientDetailPage({
         recordedAt: pe.recordedAt.toISOString(),
       })),
     })),
-  }));
+  });
+
+  const activeCasesForPicker = activeCasesRaw.map((c) => {
+    const activeEps = c.episodes.filter(
+      (ep) => ep.status === 'ACTIVE' || ep.status === 'RECERT_DUE',
+    );
+    const caseNotes = signedNotesForCases.filter(
+      (n) => n.encounter?.caseManagementId === c.id,
+    );
+    // Same three-tier recency signals the chart's CasesPanel uses, so the
+    // StartVisitDialog can pre-select the "Your active case" — pick matches
+    // the hero pick on the chart. Cf. src/lib/case-management/sort.ts.
+    const viewerNotes = viewerOrgUserId
+      ? caseNotes.filter((n) => n.clinicianOrgUserId === viewerOrgUserId)
+      : [];
+    const viewerDivNotes = viewerDivision
+      ? caseNotes.filter((n) => n.division === viewerDivision)
+      : [];
+    const reduceLast = (notes: typeof caseNotes): Date | null =>
+      notes.reduce<Date | null>((best, n) => {
+        if (!n.signedAt) return best;
+        return !best || n.signedAt > best ? n.signedAt : best;
+      }, null);
+    const lastActivity = reduceLast(caseNotes);
+    const viewerLast = reduceLast(viewerNotes);
+    const viewerDivLast = reduceLast(viewerDivNotes);
+    return {
+      id: c.id,
+      primaryIcd: c.primaryIcd,
+      primaryIcdLabel: c.primaryIcdLabel,
+      secondaryIcd: c.secondaryIcd,
+      lastActivityAt: lastActivity?.toISOString() ?? null,
+      viewerLastActivityAt: viewerLast?.toISOString() ?? null,
+      viewerDivisionLastActivityAt: viewerDivLast?.toISOString() ?? null,
+      episodes: activeEps.map((ep) => {
+        const agg = perEpisode.get(ep.id) ?? { count: 0, lastVisitAt: null };
+        return {
+          id: ep.id,
+          diagnosis: ep.diagnosis,
+          bodyPart: ep.bodyPart,
+          division: ep.division as Division,
+          lastVisitAt: agg.lastVisitAt?.toISOString() ?? null,
+          visitCount: agg.count,
+        };
+      }),
+    };
+  });
+
+  const casesForPanel: CasePanelData[] = patient.caseManagements.map((c) => {
+    const caseNotes = signedNotesForCases.filter(
+      (n) => n.encounter?.caseManagementId === c.id,
+    );
+    const viewerNotes = viewerOrgUserId
+      ? caseNotes.filter((n) => n.clinicianOrgUserId === viewerOrgUserId)
+      : [];
+    const viewerDivNotes = viewerDivision
+      ? caseNotes.filter((n) => n.division === viewerDivision)
+      : [];
+    const lastActivity = caseNotes.reduce<Date | null>((best, n) => {
+      if (!n.signedAt) return best;
+      return !best || n.signedAt > best ? n.signedAt : best;
+    }, null);
+    const viewerLast = viewerNotes.reduce<Date | null>((best, n) => {
+      if (!n.signedAt) return best;
+      return !best || n.signedAt > best ? n.signedAt : best;
+    }, null);
+    const viewerDivLast = viewerDivNotes.reduce<Date | null>((best, n) => {
+      if (!n.signedAt) return best;
+      return !best || n.signedAt > best ? n.signedAt : best;
+    }, null);
+    return {
+      id: c.id,
+      primaryIcd: c.primaryIcd,
+      primaryIcdLabel: c.primaryIcdLabel,
+      secondaryIcd: c.secondaryIcd,
+      secondaryIcdLabel: c.secondaryIcdLabel,
+      description: c.description,
+      status: c.status,
+      viewerLastActivityAt: viewerLast?.toISOString() ?? null,
+      viewerDivisionLastActivityAt: viewerDivLast?.toISOString() ?? null,
+      lastActivityAt: lastActivity?.toISOString() ?? null,
+      medicalVisitCount: caseNotes.filter((n) => n.division === 'MEDICAL').length,
+      bhVisitCount: caseNotes.filter((n) => n.division === 'BEHAVIORAL_HEALTH').length,
+      rehabEpisodes: c.episodes.map(mapEpisode),
+    };
+  });
 
   // Phase 3 — anchor Miss Cleo to the patient's most-recent signed
   // visit. The /api/copilot/ask contract requires a noteId because
@@ -358,11 +451,12 @@ export default async function PatientDetailPage({
         }))}
         episodeCreatedFlash={episodeCreatedFlash}
         snapshotStrip={snapshotStrip}
-        episodesForPanel={episodesForPanel}
+        casesForPanel={casesForPanel}
         externalContextItems={externalContextItems}
         visits={visits}
         followUps={followUpItems}
-        activeEpisodesForPicker={activeEpisodesForPicker}
+        activeCasesForPicker={activeCasesForPicker}
+        viewingProfession={session.user.professionType ?? null}
         startVisitSites={startVisitSites}
         startVisitDefaultSiteId={startVisitDefaultSiteId}
         canEditEpisodes={session.user.role !== 'VIEWER'}

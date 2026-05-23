@@ -13,16 +13,15 @@ import {
 } from '@/components/ui/dropdown-menu';
 import {
   StartVisitDialog,
-  type StartVisitDialogEpisode,
+  type StartVisitDialogCase,
   type StartVisitDialogSite,
 } from './start-visit-dialog';
+import type { Division } from '@prisma/client';
 
 type Props = {
   patientId: string;
-  /** Active episodes for the patient (status ∈ {ACTIVE, RECERT_DUE}). The
-   * picker auto-skips when there are 0 or 1 — the button still POSTs through
-   * the same code path so audit metadata records the source consistently. */
-  activeEpisodes: StartVisitDialogEpisode[];
+  activeCases: StartVisitDialogCase[];
+  viewerDivision: Division | null;
   /** Sites the clinician can pick from for THIS visit's site-of-record.
    * Server-filtered by site scope (ORG_ADMIN sees all; site-scoped sees
    * their enrollments). */
@@ -52,7 +51,13 @@ type Props = {
  *
  * Routes to /prepare/[noteId] on success.
  */
-export function StartVisitButton({ patientId, activeEpisodes, sites, defaultSiteId }: Props) {
+export function StartVisitButton({
+  patientId,
+  activeCases,
+  viewerDivision,
+  sites,
+  defaultSiteId,
+}: Props) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [forceDatePicker, setForceDatePicker] = useState(false);
@@ -103,7 +108,8 @@ export function StartVisitButton({ patientId, activeEpisodes, sites, defaultSite
       </div>
       <StartVisitDialog
         patientId={patientId}
-        activeEpisodes={activeEpisodes}
+        activeCases={activeCases}
+        viewerDivision={viewerDivision}
         sites={sites}
         defaultSiteId={defaultSiteId}
         open={open}

@@ -140,6 +140,7 @@ model Organization {
   llmCalls           LlmCallLog[]
   llmCostDaily       OrgLlmCostDaily[]
   externalContexts   ExternalContext[]
+  caseManagements    CaseManagement[]
 
   @@index([baaExecutedAt])
   @@index([subscriptionPlan])
@@ -572,6 +573,12 @@ enum EncounterStatus {
   CANCELLED
 }
 
+enum CaseManagementStatus {
+  ACTIVE
+  CLOSED
+  CANCELLED
+}
+
 enum EpisodeStatus {
   ACTIVE
   RECERT_DUE
@@ -673,6 +680,7 @@ model Patient {
   intakes                  PatientDepartmentIntake[]
   encounters               Encounter[]
   schedules                Schedule[]
+  caseManagements          CaseManagement[]
   episodes                 EpisodeOfCare[]
   notes                    Note[]
   briefs                   NoteBrief[]
@@ -847,6 +855,33 @@ model Schedule {
   @@index([episodeOfCareId])
 }
 
+/// Sprint 0.11 — ICD-anchored patient-care umbrella. Every encounter links here.
+model CaseManagement {
+  id                String               @id @default(cuid())
+  orgId             String
+  organization      Organization         @relation(fields: [orgId], references: [id])
+  patientId         String
+  patient           Patient              @relation(fields: [patientId], references: [id])
+  primaryIcd        String?
+  primaryIcdLabel   String
+  secondaryIcd      String?
+  secondaryIcdLabel String?
+  /// Migrated from legacy EpisodeOfCare.bodyPart when present.
+  description       String?
+  status            CaseManagementStatus @default(ACTIVE)
+  openedByOrgUserId String?
+  openedAt          DateTime             @default(now())
+  closedAt          DateTime?
+  closedByOrgUserId String?
+  closeReason       String?
+
+  episodes   EpisodeOfCare[]
+  encounters Encounter[]
+
+  @@index([orgId, patientId, status])
+  @@index([orgId, primaryIcd])
+}
+
 model Encounter {
   id                 String          @id @default(cuid())
   orgId              String
@@ -859,6 +894,8 @@ model Encounter {
   roomId             String?
   departmentId       String?
   department         Department?     @relation(fields: [departmentId], references: [id])
+  caseManagementId   String
+  caseManagement     CaseManagement  @relation(fields: [caseManagementId], references: [id])
   episodeOfCareId    String?
   episode            EpisodeOfCare?  @relation(fields: [episodeOfCareId], references: [id])
   status             EncounterStatus @default(PLANNED)
@@ -868,19 +905,28 @@ model Encounter {
   notes Note[]
 
   @@index([patientId, startedAt])
+  @@index([caseManagementId])
 }
 
+/// REHAB-only plan of care nested under CaseManagement (DB CHECK in migration).
 model EpisodeOfCare {
   id                 String        @id @default(cuid())
   orgId              String
   patientId          String
   patient            Patient       @relation(fields: [patientId], references: [id])
+  caseManagementId   String
+  caseManagement     CaseManagement @relation(fields: [caseManagementId], references: [id])
   clinicianOrgUserId String
   departmentId       String
   department         Department    @relation(fields: [departmentId], references: [id])
   division           Division
+  /// Legacy free-text diagnosis — retained; mirrors primaryIcdLabel for display.
   diagnosis          String
   bodyPart           String?
+  primaryIcd         String?
+  primaryIcdLabel    String?
+  secondaryIcd       String?
+  secondaryIcdLabel  String?
   status             EpisodeStatus @default(ACTIVE)
   startedAt          DateTime      @default(now())
   endedAt            DateTime?

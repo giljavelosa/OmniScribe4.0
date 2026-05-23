@@ -24,9 +24,15 @@ export const runtime = 'nodejs';
  * metadata. PHI-free (diagnosis stays out of the metadata).
  */
 const createSchema = z.object({
+  caseManagementId: z.string().min(1),
   diagnosis: z.string().min(1).max(280),
   bodyPart: z.string().max(120).optional().nullable(),
-  division: z.enum([Division.MEDICAL, Division.REHAB, Division.BEHAVIORAL_HEALTH]),
+  primaryIcd: z.string().max(16).optional().nullable(),
+  primaryIcdLabel: z.string().max(280).optional().nullable(),
+  secondaryIcd: z.string().max(16).optional().nullable(),
+  secondaryIcdLabel: z.string().max(280).optional().nullable(),
+  /** When true, episode primary/secondary swap from the parent case (rehab billing). */
+  flipIcdFromCase: z.boolean().optional(),
   departmentId: z.string().min(1),
 });
 
@@ -72,29 +78,58 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
   assertOrgScoped(department.orgId, authorizationUser.orgId);
 
-  // Guardrail — a REHAB department cannot host a BH episode, etc. Multi
-  // departments are allowed across divisions per spec; mirror that here.
-  if (department.division !== Division.MULTI && department.division !== data.division) {
+  if (department.division !== Division.MULTI && department.division !== Division.REHAB) {
     return NextResponse.json(
       {
         error: {
           code: 'department_division_mismatch',
-          message: `Department is ${department.division}; cannot host a ${data.division} episode.`,
+          message: 'Rehab episodes must use a REHAB or MULTI department.',
         },
       },
       { status: 400 },
     );
   }
 
+  const parentCase = await prisma.caseManagement.findFirst({
+    where: {
+      id: data.caseManagementId,
+      patientId: patient.id,
+      orgId: authorizationUser.orgId,
+    },
+  });
+  if (!parentCase) {
+    return NextResponse.json(
+      { error: { code: 'case_not_found', message: 'Case management not found for this patient.' } },
+      { status: 400 },
+    );
+  }
+
+  let primaryIcd = data.primaryIcd ?? parentCase.primaryIcd;
+  let primaryIcdLabel = data.primaryIcdLabel ?? data.diagnosis;
+  let secondaryIcd = data.secondaryIcd ?? parentCase.secondaryIcd;
+  let secondaryIcdLabel = data.secondaryIcdLabel ?? parentCase.secondaryIcdLabel;
+
+  if (data.flipIcdFromCase && parentCase.primaryIcd && parentCase.secondaryIcd) {
+    primaryIcd = parentCase.secondaryIcd;
+    primaryIcdLabel = parentCase.secondaryIcdLabel ?? primaryIcdLabel;
+    secondaryIcd = parentCase.primaryIcd;
+    secondaryIcdLabel = parentCase.primaryIcdLabel;
+  }
+
   const created = await prisma.episodeOfCare.create({
     data: {
       orgId: authorizationUser.orgId,
       patientId: patient.id,
+      caseManagementId: parentCase.id,
       clinicianOrgUserId: authorizationUser.orgUserId,
       departmentId: department.id,
-      division: data.division,
+      division: Division.REHAB,
       diagnosis: data.diagnosis,
       bodyPart: data.bodyPart ?? null,
+      primaryIcd,
+      primaryIcdLabel,
+      secondaryIcd,
+      secondaryIcdLabel,
       status: EpisodeStatus.ACTIVE,
     },
   });

@@ -17,6 +17,7 @@ vi.mock('@/lib/auth', () => ({
 
 const orgUserFindUnique = vi.fn();
 const patientFindFirst = vi.fn();
+const caseManagementFindFirst = vi.fn();
 const siteFindMany = vi.fn();
 const orgUserSiteFindMany = vi.fn();
 const txFn = vi.fn();
@@ -24,6 +25,7 @@ vi.mock('@/lib/prisma', () => ({
   prisma: {
     orgUser: { findUnique: (...a: unknown[]) => orgUserFindUnique(...a) },
     patient: { findFirst: (...a: unknown[]) => patientFindFirst(...a) },
+    caseManagement: { findFirst: (...a: unknown[]) => caseManagementFindFirst(...a) },
     site: { findMany: (...a: unknown[]) => siteFindMany(...a) },
     orgUserSite: { findMany: (...a: unknown[]) => orgUserSiteFindMany(...a) },
     $transaction: (cb: (tx: unknown) => unknown) => txFn(cb),
@@ -77,6 +79,7 @@ function primeMocksForSuccess() {
     organization: { forceMfa: false },
   });
   patientFindFirst.mockResolvedValueOnce({ id: 'pat_1', siteId: 's_one' });
+  caseManagementFindFirst.mockResolvedValueOnce({ id: 'case_1', status: 'ACTIVE' });
   orgUserFindUnique.mockResolvedValueOnce({ role: 'CLINICIAN', orgId: 'org_1' });
   orgUserSiteFindMany.mockResolvedValueOnce([{ siteId: 's_one' }]);
   txFn.mockImplementationOnce(async (cb: (tx: unknown) => Promise<unknown>) => cb({}));
@@ -102,17 +105,21 @@ beforeEach(() => {
   mockAuth.mockReset();
   orgUserFindUnique.mockReset();
   patientFindFirst.mockReset();
+  caseManagementFindFirst.mockReset();
   siteFindMany.mockReset();
   orgUserSiteFindMany.mockReset();
+  caseManagementFindFirst.mockReset();
   txFn.mockReset();
   startVisitMock.mockReset();
 });
+
+const baseBody = { patientId: 'pat_1', caseManagementId: 'case_1' };
 
 describe('POST /api/encounters — late-entry validation', () => {
   it('without dateOfService → normal flow, late-entry args stay false/null', async () => {
     primeMocksForSuccess();
 
-    const res = await POST(buildRequest({ patientId: 'pat_1' }));
+    const res = await POST(buildRequest(baseBody));
     expect(res.status).toBe(200);
     const callArgs = startVisitMock.mock.calls[0]?.[0] as {
       isLateEntry?: boolean;
@@ -127,7 +134,7 @@ describe('POST /api/encounters — late-entry validation', () => {
   it('with today as dateOfService → isLateEntry=false (same-day visit is not a late entry)', async () => {
     primeMocksForSuccess();
 
-    const res = await POST(buildRequest({ patientId: 'pat_1', dateOfService: isoDaysAgo(0) }));
+    const res = await POST(buildRequest({ ...baseBody, dateOfService: isoDaysAgo(0) }));
     expect(res.status).toBe(200);
     const callArgs = startVisitMock.mock.calls[0]?.[0] as {
       isLateEntry?: boolean;
@@ -141,7 +148,7 @@ describe('POST /api/encounters — late-entry validation', () => {
     primeMocksForSuccess();
 
     const res = await POST(
-      buildRequest({ patientId: 'pat_1', dateOfService: isoDaysAgo(14) }),
+      buildRequest({ ...baseBody, dateOfService: isoDaysAgo(14) }),
     );
     expect(res.status).toBe(200);
     const callArgs = startVisitMock.mock.calls[0]?.[0] as {
@@ -156,7 +163,7 @@ describe('POST /api/encounters — late-entry validation', () => {
     primeMocksForSuccess();
 
     const res = await POST(
-      buildRequest({ patientId: 'pat_1', dateOfService: isoDaysAgo(60) }),
+      buildRequest({ ...baseBody, dateOfService: isoDaysAgo(60) }),
     );
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error?: { code?: string } };
@@ -171,7 +178,7 @@ describe('POST /api/encounters — late-entry validation', () => {
     tomorrow.setDate(tomorrow.getDate() + 1);
     tomorrow.setHours(0, 0, 0, 0);
     const res = await POST(
-      buildRequest({ patientId: 'pat_1', dateOfService: tomorrow.toISOString() }),
+      buildRequest({ ...baseBody, dateOfService: tomorrow.toISOString() }),
     );
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error?: { code?: string } };

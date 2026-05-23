@@ -105,6 +105,24 @@ function makeReq(body: unknown | undefined): Request {
 
 const paramsFor = (id = 'sched_1') => Promise.resolve({ id });
 
+function txClient(episodeCaseId?: string) {
+  return {
+    encounter: { findUnique: vi.fn().mockResolvedValue(null) },
+    note: { findFirst: vi.fn().mockResolvedValue(null) },
+    caseManagement: {
+      findFirst: vi.fn().mockImplementation(({ where }: { where: { id?: string } }) =>
+        Promise.resolve(where?.id ? { id: where.id } : null),
+      ),
+      findMany: vi.fn().mockResolvedValue([{ id: 'case_auto' }]),
+    },
+    episodeOfCare: {
+      findFirst: vi.fn().mockResolvedValue(
+        episodeCaseId ? { caseManagementId: episodeCaseId } : null,
+      ),
+    },
+  };
+}
+
 describe('POST /api/schedules/[id]/start — episode picker integration', () => {
   it('threads body.episodeOfCareId + body.pickerSource into startVisit', async () => {
     requireFeatureAccess.mockResolvedValueOnce(authedGuard());
@@ -117,19 +135,18 @@ describe('POST /api/schedules/[id]/start — episode picker integration', () => 
       roomId: null,
       episodeOfCareId: null,
     });
-    txMock.mockImplementation(async (cb) =>
-      cb({
-        encounter: { findUnique: vi.fn().mockResolvedValue(null) },
-        note: { findFirst: vi.fn().mockResolvedValue(null) },
-      }),
-    );
+    txMock.mockImplementation(async (cb) => cb(txClient('case_from_ep')));
     startVisit.mockResolvedValueOnce({
       encounter: { id: 'enc_1' },
       note: { id: 'note_1' },
     });
 
     const res = await POST(
-      makeReq({ episodeOfCareId: 'ep_chosen', pickerSource: 'picker' }),
+      makeReq({
+        caseManagementId: 'case_from_ep',
+        episodeOfCareId: 'ep_chosen',
+        pickerSource: 'picker',
+      }),
       { params: paramsFor() },
     );
 
@@ -143,6 +160,7 @@ describe('POST /api/schedules/[id]/start — episode picker integration', () => 
       orgId: 'org_1',
       patientId: 'pat_1',
       scheduleId: 'sched_1',
+      caseManagementId: 'case_from_ep',
       episodeOfCareId: 'ep_chosen',
       pickerSource: 'picker',
     });
@@ -160,19 +178,18 @@ describe('POST /api/schedules/[id]/start — episode picker integration', () => 
       // Schedule HAS a pre-link, but the body explicitly skips — body wins.
       episodeOfCareId: 'ep_schedule_default',
     });
-    txMock.mockImplementation(async (cb) =>
-      cb({
-        encounter: { findUnique: vi.fn().mockResolvedValue(null) },
-        note: { findFirst: vi.fn().mockResolvedValue(null) },
-      }),
-    );
+    txMock.mockImplementation(async (cb) => cb(txClient('case_sched')));
     startVisit.mockResolvedValueOnce({
       encounter: { id: 'enc_2' },
       note: { id: 'note_2' },
     });
 
     await POST(
-      makeReq({ episodeOfCareId: null, pickerSource: 'manual-skip' }),
+      makeReq({
+        caseManagementId: 'case_sched',
+        episodeOfCareId: null,
+        pickerSource: 'manual-skip',
+      }),
       { params: paramsFor() },
     );
     const arg = startVisit.mock.calls[0]![0] as Record<string, unknown>;
@@ -191,12 +208,7 @@ describe('POST /api/schedules/[id]/start — episode picker integration', () => 
       roomId: null,
       episodeOfCareId: 'ep_prelink',
     });
-    txMock.mockImplementation(async (cb) =>
-      cb({
-        encounter: { findUnique: vi.fn().mockResolvedValue(null) },
-        note: { findFirst: vi.fn().mockResolvedValue(null) },
-      }),
-    );
+    txMock.mockImplementation(async (cb) => cb(txClient('case_pre')));
     startVisit.mockResolvedValueOnce({
       encounter: { id: 'enc_3' },
       note: { id: 'note_3' },
@@ -204,6 +216,7 @@ describe('POST /api/schedules/[id]/start — episode picker integration', () => 
 
     await POST(makeReq(undefined), { params: paramsFor() });
     const arg = startVisit.mock.calls[0]![0] as Record<string, unknown>;
+    expect(arg.caseManagementId).toBe('case_pre');
     expect(arg.episodeOfCareId).toBe('ep_prelink');
     expect(arg.pickerSource).toBe('inherited-schedule');
   });
@@ -219,12 +232,7 @@ describe('POST /api/schedules/[id]/start — episode picker integration', () => 
       roomId: null,
       episodeOfCareId: null,
     });
-    txMock.mockImplementation(async (cb) =>
-      cb({
-        encounter: { findUnique: vi.fn().mockResolvedValue(null) },
-        note: { findFirst: vi.fn().mockResolvedValue(null) },
-      }),
-    );
+    txMock.mockImplementation(async (cb) => cb(txClient()));
     startVisit.mockResolvedValueOnce({
       encounter: { id: 'enc_4' },
       note: { id: 'note_4' },
@@ -232,6 +240,7 @@ describe('POST /api/schedules/[id]/start — episode picker integration', () => 
 
     await POST(makeReq(undefined), { params: paramsFor() });
     const arg = startVisit.mock.calls[0]![0] as Record<string, unknown>;
+    expect(arg.caseManagementId).toBe('case_auto');
     expect(arg.episodeOfCareId).toBeUndefined();
     expect(arg.pickerSource).toBeUndefined();
   });

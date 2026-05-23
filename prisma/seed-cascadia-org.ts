@@ -20,6 +20,7 @@ import {
   PatientAddressKind,
 } from '@prisma/client';
 import { CASCADIA_PATIENT_DEMOGRAPHICS } from './seed-corpus/cascadia';
+import { upsertCaseManagement, upsertRehabEpisode } from './seed-case-helpers';
 
 const CASCADIA_ORG_ID = 'seed-cascadia-clinic';
 
@@ -354,50 +355,32 @@ export async function seedCascadiaOrganization(
   const otFischer = clinicianRowByEmail['ot.fischer@cascadia.local']!.orgUserId;
   const lcswBennett = clinicianRowByEmail['lcsw.bennett@cascadia.local']!.orgUserId;
 
-  // ── Marcus Thompson — 3 episodes (medical + 2 rehab + BH) ──────────────
-  const marcusMed = await prisma.episodeOfCare.upsert({
-    where: { id: 'seed-cascadia-episode-marcus-medical' },
-    update: {},
-    create: {
-      id: 'seed-cascadia-episode-marcus-medical',
-      orgId: org.id,
-      patientId: 'seed-cascadia-patient-marcus',
-      clinicianOrgUserId: mdHarper,
-      departmentId: deptMedical.id,
-      division: Division.MEDICAL,
-      diagnosis: 'Type 2 diabetes mellitus with stage 3 chronic kidney disease',
-      status: EpisodeStatus.ACTIVE,
-    },
-  });
-  await prisma.episodeGoal.upsert({
-    where: { id: 'seed-cascadia-goal-marcus-medical' },
-    update: {},
-    create: {
-      id: 'seed-cascadia-goal-marcus-medical',
-      episodeId: marcusMed.id,
-      goalType: GoalType.LTG,
-      goalText: 'Maintain A1c <7.5% and slow CKD progression — preserve eGFR ≥45.',
-      baselineMeasure: 'A1c 8.4%, eGFR 52',
-      targetMeasure: 'A1c <7.5%, eGFR stable',
-      currentMeasure: 'A1c 7.6%, eGFR 51',
-      status: GoalStatus.ACTIVE,
-    },
+  // ── Marcus Thompson — cases + REHAB episodes only ─────────────────────
+  await upsertCaseManagement(prisma, {
+    id: 'seed-cascadia-case-marcus-medical',
+    orgId: org.id,
+    patientId: 'seed-cascadia-patient-marcus',
+    primaryIcdLabel: 'Type 2 diabetes mellitus with stage 3 chronic kidney disease',
+    openedByOrgUserId: mdHarper,
   });
 
-  const marcusKnee = await prisma.episodeOfCare.upsert({
-    where: { id: 'seed-cascadia-episode-marcus-knee' },
-    update: { bodyPart: 'Right knee' },
-    create: {
-      id: 'seed-cascadia-episode-marcus-knee',
-      orgId: org.id,
-      patientId: 'seed-cascadia-patient-marcus',
-      clinicianOrgUserId: ptMorales,
-      departmentId: deptRehab.id,
-      division: Division.REHAB,
-      diagnosis: 'Right total knee arthroplasty — post-op rehabilitation',
-      bodyPart: 'Right knee',
-      status: EpisodeStatus.ACTIVE,
-    },
+  const marcusKneeCase = await upsertCaseManagement(prisma, {
+    id: 'seed-cascadia-case-marcus-knee',
+    orgId: org.id,
+    patientId: 'seed-cascadia-patient-marcus',
+    primaryIcdLabel: 'Right total knee arthroplasty — post-op rehabilitation',
+    description: 'Right knee',
+    openedByOrgUserId: ptMorales,
+  });
+  const marcusKnee = await upsertRehabEpisode(prisma, {
+    id: 'seed-cascadia-episode-marcus-knee',
+    orgId: org.id,
+    patientId: 'seed-cascadia-patient-marcus',
+    caseManagementId: marcusKneeCase.id,
+    clinicianOrgUserId: ptMorales,
+    departmentId: deptRehab.id,
+    diagnosis: 'Right total knee arthroplasty — post-op rehabilitation',
+    bodyPart: 'Right knee',
   });
   await prisma.episodeGoal.upsert({
     where: { id: 'seed-cascadia-goal-marcus-knee' },
@@ -414,20 +397,23 @@ export async function seedCascadiaOrganization(
     },
   });
 
-  const marcusShoulder = await prisma.episodeOfCare.upsert({
-    where: { id: 'seed-cascadia-episode-marcus-shoulder' },
-    update: { bodyPart: 'Right shoulder' },
-    create: {
-      id: 'seed-cascadia-episode-marcus-shoulder',
-      orgId: org.id,
-      patientId: 'seed-cascadia-patient-marcus',
-      clinicianOrgUserId: ptMorales,
-      departmentId: deptRehab.id,
-      division: Division.REHAB,
-      diagnosis: 'Right subacromial impingement syndrome',
-      bodyPart: 'Right shoulder',
-      status: EpisodeStatus.ACTIVE,
-    },
+  const marcusShoulderCase = await upsertCaseManagement(prisma, {
+    id: 'seed-cascadia-case-marcus-shoulder',
+    orgId: org.id,
+    patientId: 'seed-cascadia-patient-marcus',
+    primaryIcdLabel: 'Right subacromial impingement syndrome',
+    description: 'Right shoulder',
+    openedByOrgUserId: ptMorales,
+  });
+  const marcusShoulder = await upsertRehabEpisode(prisma, {
+    id: 'seed-cascadia-episode-marcus-shoulder',
+    orgId: org.id,
+    patientId: 'seed-cascadia-patient-marcus',
+    caseManagementId: marcusShoulderCase.id,
+    clinicianOrgUserId: ptMorales,
+    departmentId: deptRehab.id,
+    diagnosis: 'Right subacromial impingement syndrome',
+    bodyPart: 'Right shoulder',
   });
   await prisma.episodeGoal.upsert({
     where: { id: 'seed-cascadia-goal-marcus-shoulder' },
@@ -444,79 +430,40 @@ export async function seedCascadiaOrganization(
     },
   });
 
-  await prisma.episodeOfCare.upsert({
-    where: { id: 'seed-cascadia-episode-marcus-bh' },
-    update: {},
-    create: {
-      id: 'seed-cascadia-episode-marcus-bh',
-      orgId: org.id,
-      patientId: 'seed-cascadia-patient-marcus',
-      clinicianOrgUserId: lcswBennett,
-      departmentId: deptBh.id,
-      division: Division.BEHAVIORAL_HEALTH,
-      diagnosis: 'Adjustment disorder with depressed mood — coping with chronic illness',
-      status: EpisodeStatus.ACTIVE,
-    },
-  });
-  await prisma.episodeGoal.upsert({
-    where: { id: 'seed-cascadia-goal-marcus-bh' },
-    update: {},
-    create: {
-      id: 'seed-cascadia-goal-marcus-bh',
-      episodeId: 'seed-cascadia-episode-marcus-bh',
-      goalType: GoalType.LTG,
-      goalText: 'Reduce PHQ-9 below 8, restore engagement in social and rehab activities.',
-      baselineMeasure: 'PHQ-9: 13',
-      targetMeasure: 'PHQ-9 <8',
-      currentMeasure: 'PHQ-9: 9',
-      status: GoalStatus.ACTIVE,
-    },
+  await upsertCaseManagement(prisma, {
+    id: 'seed-cascadia-case-marcus-bh',
+    orgId: org.id,
+    patientId: 'seed-cascadia-patient-marcus',
+    primaryIcdLabel: 'Adjustment disorder with depressed mood — coping with chronic illness',
+    openedByOrgUserId: lcswBennett,
   });
 
-  // ── Priya Desai — 3 episodes (medical + 2 rehab + BH) ──────────────────
-  const priyaMed = await prisma.episodeOfCare.upsert({
-    where: { id: 'seed-cascadia-episode-priya-medical' },
-    update: {},
-    create: {
-      id: 'seed-cascadia-episode-priya-medical',
-      orgId: org.id,
-      patientId: 'seed-cascadia-patient-priya',
-      clinicianOrgUserId: mdHarper,
-      departmentId: deptMedical.id,
-      division: Division.MEDICAL,
-      diagnosis: 'Chronic migraine with aura; perimenopausal symptoms',
-      status: EpisodeStatus.ACTIVE,
-    },
-  });
-  await prisma.episodeGoal.upsert({
-    where: { id: 'seed-cascadia-goal-priya-medical' },
-    update: {},
-    create: {
-      id: 'seed-cascadia-goal-priya-medical',
-      episodeId: priyaMed.id,
-      goalType: GoalType.LTG,
-      goalText: 'Reduce migraine frequency to ≤4 days/month and MIDAS below 11.',
-      baselineMeasure: 'Migraine 12 days/month, MIDAS 26',
-      targetMeasure: 'Migraine ≤4 days/month, MIDAS <11',
-      currentMeasure: 'Migraine 6 days/month, MIDAS 14',
-      status: GoalStatus.ACTIVE,
-    },
+  // ── Priya Desai — cases + REHAB episodes ───────────────────────────────
+  await upsertCaseManagement(prisma, {
+    id: 'seed-cascadia-case-priya-medical',
+    orgId: org.id,
+    patientId: 'seed-cascadia-patient-priya',
+    primaryIcdLabel: 'Chronic migraine with aura; perimenopausal symptoms',
+    openedByOrgUserId: mdHarper,
   });
 
-  const priyaCervical = await prisma.episodeOfCare.upsert({
-    where: { id: 'seed-cascadia-episode-priya-cervical' },
-    update: { bodyPart: 'Cervical spine' },
-    create: {
-      id: 'seed-cascadia-episode-priya-cervical',
-      orgId: org.id,
-      patientId: 'seed-cascadia-patient-priya',
-      clinicianOrgUserId: ptMorales,
-      departmentId: deptRehab.id,
-      division: Division.REHAB,
-      diagnosis: 'Cervicogenic headache with upper-cervical hypomobility',
-      bodyPart: 'Cervical spine',
-      status: EpisodeStatus.ACTIVE,
-    },
+  const priyaCervicalCase = await upsertCaseManagement(prisma, {
+    id: 'seed-cascadia-case-priya-cervical',
+    orgId: org.id,
+    patientId: 'seed-cascadia-patient-priya',
+    primaryIcdLabel: 'Cervicogenic headache with upper-cervical hypomobility',
+    description: 'Cervical spine',
+    openedByOrgUserId: ptMorales,
+  });
+  const priyaCervical = await upsertRehabEpisode(prisma, {
+    id: 'seed-cascadia-episode-priya-cervical',
+    orgId: org.id,
+    patientId: 'seed-cascadia-patient-priya',
+    caseManagementId: priyaCervicalCase.id,
+    clinicianOrgUserId: ptMorales,
+    departmentId: deptRehab.id,
+    diagnosis: 'Cervicogenic headache with upper-cervical hypomobility',
+    bodyPart: 'Cervical spine',
   });
   await prisma.episodeGoal.upsert({
     where: { id: 'seed-cascadia-goal-priya-cervical' },
@@ -533,20 +480,23 @@ export async function seedCascadiaOrganization(
     },
   });
 
-  const priyaWrist = await prisma.episodeOfCare.upsert({
-    where: { id: 'seed-cascadia-episode-priya-wrist' },
-    update: { bodyPart: 'Right wrist' },
-    create: {
-      id: 'seed-cascadia-episode-priya-wrist',
-      orgId: org.id,
-      patientId: 'seed-cascadia-patient-priya',
-      clinicianOrgUserId: otFischer,
-      departmentId: deptRehab.id,
-      division: Division.REHAB,
-      diagnosis: 'Right wrist extensor tendinopathy — repetitive strain',
-      bodyPart: 'Right wrist',
-      status: EpisodeStatus.ACTIVE,
-    },
+  const priyaWristCase = await upsertCaseManagement(prisma, {
+    id: 'seed-cascadia-case-priya-wrist',
+    orgId: org.id,
+    patientId: 'seed-cascadia-patient-priya',
+    primaryIcdLabel: 'Right wrist extensor tendinopathy — repetitive strain',
+    description: 'Right wrist',
+    openedByOrgUserId: otFischer,
+  });
+  const priyaWrist = await upsertRehabEpisode(prisma, {
+    id: 'seed-cascadia-episode-priya-wrist',
+    orgId: org.id,
+    patientId: 'seed-cascadia-patient-priya',
+    caseManagementId: priyaWristCase.id,
+    clinicianOrgUserId: otFischer,
+    departmentId: deptRehab.id,
+    diagnosis: 'Right wrist extensor tendinopathy — repetitive strain',
+    bodyPart: 'Right wrist',
   });
   await prisma.episodeGoal.upsert({
     where: { id: 'seed-cascadia-goal-priya-wrist' },
@@ -563,33 +513,12 @@ export async function seedCascadiaOrganization(
     },
   });
 
-  await prisma.episodeOfCare.upsert({
-    where: { id: 'seed-cascadia-episode-priya-bh' },
-    update: {},
-    create: {
-      id: 'seed-cascadia-episode-priya-bh',
-      orgId: org.id,
-      patientId: 'seed-cascadia-patient-priya',
-      clinicianOrgUserId: lcswBennett,
-      departmentId: deptBh.id,
-      division: Division.BEHAVIORAL_HEALTH,
-      diagnosis: 'Generalized anxiety disorder with chronic insomnia',
-      status: EpisodeStatus.ACTIVE,
-    },
-  });
-  await prisma.episodeGoal.upsert({
-    where: { id: 'seed-cascadia-goal-priya-bh' },
-    update: {},
-    create: {
-      id: 'seed-cascadia-goal-priya-bh',
-      episodeId: 'seed-cascadia-episode-priya-bh',
-      goalType: GoalType.LTG,
-      goalText: 'Reduce GAD-7 below 8 and restore sleep onset latency under 30 minutes.',
-      baselineMeasure: 'GAD-7: 14, SOL 75 min',
-      targetMeasure: 'GAD-7 <8, SOL <30 min',
-      currentMeasure: 'GAD-7: 9, SOL 40 min',
-      status: GoalStatus.ACTIVE,
-    },
+  await upsertCaseManagement(prisma, {
+    id: 'seed-cascadia-case-priya-bh',
+    orgId: org.id,
+    patientId: 'seed-cascadia-patient-priya',
+    primaryIcdLabel: 'Generalized anxiety disorder with chronic insomnia',
+    openedByOrgUserId: lcswBennett,
   });
 
   return {

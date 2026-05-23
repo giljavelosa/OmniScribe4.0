@@ -207,6 +207,10 @@ export type AuditAction =
   | 'EPISODE_VISIT_COUNT_INCREMENTED'
   | 'EPISODE_VISIT_LIMIT_OVERRIDE'
   | 'EPISODE_SWEEP_RUN'
+  // ---- Sprint 0.11: Case management ----
+  | 'CASE_MANAGEMENT_CREATED'
+  | 'CASE_MANAGEMENT_UPDATED'
+  | 'CASE_MANAGEMENT_CLOSED'
   | 'GOAL_STATUS_CHANGED'
   | 'GOAL_PROGRESS_ENTRY_ADDED'
   // ---- Unit 12: Patient detail redesign ----

@@ -80,7 +80,14 @@ export function PriorContextPanel({
       </ul>
     );
 
-  return <BriefCard content={brief} nowMs={nowMs} followUpsSlot={followUpsSlot} />;
+  return (
+    <BriefCard
+      content={brief}
+      patientName={patientDisplayName}
+      nowMs={nowMs}
+      followUpsSlot={followUpsSlot}
+    />
+  );
 }
 
 /**

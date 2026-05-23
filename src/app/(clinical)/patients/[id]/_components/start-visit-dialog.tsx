@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useMemo, useState, useTransition } from 'react';
-import Link from 'next/link';
 import { CalendarDays, PlusCircle } from 'lucide-react';
 import type { Division } from '@prisma/client';
 
@@ -25,6 +24,8 @@ import {
 } from '@/components/ui/sheet';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { StatusBanner } from '@/components/ui/status-banner';
+import { sortCasesByViewerRecency } from '@/lib/case-management/sort';
+import { NewCaseDialog } from './new-case-dialog';
 
 /** Hard-coded backdating window (spec § Goals — 30 days, org-configurable later). */
 const LATE_ENTRY_MAX_DAYS = 30;
@@ -39,6 +40,23 @@ export type StartVisitDialogEpisode = {
   visitCount: number;
 };
 
+export type StartVisitDialogCase = {
+  id: string;
+  primaryIcd: string | null;
+  primaryIcdLabel: string;
+  secondaryIcd: string | null;
+  /** ISO — most recent signed-note activity on this case overall. */
+  lastActivityAt: string | null;
+  /** ISO — most recent signed-note activity by *this* viewing clinician.
+   *  Drives the "Your active case" pre-selection + pill in the picker so the
+   *  chart's hero pattern (cases-panel.tsx) reads consistently in the dialog. */
+  viewerLastActivityAt: string | null;
+  /** ISO — most recent signed-note activity by anyone in the viewer's
+   *  division. Tiebreaker beneath `viewerLastActivityAt`. */
+  viewerDivisionLastActivityAt: string | null;
+  episodes: StartVisitDialogEpisode[];
+};
+
 export type StartVisitDialogSite = {
   id: string;
   name: string;
@@ -46,6 +64,7 @@ export type StartVisitDialogSite = {
 
 export type StartVisitSubmitArgs = {
   patientId: string;
+  caseManagementId: string;
   episodeOfCareId: string | null;
   source: 'picker' | 'auto-single' | 'auto-none' | 'manual-skip';
   /** Site-of-record for THIS visit. Required for the ad-hoc path
@@ -60,7 +79,9 @@ export type StartVisitSubmitArgs = {
 
 type Props = {
   patientId: string;
-  activeEpisodes: StartVisitDialogEpisode[];
+  activeCases: StartVisitDialogCase[];
+  /** Clinician division from profession — drives rehab episode picker visibility. */
+  viewerDivision: Division | null;
   /** Sites the clinician can record at. Optional — when omitted the dialog
    *  hides the Site picker and the submitter handles site selection
    *  externally (the scheduling-card flow uses `schedule.siteId`). When
@@ -93,8 +114,9 @@ type Props = {
   forceDatePicker?: boolean;
 };
 
-/** Sentinel for the "skip — start without an episode link" choice. */
+/** Sentinel — rehab visit without linking an episode of care. */
 const NO_EPISODE = '__no_episode__';
+const NEW_CASE = '__new_case__';
 
 /**
  * StartVisitDialog — Sheet that picks which episode an ad-hoc / scheduled visit
@@ -118,7 +140,20 @@ export function StartVisitDialog(props: Props) {
   // Forced picker when: late entry, 2+ episodes, OR 2+ pickable sites
   // (clinician needs to choose where they are physically).
   const needsSitePicker = (props.sites?.length ?? 0) >= 2;
-  if (props.forceDatePicker || props.activeEpisodes.length >= 2 || needsSitePicker) {
+  const rehabEpisodes =
+    props.activeCases.length === 1 ? props.activeCases[0]!.episodes : [];
+  const needsCasePicker = props.activeCases.length === 0 || props.activeCases.length >= 2;
+  const needsRehabEpisodePicker =
+    props.viewerDivision === 'REHAB' &&
+    props.activeCases.length === 1 &&
+    rehabEpisodes.length >= 2;
+
+  if (
+    props.forceDatePicker ||
+    needsCasePicker ||
+    needsRehabEpisodePicker ||
+    needsSitePicker
+  ) {
     return <PickerShell key={String(props.open)} {...props} />;
   }
   return <AutoPostShell {...props} />;
@@ -126,7 +161,8 @@ export function StartVisitDialog(props: Props) {
 
 function AutoPostShell({
   patientId,
-  activeEpisodes,
+  activeCases,
+  viewerDivision,
   sites,
   defaultSiteId,
   open,
@@ -136,22 +172,26 @@ function AutoPostShell({
 }: Props) {
   const [error, setError] = useState<string | null>(null);
   const submitter = submit ?? defaultEncountersSubmit;
-  // When the dialog isn't governing site selection (sites omitted, e.g.
-  // scheduling-card flow), the submitter handles siteId externally.
-  // Otherwise we need a defaultSiteId before auto-posting.
   const sitesGovernedHere = sites !== undefined;
+  const soleCase = activeCases.length === 1 ? activeCases[0]! : null;
+  const rehabEpisodes = soleCase?.episodes ?? [];
   const autoPost =
     open &&
-    activeEpisodes.length < 2 &&
+    !!soleCase &&
+    (viewerDivision !== 'REHAB' || rehabEpisodes.length <= 1) &&
     (!sitesGovernedHere || !!defaultSiteId);
 
   useEffect(() => {
-    if (!autoPost) return;
-    const explicit = activeEpisodes.length === 1 ? activeEpisodes[0]!.id : null;
+    if (!autoPost || !soleCase) return;
+    const explicitEp =
+      viewerDivision === 'REHAB' && rehabEpisodes.length === 1
+        ? rehabEpisodes[0]!.id
+        : null;
     submitter({
       patientId,
-      episodeOfCareId: explicit,
-      source: explicit ? 'auto-single' : 'auto-none',
+      caseManagementId: soleCase.id,
+      episodeOfCareId: explicitEp,
+      source: explicitEp ? 'auto-single' : 'auto-none',
       ...(sitesGovernedHere && defaultSiteId ? { siteId: defaultSiteId } : {}),
     })
       .then((res) => {
@@ -174,7 +214,8 @@ function AutoPostShell({
 
 function PickerShell({
   patientId,
-  activeEpisodes,
+  activeCases,
+  viewerDivision,
   sites,
   defaultSiteId,
   open,
@@ -183,18 +224,29 @@ function PickerShell({
   submit,
   forceDatePicker,
 }: Props) {
+  const [newCaseOpen, setNewCaseOpen] = useState(false);
   const siteListLen = sites?.length ?? 0;
   const sitesGovernedHere = sites !== undefined;
-  // Preselect the only episode (or the skip option) when forceDatePicker is on
-  // and the patient has 0 or 1 active episode — the clinician shouldn't have
-  // to re-pick an episode just to backdate the visit.
-  const initialChoice =
-    activeEpisodes.length === 1 && (forceDatePicker || siteListLen >= 2)
-      ? activeEpisodes[0]!.id
-      : activeEpisodes.length === 0 && (forceDatePicker || siteListLen >= 2)
+  // Pre-select by clinician-aware recency (matches the chart's hero pick).
+  // Falls back to "no selection" only when there are zero cases.
+  const sortedCases = useMemo(
+    () => sortCasesByViewerRecency(activeCases),
+    [activeCases],
+  );
+  const initialCaseId = sortedCases[0]?.id ?? '';
+  const heroCaseId = sortedCases.length >= 2 ? sortedCases[0]!.id : null;
+  const [caseId, setCaseId] = useState<string>(initialCaseId);
+  const selectedCase = activeCases.find((c) => c.id === caseId) ?? null;
+  const rehabEpisodes = selectedCase?.episodes ?? [];
+  const initialEpisodeChoice =
+    viewerDivision === 'REHAB' &&
+    rehabEpisodes.length === 1 &&
+    (forceDatePicker || siteListLen >= 2)
+      ? rehabEpisodes[0]!.id
+      : viewerDivision === 'REHAB' && rehabEpisodes.length === 0
         ? NO_EPISODE
         : '';
-  const [choice, setChoice] = useState<string>(initialChoice);
+  const [episodeChoice, setEpisodeChoice] = useState<string>(initialEpisodeChoice);
   const [siteId, setSiteId] = useState<string>(defaultSiteId ?? '');
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -226,7 +278,8 @@ function PickerShell({
   const dateOfServiceIso = picked && !dateInvalid && daysBack !== 0 ? picked.toISOString() : undefined;
 
   function submitChoice() {
-    if (!choice) return;
+    if (!caseId || caseId === NEW_CASE) return;
+    if (viewerDivision === 'REHAB' && rehabEpisodes.length >= 2 && !episodeChoice) return;
     if (sitesGovernedHere && !siteId) {
       setError('Pick the site you are at for this visit.');
       return;
@@ -237,8 +290,13 @@ function PickerShell({
       try {
         const res = await submitter({
           patientId,
-          episodeOfCareId: choice === NO_EPISODE ? null : choice,
-          source: choice === NO_EPISODE ? 'manual-skip' : 'picker',
+          caseManagementId: caseId,
+          episodeOfCareId:
+            viewerDivision === 'REHAB' && episodeChoice && episodeChoice !== NO_EPISODE
+              ? episodeChoice
+              : null,
+          source:
+            episodeChoice === NO_EPISODE || !episodeChoice ? 'manual-skip' : 'picker',
           ...(sitesGovernedHere && siteId ? { siteId } : {}),
           dateOfService: dateOfServiceIso,
         });
@@ -250,18 +308,18 @@ function PickerShell({
     });
   }
 
-  const showEpisodePicker = activeEpisodes.length >= 2;
+  const showCasePicker = activeCases.length === 0 || activeCases.length >= 2;
+  const showRehabEpisodePicker =
+    viewerDivision === 'REHAB' && !!selectedCase && rehabEpisodes.length >= 2;
   const showSitePicker = sitesGovernedHere && siteListLen >= 2;
   const showSiteReadonly = sitesGovernedHere && siteListLen === 1;
-  const title = showEpisodePicker
-    ? forceDatePicker
-      ? 'Start late entry'
-      : 'Which episode is this visit for?'
+  const title = showCasePicker
+    ? 'Which case is this visit for?'
     : forceDatePicker
       ? 'Start late entry'
       : 'Start visit';
-  const description = showEpisodePicker
-    ? 'Linking the visit to the right episode keeps division-specific behavior (REHAB CPT codes, BH and MEDICAL prompts) correct.'
+  const description = showCasePicker
+    ? 'Every visit anchors to a case management. Pick the diagnosis arc this visit continues.'
     : 'Set the date the visit actually happened. Today is fine for a normal visit — backdate to chart a past one.';
 
   return (
@@ -273,38 +331,59 @@ function PickerShell({
         </SheetHeader>
 
         <div className="space-y-3 px-4">
-          {showEpisodePicker && (
+          {showCasePicker && (
             <fieldset className="space-y-2">
-              <legend className="sr-only">Active episodes for this patient</legend>
-              {activeEpisodes.map((ep) => (
-                <EpisodeRadio
-                  key={ep.id}
-                  episode={ep}
-                  selected={choice === ep.id}
-                  onSelect={() => setChoice(ep.id)}
+              <legend className="sr-only">Active cases for this patient</legend>
+              {sortedCases.map((c) => (
+                <CaseRadio
+                  key={c.id}
+                  caseRow={c}
+                  selected={caseId === c.id}
+                  isHero={c.id === heroCaseId}
+                  onSelect={() => {
+                    setCaseId(c.id);
+                    setEpisodeChoice('');
+                  }}
                   disabled={pending}
                 />
               ))}
-
-              <SkipRadio
-                selected={choice === NO_EPISODE}
-                onSelect={() => setChoice(NO_EPISODE)}
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full justify-start gap-2"
                 disabled={pending}
-              />
+                onClick={() => setNewCaseOpen(true)}
+              >
+                <PlusCircle className="size-3.5" aria-hidden />
+                New case management…
+              </Button>
             </fieldset>
           )}
 
-          {showEpisodePicker && (
-            <div className="pt-1">
-              <Link
-                href={`/patients/${patientId}/episodes/new`}
-                className="inline-flex items-center gap-1 text-sm text-foreground hover:underline"
-                aria-label="Create a new episode"
-              >
-                <PlusCircle className="size-3.5" aria-hidden />
-                Create a new episode
-              </Link>
-            </div>
+          {activeCases.length === 0 && !showCasePicker && (
+            <StatusBanner variant="warning">
+              No cases on file — open a new case before starting a visit.
+            </StatusBanner>
+          )}
+
+          {showRehabEpisodePicker && (
+            <fieldset className="space-y-2 border-t pt-3">
+              <legend className="text-sm font-medium">Rehab episode for this case</legend>
+              {rehabEpisodes.map((ep) => (
+                <EpisodeRadio
+                  key={ep.id}
+                  episode={ep}
+                  selected={episodeChoice === ep.id}
+                  onSelect={() => setEpisodeChoice(ep.id)}
+                  disabled={pending}
+                />
+              ))}
+              <SkipRadio
+                selected={episodeChoice === NO_EPISODE}
+                onSelect={() => setEpisodeChoice(NO_EPISODE)}
+                disabled={pending}
+              />
+            </fieldset>
           )}
 
           {/* Site-of-record for this visit. Shown only when the dialog is
@@ -394,13 +473,93 @@ function PickerShell({
           </Button>
           <Button
             onClick={submitChoice}
-            disabled={pending || !choice || (sitesGovernedHere && !siteId) || dateInvalid}
+            disabled={
+              pending ||
+              !caseId ||
+              caseId === NEW_CASE ||
+              (showRehabEpisodePicker && !episodeChoice) ||
+              (sitesGovernedHere && !siteId) ||
+              dateInvalid
+            }
           >
             {pending ? 'Starting…' : isBackdated ? 'Start late entry' : 'Start visit'}
           </Button>
         </SheetFooter>
       </SheetContent>
+      <NewCaseDialog
+        patientId={patientId}
+        open={newCaseOpen}
+        onOpenChange={setNewCaseOpen}
+        onResolved={(id) => {
+          setCaseId(id);
+          setEpisodeChoice('');
+        }}
+      />
     </Sheet>
+  );
+}
+
+function CaseRadio({
+  caseRow,
+  selected,
+  onSelect,
+  disabled,
+  isHero = false,
+}: {
+  caseRow: StartVisitDialogCase;
+  selected: boolean;
+  onSelect: () => void;
+  disabled: boolean;
+  /** Marks the algorithmically-recommended case — gets the "Your active case"
+   *  / "Most recent case" pill. The radio dot still moves with the user's
+   *  selection; the pill stays on the recommendation. */
+  isHero?: boolean;
+}) {
+  // Prefer the viewing clinician's own activity for the subtitle — matches
+  // the chart's hero framing. Fall back to overall activity.
+  const viewerIso = caseRow.viewerLastActivityAt;
+  const subtitle = viewerIso
+    ? `your last visit ${relativeTimeAgo(viewerIso)}`
+    : caseRow.lastActivityAt
+      ? `last activity ${relativeTimeAgo(caseRow.lastActivityAt)} overall`
+      : null;
+  return (
+    <label
+      className={`flex cursor-pointer items-start gap-3 rounded-md border p-3 transition-colors ${
+        selected ? 'border-foreground/50 bg-muted/40' : 'border-border hover:bg-muted/30'
+      } ${disabled ? 'pointer-events-none opacity-60' : ''}`}
+    >
+      <input
+        type="radio"
+        name="case-pick"
+        checked={selected}
+        onChange={onSelect}
+        disabled={disabled}
+        className="mt-1"
+      />
+      <div className="space-y-1 flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <p className="font-medium text-sm">
+            {caseRow.primaryIcd ? (
+              <span className="font-mono text-xs mr-2">{caseRow.primaryIcd}</span>
+            ) : null}
+            {caseRow.primaryIcdLabel}
+          </p>
+          {isHero && (
+            <StatusBadge
+              variant={viewerIso ? 'success' : 'neutral'}
+              noIcon
+              className="text-[10px]"
+            >
+              {viewerIso ? 'Your active case' : 'Most recent case'}
+            </StatusBadge>
+          )}
+        </div>
+        {subtitle && (
+          <p className="text-xs text-muted-foreground">{subtitle}</p>
+        )}
+      </div>
+    </label>
   );
 }
 
@@ -546,18 +705,32 @@ function visitCountLabel(count: number): string {
 
 function lastVisitLabel(iso: string | null): string {
   if (!iso) return 'no prior visits';
+  const tail = relativeTimeAgo(iso);
+  if (!tail) return '';
+  // `relativeTimeAgo` returns "today" / "yesterday" / "3 days ago" etc.;
+  // historical `lastVisitLabel` callers (EpisodeRadio) want the "last visit "
+  // prefix wrapped around it.
+  return `last visit ${tail}`;
+}
+
+/**
+ * Just the relative-time tail — "today", "yesterday", "3 days ago",
+ * "1 month ago", "2 years ago". No prefix; caller composes the phrasing
+ * (e.g. "your last visit 3 days ago" vs. "last activity 3 days ago overall").
+ */
+function relativeTimeAgo(iso: string): string {
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return '';
   const days = Math.floor((Date.now() - then) / 86_400_000);
-  if (days <= 0) return 'last visit today';
-  if (days === 1) return 'last visit yesterday';
-  if (days < 30) return `last visit ${days} days ago`;
+  if (days <= 0) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days < 30) return `${days} days ago`;
   const months = Math.floor(days / 30);
-  if (months === 1) return 'last visit 1 month ago';
-  if (months < 12) return `last visit ${months} months ago`;
+  if (months === 1) return '1 month ago';
+  if (months < 12) return `${months} months ago`;
   const years = Math.floor(months / 12);
-  if (years === 1) return 'last visit 1 year ago';
-  return `last visit ${years} years ago`;
+  if (years === 1) return '1 year ago';
+  return `${years} years ago`;
 }
 
 /**
@@ -573,6 +746,7 @@ async function defaultEncountersSubmit(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       patientId: args.patientId,
+      caseManagementId: args.caseManagementId,
       ...(args.siteId ? { siteId: args.siteId } : {}),
       ...(args.episodeOfCareId ? { episodeOfCareId: args.episodeOfCareId } : {}),
       ...(args.dateOfService ? { dateOfService: args.dateOfService } : {}),

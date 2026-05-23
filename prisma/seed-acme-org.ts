@@ -18,6 +18,7 @@ import {
   PatientAddressKind,
 } from '@prisma/client';
 import { ACME_PATIENT_DEMOGRAPHICS } from './seed-corpus/acme';
+import { upsertCaseManagement, upsertRehabEpisode } from './seed-case-helpers';
 
 const ACME_ORG_ID = 'seed-acme-clinic';
 
@@ -367,27 +368,29 @@ export async function seedAcmeOrganization(
       });
     }
 
-    const episodeId =
-      p.id === 'seed-acme-patient'
-        ? 'seed-acme-episode-medical'
-        : p.id === 'seed-acme-patient-rehab'
-          ? 'seed-acme-episode-rehab'
-          : 'seed-acme-episode-bh';
+    const caseRow = await upsertCaseManagement(prisma, {
+      id: `seed-acme-case-${p.id}`,
+      orgId: acmeOrg.id,
+      patientId: p.id,
+      primaryIcdLabel: p.diagnosis,
+      description: p.bodyPart ?? null,
+      openedByOrgUserId: assignedClinician,
+    });
 
-    const episode = await prisma.episodeOfCare.upsert({
-      where: { id: episodeId },
-      update: { bodyPart: p.bodyPart },
-      create: {
-        id: episodeId,
-        orgId: acmeOrg.id,
-        patientId: p.id,
-        clinicianOrgUserId: assignedClinician,
-        departmentId: p.departmentId,
-        division: p.division,
-        diagnosis: p.diagnosis,
-        bodyPart: p.bodyPart,
-        status: EpisodeStatus.ACTIVE,
-      },
+    if (p.division !== Division.REHAB) continue;
+
+    const episodeId =
+      p.id === 'seed-acme-patient-rehab' ? 'seed-acme-episode-rehab' : `seed-acme-episode-rehab-${p.id}`;
+
+    const episode = await upsertRehabEpisode(prisma, {
+      id: episodeId,
+      orgId: acmeOrg.id,
+      patientId: p.id,
+      caseManagementId: caseRow.id,
+      clinicianOrgUserId: assignedClinician,
+      departmentId: p.departmentId,
+      diagnosis: p.diagnosis,
+      bodyPart: p.bodyPart,
     });
 
     await prisma.episodeGoal.upsert({
@@ -422,20 +425,23 @@ export async function seedAcmeAdditionalEpisodes(
 ) {
   const { orgId, deptByKey, clinicianRowByEmail } = ctx;
 
-  const rkRehab = await prisma.episodeOfCare.upsert({
-    where: { id: 'seed-acme-episode-rk-rehab' },
-    update: { bodyPart: 'Right foot' },
-    create: {
-      id: 'seed-acme-episode-rk-rehab',
-      orgId,
-      patientId: 'seed-acme-patient',
-      clinicianOrgUserId: clinicianRowByEmail['pt.nguyen@acme.local']!.orgUserId,
-      departmentId: deptByKey.rehab,
-      division: Division.REHAB,
-      diagnosis: 'Plantar fasciitis, right foot',
-      bodyPart: 'Right foot',
-      status: EpisodeStatus.ACTIVE,
-    },
+  const rkPlantarCase = await upsertCaseManagement(prisma, {
+    id: 'seed-acme-case-rk-plantar',
+    orgId,
+    patientId: 'seed-acme-patient',
+    primaryIcdLabel: 'Plantar fasciitis, right foot',
+    description: 'Right foot',
+    openedByOrgUserId: clinicianRowByEmail['pt.nguyen@acme.local']!.orgUserId,
+  });
+  const rkRehab = await upsertRehabEpisode(prisma, {
+    id: 'seed-acme-episode-rk-rehab',
+    orgId,
+    patientId: 'seed-acme-patient',
+    caseManagementId: rkPlantarCase.id,
+    clinicianOrgUserId: clinicianRowByEmail['pt.nguyen@acme.local']!.orgUserId,
+    departmentId: deptByKey.rehab,
+    diagnosis: 'Plantar fasciitis, right foot',
+    bodyPart: 'Right foot',
   });
   await prisma.episodeGoal.upsert({
     where: { id: 'seed-acme-goal-rk-rehab' },
@@ -452,76 +458,27 @@ export async function seedAcmeAdditionalEpisodes(
     },
   });
 
-  await prisma.episodeOfCare.upsert({
-    where: { id: 'seed-acme-episode-rk-bh' },
-    update: {},
-    create: {
-      id: 'seed-acme-episode-rk-bh',
-      orgId,
-      patientId: 'seed-acme-patient',
-      clinicianOrgUserId: clinicianRowByEmail['lcsw.taylor@acme.local']!.orgUserId,
-      departmentId: deptByKey.bh,
-      division: Division.BEHAVIORAL_HEALTH,
-      diagnosis: 'Adjustment disorder with anxious mood',
-      status: EpisodeStatus.DISCHARGED,
-    },
+  await upsertCaseManagement(prisma, {
+    id: 'seed-acme-case-rk-bh',
+    orgId,
+    patientId: 'seed-acme-patient',
+    primaryIcdLabel: 'Adjustment disorder with anxious mood',
+    openedByOrgUserId: clinicianRowByEmail['lcsw.taylor@acme.local']!.orgUserId,
   });
 
-  const rhMedical = await prisma.episodeOfCare.upsert({
-    where: { id: 'seed-acme-episode-rh-medical' },
-    update: {},
-    create: {
-      id: 'seed-acme-episode-rh-medical',
-      orgId,
-      patientId: 'seed-acme-patient-rehab',
-      clinicianOrgUserId: clinicianRowByEmail['clinician@acme.local']!.orgUserId,
-      departmentId: deptByKey.medical,
-      division: Division.MEDICAL,
-      diagnosis: 'Essential hypertension; prediabetes',
-      status: EpisodeStatus.ACTIVE,
-    },
-  });
-  await prisma.episodeGoal.upsert({
-    where: { id: 'seed-acme-goal-rh-medical' },
-    update: {},
-    create: {
-      id: 'seed-acme-goal-rh-medical',
-      episodeId: rhMedical.id,
-      goalType: GoalType.LTG,
-      goalText: 'Maintain BP <130/80 and prevent T2DM progression.',
-      baselineMeasure: 'BP 146/90, A1c 6.1%',
-      targetMeasure: 'BP <130/80, A1c <5.7%',
-      currentMeasure: 'BP 130/80',
-      status: GoalStatus.ACTIVE,
-    },
+  await upsertCaseManagement(prisma, {
+    id: 'seed-acme-case-rh-medical',
+    orgId,
+    patientId: 'seed-acme-patient-rehab',
+    primaryIcdLabel: 'Essential hypertension; prediabetes',
+    openedByOrgUserId: clinicianRowByEmail['clinician@acme.local']!.orgUserId,
   });
 
-  const esMedical = await prisma.episodeOfCare.upsert({
-    where: { id: 'seed-acme-episode-es-medical' },
-    update: {},
-    create: {
-      id: 'seed-acme-episode-es-medical',
-      orgId,
-      patientId: 'seed-acme-patient-bh',
-      clinicianOrgUserId: clinicianRowByEmail['clinician@acme.local']!.orgUserId,
-      departmentId: deptByKey.medical,
-      division: Division.MEDICAL,
-      diagnosis: 'Major depressive disorder — medical management',
-      status: EpisodeStatus.ACTIVE,
-    },
-  });
-  await prisma.episodeGoal.upsert({
-    where: { id: 'seed-acme-goal-es-medical' },
-    update: {},
-    create: {
-      id: 'seed-acme-goal-es-medical',
-      episodeId: esMedical.id,
-      goalType: GoalType.LTG,
-      goalText: 'Reduce PHQ-9 below 10 on combined pharmacotherapy.',
-      baselineMeasure: 'PHQ-9: 18',
-      targetMeasure: 'PHQ-9 <10',
-      currentMeasure: 'PHQ-9: 11',
-      status: GoalStatus.ACTIVE,
-    },
+  await upsertCaseManagement(prisma, {
+    id: 'seed-acme-case-es-medical',
+    orgId,
+    patientId: 'seed-acme-patient-bh',
+    primaryIcdLabel: 'Major depressive disorder — medical management',
+    openedByOrgUserId: clinicianRowByEmail['clinician@acme.local']!.orgUserId,
   });
 }

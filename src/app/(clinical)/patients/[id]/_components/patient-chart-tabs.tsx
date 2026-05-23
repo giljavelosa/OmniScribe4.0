@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import type { PatientSex } from '@prisma/client';
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -13,9 +14,15 @@ import { InlineDemographics } from '@/components/patients/inline-demographics';
 import type { VisitHistoryRow } from '@/components/patients/visit-history-list';
 import type { PatientSnapshotStrip as PatientSnapshotStripData } from '@/lib/snapshots/types';
 import type { ExternalContextSummary } from './external-context-section';
-import { EpisodesPanel } from './episodes-panel';
+import { CasesPanel, type CasePanelData } from './cases-panel';
 import { StartVisitButton } from './start-visit-button';
-import type { StartVisitDialogEpisode, StartVisitDialogSite } from './start-visit-dialog';
+import {
+  StartVisitDialog,
+  type StartVisitDialogCase,
+  type StartVisitDialogSite,
+} from './start-visit-dialog';
+import type { Profession } from '@prisma/client';
+import { divisionForProfession } from '@/lib/professions';
 import { SafetyBand } from './safety-band';
 import type { ProblemRow } from './safety-band';
 import { CockpitTile } from './cockpit-tile';
@@ -74,43 +81,18 @@ type GoalProgressEntryData = {
   recordedAt: string; // ISO
 };
 
-type EpisodeGoalData = {
-  id: string;
-  goalType: 'STG' | 'LTG';
-  goalText: string;
-  status: 'ACTIVE' | 'MET' | 'NOT_MET' | 'MODIFIED' | 'DISCONTINUED' | 'PARTIALLY_MET';
-  currentMeasure: string | null;
-  targetMeasure: string | null;
-  progressEntries: GoalProgressEntryData[];
-};
-
-type EpisodeData = {
-  id: string;
-  diagnosis: string;
-  bodyPart: string | null;
-  division: string;
-  status: 'ACTIVE' | 'RECERT_DUE' | 'DISCHARGED' | 'CANCELLED';
-  recertDueAt: string | null;
-  recertIntervalDays: number;
-  visitsAuthorized: number | null;
-  visitsCompleted: number;
-  closeReason: string | null;
-  reopenReason: string | null;
-  department: { name: string };
-  goals: EpisodeGoalData[];
-};
-
 type Props = {
   patient: PatientData;
   addresses: AddressData[];
   coverages: CoverageData[];
   episodeCreatedFlash: boolean;
   snapshotStrip: PatientSnapshotStripData | null;
-  episodesForPanel: EpisodeData[];
+  casesForPanel: CasePanelData[];
   externalContextItems: ExternalContextSummary[];
   visits: VisitHistoryRow[];
   followUps: FollowUpSummary[];
-  activeEpisodesForPicker: StartVisitDialogEpisode[];
+  activeCasesForPicker: StartVisitDialogCase[];
+  viewingProfession: Profession | null;
   startVisitSites: StartVisitDialogSite[];
   startVisitDefaultSiteId: string | null;
   /** False when the caller's role is VIEWER — hides edit controls in
@@ -173,19 +155,25 @@ export function PatientChartTabs({
   coverages,
   episodeCreatedFlash,
   snapshotStrip,
-  episodesForPanel,
+  casesForPanel,
   externalContextItems,
   visits,
   followUps,
-  activeEpisodesForPicker,
+  activeCasesForPicker,
+  viewingProfession,
   startVisitSites,
   startVisitDefaultSiteId,
   canEditEpisodes,
   ehrPanel,
 }: Props) {
+  const router = useRouter();
   const age = computeAge(patient.dobIso);
   const totalVisits = visits.length;
   const [openSheet, setOpenSheet] = useState<OpenSheet>(null);
+  /** Set to a case id when the Cases-tab hero's "Continue this case" button
+   *  is tapped. Mounts a scoped StartVisitDialog (activeCases = [thatCase])
+   *  so the dialog treats it as the 1-case path and skips the picker. */
+  const [continueCaseId, setContinueCaseId] = useState<string | null>(null);
 
   const visitsByDivision = visits.reduce<Record<string, number>>((acc, v) => {
     acc[v.division] = (acc[v.division] ?? 0) + 1;
@@ -197,25 +185,18 @@ export function PatientChartTabs({
     0,
   );
 
-  // Sprint 0.10 — Episodes tab is only shown when the patient has at least one
-  // REHAB episode. Recert cycles, visit authorizations, and STG/LTG goals are
-  // Rehab / therapy plan-of-care constructs. Medical + BH episodes continue to
-  // exist in the data and feed AI prompts, the brief, and the Safety Band, but
-  // they have no dedicated tab UI until a future wave.
-  const hasRehabEpisode = episodesForPanel.some((ep) => ep.division === 'REHAB');
-  const activeRehabEpisodeCount = episodesForPanel.filter(
-    (ep) => ep.division === 'REHAB' && (ep.status === 'ACTIVE' || ep.status === 'RECERT_DUE'),
-  ).length;
+  const activeCaseCount = casesForPanel.filter((c) => c.status === 'ACTIVE').length;
+  const viewerDivision = divisionForProfession(viewingProfession);
 
-  // Derive active problems (unique labels) from ACTIVE + RECERT_DUE episodes
-  // for the SafetyBand and ProblemsSheet.
   const activeProblems: ProblemRow[] = Array.from(
     new Map(
-      episodesForPanel
-        .filter((ep) => ep.status === 'ACTIVE' || ep.status === 'RECERT_DUE')
-        .map((ep) => {
-          const label = ep.bodyPart ? `${ep.diagnosis} (${ep.bodyPart})` : ep.diagnosis;
-          return [label, { id: ep.id, label }] as [string, ProblemRow];
+      casesForPanel
+        .filter((c) => c.status === 'ACTIVE')
+        .map((c) => {
+          const label = c.primaryIcd
+            ? `${c.primaryIcd} · ${c.primaryIcdLabel}`
+            : c.primaryIcdLabel;
+          return [label, { id: c.id, label }] as [string, ProblemRow];
         }),
     ).values(),
   );
@@ -283,7 +264,8 @@ export function PatientChartTabs({
               </div>
               <StartVisitButton
                 patientId={patient.id}
-                activeEpisodes={activeEpisodesForPicker}
+                activeCases={activeCasesForPicker}
+                viewerDivision={viewerDivision}
                 sites={startVisitSites}
                 defaultSiteId={startVisitDefaultSiteId}
               />
@@ -303,12 +285,12 @@ export function PatientChartTabs({
                   many: 'open follow-ups',
                 });
               }
-              if (hasRehabEpisode && activeRehabEpisodeCount > 0) {
+              if (activeCaseCount > 0) {
                 stats.push({
-                  key: 'ep',
-                  n: activeRehabEpisodeCount,
-                  one: 'active episode',
-                  many: 'active episodes',
+                  key: 'cases',
+                  n: activeCaseCount,
+                  one: 'active case',
+                  many: 'active cases',
                 });
               }
               if (totalVisits > 0) {
@@ -362,10 +344,9 @@ export function PatientChartTabs({
           <Tabs defaultValue="overview" className="space-y-6">
             <TabsList>
               <TabsTrigger value="overview">Overview</TabsTrigger>
-              {/* Episodes tab is only rendered for patients with >= 1 REHAB episode */}
-              {hasRehabEpisode && (
-                <TabsTrigger value="episodes">
-                  Episodes{activeRehabEpisodeCount > 0 ? ` (${activeRehabEpisodeCount})` : ''}
+              {casesForPanel.length > 0 && (
+                <TabsTrigger value="cases">
+                  Cases{activeCaseCount > 0 ? ` (${activeCaseCount})` : ''}
                 </TabsTrigger>
               )}
               <TabsTrigger value="visits">
@@ -428,13 +409,14 @@ export function PatientChartTabs({
               </div>
             </TabsContent>
 
-            {/* ── Episodes — only rendered when patient has a REHAB episode ── */}
-            {hasRehabEpisode && (
-              <TabsContent value="episodes">
-                <EpisodesPanel
+            {casesForPanel.length > 0 && (
+              <TabsContent value="cases">
+                <CasesPanel
                   patientId={patient.id}
-                  episodes={episodesForPanel}
+                  cases={casesForPanel}
+                  viewingProfession={viewingProfession}
                   canEdit={canEditEpisodes}
+                  onContinueCase={(caseId) => setContinueCaseId(caseId)}
                 />
               </TabsContent>
             )}
@@ -564,6 +546,32 @@ export function PatientChartTabs({
         onOpenChange={(o) => { if (!o) closeSheet(); }}
         problems={activeProblems}
       />
+
+      {/* "Continue this case" — opened from the Cases-tab hero card. Mounts
+          a scoped StartVisitDialog with activeCases=[justThisCase] so the
+          dialog's existing 1-case path handles it: site + rehab-episode
+          pickers still render when needed, but the case picker is skipped. */}
+      {continueCaseId !== null &&
+        (() => {
+          const c = activeCasesForPicker.find((x) => x.id === continueCaseId);
+          if (!c) return null;
+          return (
+            <StartVisitDialog
+              patientId={patient.id}
+              activeCases={[c]}
+              viewerDivision={viewerDivision}
+              sites={startVisitSites}
+              defaultSiteId={startVisitDefaultSiteId}
+              open
+              onOpenChange={(next) => {
+                if (!next) setContinueCaseId(null);
+              }}
+              onStarted={({ noteId }) => {
+                router.push(`/prepare/${noteId}`);
+              }}
+            />
+          );
+        })()}
     </>
   );
 }

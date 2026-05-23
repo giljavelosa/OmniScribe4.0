@@ -19,6 +19,7 @@ import {
   PatientAddressKind,
 } from '@prisma/client';
 import { RIVERBEND_PATIENT_DEMOGRAPHICS } from './seed-corpus/riverbend';
+import { upsertCaseManagement, upsertRehabEpisode } from './seed-case-helpers';
 
 const RIVERBEND_ORG_ID = 'seed-riverbend-clinic';
 
@@ -353,50 +354,32 @@ export async function seedRiverbendOrganization(
   const slpLindgren = clinicianRowByEmail['slp.lindgren@riverbend.local']!.orgUserId;
   const psyDonovan = clinicianRowByEmail['psy.donovan@riverbend.local']!.orgUserId;
 
-  // ── Jamal Carter — 3 episodes (medical + 2 rehab + BH) ─────────────────
-  const jamalMed = await prisma.episodeOfCare.upsert({
-    where: { id: 'seed-riverbend-episode-jamal-medical' },
-    update: {},
-    create: {
-      id: 'seed-riverbend-episode-jamal-medical',
-      orgId: org.id,
-      patientId: 'seed-riverbend-patient-jamal',
-      clinicianOrgUserId: doBoucher,
-      departmentId: deptMedical.id,
-      division: Division.MEDICAL,
-      diagnosis: 'HIV-1 infection — well controlled on antiretroviral therapy',
-      status: EpisodeStatus.ACTIVE,
-    },
-  });
-  await prisma.episodeGoal.upsert({
-    where: { id: 'seed-riverbend-goal-jamal-medical' },
-    update: {},
-    create: {
-      id: 'seed-riverbend-goal-jamal-medical',
-      episodeId: jamalMed.id,
-      goalType: GoalType.LTG,
-      goalText: 'Maintain undetectable HIV RNA, CD4 >500, prevent comorbid CV disease.',
-      baselineMeasure: 'HIV RNA undetectable, CD4 612',
-      targetMeasure: 'RNA undetectable, CD4 >500, BP <130/80',
-      currentMeasure: 'RNA undetectable, CD4 658',
-      status: GoalStatus.ACTIVE,
-    },
+  // ── Jamal Carter — cases + REHAB episodes ─────────────────────────────
+  await upsertCaseManagement(prisma, {
+    id: 'seed-riverbend-case-jamal-medical',
+    orgId: org.id,
+    patientId: 'seed-riverbend-patient-jamal',
+    primaryIcdLabel: 'HIV-1 infection — well controlled on antiretroviral therapy',
+    openedByOrgUserId: doBoucher,
   });
 
-  const jamalAnkle = await prisma.episodeOfCare.upsert({
-    where: { id: 'seed-riverbend-episode-jamal-ankle' },
-    update: { bodyPart: 'Left ankle' },
-    create: {
-      id: 'seed-riverbend-episode-jamal-ankle',
-      orgId: org.id,
-      patientId: 'seed-riverbend-patient-jamal',
-      clinicianOrgUserId: ptOkonkwo,
-      departmentId: deptRehab.id,
-      division: Division.REHAB,
-      diagnosis: 'Left lateral malleolus fracture s/p ORIF — post-op rehabilitation',
-      bodyPart: 'Left ankle',
-      status: EpisodeStatus.ACTIVE,
-    },
+  const jamalAnkleCase = await upsertCaseManagement(prisma, {
+    id: 'seed-riverbend-case-jamal-ankle',
+    orgId: org.id,
+    patientId: 'seed-riverbend-patient-jamal',
+    primaryIcdLabel: 'Left lateral malleolus fracture s/p ORIF — post-op rehabilitation',
+    description: 'Left ankle',
+    openedByOrgUserId: ptOkonkwo,
+  });
+  const jamalAnkle = await upsertRehabEpisode(prisma, {
+    id: 'seed-riverbend-episode-jamal-ankle',
+    orgId: org.id,
+    patientId: 'seed-riverbend-patient-jamal',
+    caseManagementId: jamalAnkleCase.id,
+    clinicianOrgUserId: ptOkonkwo,
+    departmentId: deptRehab.id,
+    diagnosis: 'Left lateral malleolus fracture s/p ORIF — post-op rehabilitation',
+    bodyPart: 'Left ankle',
   });
   await prisma.episodeGoal.upsert({
     where: { id: 'seed-riverbend-goal-jamal-ankle' },
@@ -413,20 +396,23 @@ export async function seedRiverbendOrganization(
     },
   });
 
-  const jamalPlantar = await prisma.episodeOfCare.upsert({
-    where: { id: 'seed-riverbend-episode-jamal-plantar' },
-    update: { bodyPart: 'Bilateral feet' },
-    create: {
-      id: 'seed-riverbend-episode-jamal-plantar',
-      orgId: org.id,
-      patientId: 'seed-riverbend-patient-jamal',
-      clinicianOrgUserId: ptOkonkwo,
-      departmentId: deptRehab.id,
-      division: Division.REHAB,
-      diagnosis: 'Bilateral plantar fasciitis — overuse pattern',
-      bodyPart: 'Bilateral feet',
-      status: EpisodeStatus.ACTIVE,
-    },
+  const jamalPlantarCase = await upsertCaseManagement(prisma, {
+    id: 'seed-riverbend-case-jamal-plantar',
+    orgId: org.id,
+    patientId: 'seed-riverbend-patient-jamal',
+    primaryIcdLabel: 'Bilateral plantar fasciitis — overuse pattern',
+    description: 'Bilateral feet',
+    openedByOrgUserId: ptOkonkwo,
+  });
+  const jamalPlantar = await upsertRehabEpisode(prisma, {
+    id: 'seed-riverbend-episode-jamal-plantar',
+    orgId: org.id,
+    patientId: 'seed-riverbend-patient-jamal',
+    caseManagementId: jamalPlantarCase.id,
+    clinicianOrgUserId: ptOkonkwo,
+    departmentId: deptRehab.id,
+    diagnosis: 'Bilateral plantar fasciitis — overuse pattern',
+    bodyPart: 'Bilateral feet',
   });
   await prisma.episodeGoal.upsert({
     where: { id: 'seed-riverbend-goal-jamal-plantar' },
@@ -443,79 +429,40 @@ export async function seedRiverbendOrganization(
     },
   });
 
-  await prisma.episodeOfCare.upsert({
-    where: { id: 'seed-riverbend-episode-jamal-bh' },
-    update: {},
-    create: {
-      id: 'seed-riverbend-episode-jamal-bh',
-      orgId: org.id,
-      patientId: 'seed-riverbend-patient-jamal',
-      clinicianOrgUserId: psyDonovan,
-      departmentId: deptBh.id,
-      division: Division.BEHAVIORAL_HEALTH,
-      diagnosis: 'Major depressive disorder, recurrent — currently in partial remission',
-      status: EpisodeStatus.ACTIVE,
-    },
-  });
-  await prisma.episodeGoal.upsert({
-    where: { id: 'seed-riverbend-goal-jamal-bh' },
-    update: {},
-    create: {
-      id: 'seed-riverbend-goal-jamal-bh',
-      episodeId: 'seed-riverbend-episode-jamal-bh',
-      goalType: GoalType.LTG,
-      goalText: 'Maintain PHQ-9 <5 and prevent recurrence with maintenance therapy.',
-      baselineMeasure: 'PHQ-9: 16',
-      targetMeasure: 'PHQ-9 <5',
-      currentMeasure: 'PHQ-9: 4',
-      status: GoalStatus.ACTIVE,
-    },
+  await upsertCaseManagement(prisma, {
+    id: 'seed-riverbend-case-jamal-bh',
+    orgId: org.id,
+    patientId: 'seed-riverbend-patient-jamal',
+    primaryIcdLabel: 'Major depressive disorder, recurrent — currently in partial remission',
+    openedByOrgUserId: psyDonovan,
   });
 
-  // ── Linda Foster — 3 episodes (medical + 2 rehab + BH) ─────────────────
-  const lindaMed = await prisma.episodeOfCare.upsert({
-    where: { id: 'seed-riverbend-episode-linda-medical' },
-    update: {},
-    create: {
-      id: 'seed-riverbend-episode-linda-medical',
-      orgId: org.id,
-      patientId: 'seed-riverbend-patient-linda',
-      clinicianOrgUserId: doBoucher,
-      departmentId: deptMedical.id,
-      division: Division.MEDICAL,
-      diagnosis: 'Heart failure with reduced ejection fraction (HFrEF, EF 35%) — stable',
-      status: EpisodeStatus.ACTIVE,
-    },
-  });
-  await prisma.episodeGoal.upsert({
-    where: { id: 'seed-riverbend-goal-linda-medical' },
-    update: {},
-    create: {
-      id: 'seed-riverbend-goal-linda-medical',
-      episodeId: lindaMed.id,
-      goalType: GoalType.LTG,
-      goalText: 'Optimize GDMT, prevent hospitalization, maintain functional status.',
-      baselineMeasure: 'EF 30%, NT-proBNP 1840, NYHA II',
-      targetMeasure: 'EF ≥35%, NT-proBNP <1000, NYHA I-II',
-      currentMeasure: 'EF 35%, NT-proBNP 720, NYHA II',
-      status: GoalStatus.ACTIVE,
-    },
+  // ── Linda Foster — cases + REHAB episodes ───────────────────────────────
+  await upsertCaseManagement(prisma, {
+    id: 'seed-riverbend-case-linda-medical',
+    orgId: org.id,
+    patientId: 'seed-riverbend-patient-linda',
+    primaryIcdLabel: 'Heart failure with reduced ejection fraction (HFrEF, EF 35%) — stable',
+    openedByOrgUserId: doBoucher,
   });
 
-  const lindaHip = await prisma.episodeOfCare.upsert({
-    where: { id: 'seed-riverbend-episode-linda-hip' },
-    update: { bodyPart: 'Right hip' },
-    create: {
-      id: 'seed-riverbend-episode-linda-hip',
-      orgId: org.id,
-      patientId: 'seed-riverbend-patient-linda',
-      clinicianOrgUserId: ptOkonkwo,
-      departmentId: deptRehab.id,
-      division: Division.REHAB,
-      diagnosis: 'Right femoral neck fracture s/p ORIF — post-op rehabilitation',
-      bodyPart: 'Right hip',
-      status: EpisodeStatus.ACTIVE,
-    },
+  const lindaHipCase = await upsertCaseManagement(prisma, {
+    id: 'seed-riverbend-case-linda-hip',
+    orgId: org.id,
+    patientId: 'seed-riverbend-patient-linda',
+    primaryIcdLabel: 'Right femoral neck fracture s/p ORIF — post-op rehabilitation',
+    description: 'Right hip',
+    openedByOrgUserId: ptOkonkwo,
+  });
+  const lindaHip = await upsertRehabEpisode(prisma, {
+    id: 'seed-riverbend-episode-linda-hip',
+    orgId: org.id,
+    patientId: 'seed-riverbend-patient-linda',
+    caseManagementId: lindaHipCase.id,
+    clinicianOrgUserId: ptOkonkwo,
+    departmentId: deptRehab.id,
+    diagnosis: 'Right femoral neck fracture s/p ORIF — post-op rehabilitation',
+    bodyPart: 'Right hip',
   });
   await prisma.episodeGoal.upsert({
     where: { id: 'seed-riverbend-goal-linda-hip' },
@@ -532,19 +479,21 @@ export async function seedRiverbendOrganization(
     },
   });
 
-  const lindaBalance = await prisma.episodeOfCare.upsert({
-    where: { id: 'seed-riverbend-episode-linda-balance' },
-    update: {},
-    create: {
-      id: 'seed-riverbend-episode-linda-balance',
-      orgId: org.id,
-      patientId: 'seed-riverbend-patient-linda',
-      clinicianOrgUserId: ptOkonkwo,
-      departmentId: deptRehab.id,
-      division: Division.REHAB,
-      diagnosis: 'Generalized deconditioning and high fall risk — balance/gait training',
-      status: EpisodeStatus.ACTIVE,
-    },
+  const lindaBalanceCase = await upsertCaseManagement(prisma, {
+    id: 'seed-riverbend-case-linda-balance',
+    orgId: org.id,
+    patientId: 'seed-riverbend-patient-linda',
+    primaryIcdLabel: 'Generalized deconditioning and high fall risk — balance/gait training',
+    openedByOrgUserId: ptOkonkwo,
+  });
+  const lindaBalance = await upsertRehabEpisode(prisma, {
+    id: 'seed-riverbend-episode-linda-balance',
+    orgId: org.id,
+    patientId: 'seed-riverbend-patient-linda',
+    caseManagementId: lindaBalanceCase.id,
+    clinicianOrgUserId: ptOkonkwo,
+    departmentId: deptRehab.id,
+    diagnosis: 'Generalized deconditioning and high fall risk — balance/gait training',
   });
   await prisma.episodeGoal.upsert({
     where: { id: 'seed-riverbend-goal-linda-balance' },
@@ -561,33 +510,12 @@ export async function seedRiverbendOrganization(
     },
   });
 
-  await prisma.episodeOfCare.upsert({
-    where: { id: 'seed-riverbend-episode-linda-bh' },
-    update: {},
-    create: {
-      id: 'seed-riverbend-episode-linda-bh',
-      orgId: org.id,
-      patientId: 'seed-riverbend-patient-linda',
-      clinicianOrgUserId: psyDonovan,
-      departmentId: deptBh.id,
-      division: Division.BEHAVIORAL_HEALTH,
-      diagnosis: 'Mild cognitive impairment — supportive therapy + cognitive training',
-      status: EpisodeStatus.ACTIVE,
-    },
-  });
-  await prisma.episodeGoal.upsert({
-    where: { id: 'seed-riverbend-goal-linda-bh' },
-    update: {},
-    create: {
-      id: 'seed-riverbend-goal-linda-bh',
-      episodeId: 'seed-riverbend-episode-linda-bh',
-      goalType: GoalType.LTG,
-      goalText: 'Maintain MoCA performance and family-supported safety plan.',
-      baselineMeasure: 'MoCA 24/30',
-      targetMeasure: 'MoCA stable ≥23/30',
-      currentMeasure: 'MoCA 25/30',
-      status: GoalStatus.ACTIVE,
-    },
+  await upsertCaseManagement(prisma, {
+    id: 'seed-riverbend-case-linda-bh',
+    orgId: org.id,
+    patientId: 'seed-riverbend-patient-linda',
+    primaryIcdLabel: 'Mild cognitive impairment — supportive therapy + cognitive training',
+    openedByOrgUserId: psyDonovan,
   });
 
   return {

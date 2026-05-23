@@ -32,11 +32,16 @@ import { EhrEnrichmentBlock } from './ehr-enrichment-block';
  */
 export function BriefCard({
   content,
+  patientName,
   followUpsSlot,
   nowMs,
   className,
 }: {
   content: PriorContextBriefContent;
+  /** Patient display name (first + last, or first + last initial per the
+   *  caller's PHI posture) — rendered in the Miss Cleo attribution heading
+   *  per Sprint 0.12. Required so the heading is never anonymous. */
+  patientName: string;
   /** Optional override for the open-follow-ups slot (capture screen passes
    *  the interactive variant; prepare passes nothing). */
   followUpsSlot?: React.ReactNode;
@@ -67,6 +72,7 @@ export function BriefCard({
     <Card className={className}>
       <CardHeader>
         <BriefHeader
+          patientName={patientName}
           patientOneLine={content.patientOneLine}
           episodeLabel={episodeLabel}
           lastVisit={content.lastVisit}

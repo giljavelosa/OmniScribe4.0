@@ -24,9 +24,22 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const { id } = await params;
   const episode = await prisma.episodeOfCare.findFirst({
     where: { id, orgId: authorizationUser.orgId },
+    include: { caseManagement: { select: { id: true, status: true, patientId: true } } },
   });
   if (!episode) return NextResponse.json({ error: { code: 'not_found' } }, { status: 404 });
   assertOrgScoped(episode.orgId, authorizationUser.orgId);
+
+  if (episode.caseManagement.status !== 'ACTIVE') {
+    return NextResponse.json(
+      {
+        error: {
+          code: 'case_not_active',
+          message: 'Parent case management must be active before recertifying.',
+        },
+      },
+      { status: 409 },
+    );
+  }
 
   if (episode.status === 'DISCHARGED' || episode.status === 'CANCELLED') {
     return NextResponse.json(

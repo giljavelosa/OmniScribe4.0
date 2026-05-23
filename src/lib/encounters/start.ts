@@ -7,10 +7,18 @@
  * Note.division is LOCKED here per spec §E. Unit 05 reads it as immutable.
  */
 
-import { Prisma, type PrismaClient, EncounterStatus, ScheduleStatus, NoteStatus } from '@prisma/client';
+import {
+  Prisma,
+  type PrismaClient,
+  Division,
+  EncounterStatus,
+  ScheduleStatus,
+  NoteStatus,
+} from '@prisma/client';
 
 import { writeAuditLog } from '@/lib/audit/log';
 import { resolveDivisionForNote } from '@/lib/divisions/resolve';
+import { assertCaseIsOpen, mayLinkEpisodeOnEncounter } from '@/lib/case-management/validate';
 
 type Tx = Prisma.TransactionClient | PrismaClient;
 
@@ -45,6 +53,8 @@ export type StartVisitArgs = {
   roomId?: string | null;
   scheduleId?: string;
   departmentId?: string | null;
+  /** Required — every encounter anchors to a CaseManagement (Sprint 0.11). */
+  caseManagementId: string;
   episodeOfCareId?: string | null;
   actingUserId: string;
   pickerSource?: PickerSource;
@@ -62,7 +72,7 @@ export type StartVisitArgs = {
 };
 
 export async function startVisit(args: StartVisitArgs) {
-  const [patient, org, clinician, explicitEpisode] = await Promise.all([
+  const [patient, org, clinician, caseRow, explicitEpisode] = await Promise.all([
     args.tx.patient.findUnique({ where: { id: args.patientId }, select: { id: true } }),
     args.tx.organization.findUnique({
       where: { id: args.orgId },
@@ -72,9 +82,22 @@ export async function startVisit(args: StartVisitArgs) {
       where: { id: args.clinicianOrgUserId },
       select: { professionType: true, division: true },
     }),
+    args.tx.caseManagement.findFirst({
+      where: {
+        id: args.caseManagementId,
+        patientId: args.patientId,
+        orgId: args.orgId,
+      },
+      select: { id: true, status: true },
+    }),
     args.episodeOfCareId
-      ? args.tx.episodeOfCare.findUnique({
-          where: { id: args.episodeOfCareId },
+      ? args.tx.episodeOfCare.findFirst({
+          where: {
+            id: args.episodeOfCareId,
+            caseManagementId: args.caseManagementId,
+            patientId: args.patientId,
+            division: Division.REHAB,
+          },
           select: { id: true },
         })
       : Promise.resolve(null),
@@ -82,23 +105,25 @@ export async function startVisit(args: StartVisitArgs) {
   if (!patient) throw new Error('startVisit: patient missing');
   if (!org) throw new Error('startVisit: org missing');
   if (!clinician) throw new Error('startVisit: clinician OrgUser missing');
+  if (!caseRow) throw new Error('startVisit: caseManagement missing');
+  assertCaseIsOpen(caseRow.status);
 
-  // Auto-link to the patient's single active episode if the caller didn't
-  // specify one. Common case for outpatient PT/OT/SLP where a patient comes
-  // in for the SAME ongoing rehab episode — keeps goal/progress tracking
-  // attached to the right episode without a picker tap.
-  // Division resolution is now profession-driven (resolveDivisionForNote),
-  // so the auto-link no longer affects what note master prompt fires; it's
-  // purely about clinical continuity (goals, recert, episode visit counts).
-  // We deliberately do NOT auto-link if multiple ACTIVE episodes exist —
-  // multi-episode patients require explicit clinician choice.
+  const division = resolveDivisionForNote({
+    clinician: { professionType: clinician.professionType, division: clinician.division },
+    org,
+  });
+
+  // Auto-link to the case's single ACTIVE rehab episode when caller omitted one
+  // and the note division is REHAB.
   let episode: { id: string } | null = explicitEpisode;
-  // When startVisit auto-links because the caller didn't supply, mark the
-  // audit row so the picker-vs-fallback split stays observable.
   let resolvedSource: PickerSource = args.pickerSource ?? 'unspecified';
-  if (!episode && !args.episodeOfCareId) {
+  if (!episode && !args.episodeOfCareId && division === Division.REHAB) {
     const active = await args.tx.episodeOfCare.findMany({
-      where: { patientId: args.patientId, status: 'ACTIVE' },
+      where: {
+        caseManagementId: args.caseManagementId,
+        patientId: args.patientId,
+        status: 'ACTIVE',
+      },
       select: { id: true },
       take: 2,
     });
@@ -110,14 +135,17 @@ export async function startVisit(args: StartVisitArgs) {
     }
   }
 
-  const division = resolveDivisionForNote({
-    clinician: { professionType: clinician.professionType, division: clinician.division },
-    org,
-  });
+  let encounterEpisodeId: string | null =
+    division === Division.REHAB ? (args.episodeOfCareId ?? episode?.id ?? null) : null;
 
-  // If auto-link picked an episode, propagate it onto the encounter (overrides
-  // the explicit null fallback below).
-  const encounterEpisodeId = args.episodeOfCareId ?? episode?.id ?? null;
+  if (
+    !mayLinkEpisodeOnEncounter({
+      noteDivision: division,
+      episodeOfCareId: encounterEpisodeId,
+    })
+  ) {
+    encounterEpisodeId = null;
+  }
 
   const encounter = await args.tx.encounter.create({
     data: {
@@ -128,6 +156,7 @@ export async function startVisit(args: StartVisitArgs) {
       roomId: args.roomId ?? null,
       scheduleId: args.scheduleId,
       departmentId: args.departmentId ?? null,
+      caseManagementId: args.caseManagementId,
       episodeOfCareId: encounterEpisodeId,
       status: EncounterStatus.IN_PROGRESS,
       startedAt: new Date(),
@@ -176,6 +205,7 @@ export async function startVisit(args: StartVisitArgs) {
     metadata: {
       source: args.scheduleId ? 'schedule' : 'adhoc',
       division,
+      caseManagementId: args.caseManagementId,
       hasEpisodeLink: !!encounterEpisodeId,
       // Coerce explicit-link without picker context to 'picker' so the
       // metadata is still readable; only the truly-legacy case stays

@@ -7,6 +7,8 @@ import { canActAtSite, getClinicianSiteIds } from '@/lib/authz/site-scope';
 import { checkClinicianSeat, seatRequiredResponse } from '@/lib/authz/seat';
 import { startVisit } from '@/lib/encounters/start';
 import { DivisionResolutionError } from '@/lib/divisions/resolve';
+import { CaseResolutionError } from '@/lib/case-management/resolve';
+import { assertCaseIsOpen } from '@/lib/case-management/validate';
 import {
   evaluateDateOfService,
   LATE_ENTRY_MAX_DAYS,
@@ -19,6 +21,7 @@ const bodySchema = z.object({
   siteId: z.string().optional(),
   roomId: z.string().optional(),
   departmentId: z.string().optional(),
+  caseManagementId: z.string().min(1),
   episodeOfCareId: z.string().optional(),
   /**
    * Where the episode link decision came from. Recorded in the
@@ -143,6 +146,29 @@ export async function POST(req: Request) {
     };
   }
 
+  const caseRow = await prisma.caseManagement.findFirst({
+    where: {
+      id: data.caseManagementId,
+      orgId: authorizationUser.orgId,
+      patientId: patient.id,
+    },
+    select: { id: true, status: true },
+  });
+  if (!caseRow) {
+    return NextResponse.json(
+      { error: { code: 'case_not_found', message: 'Case management not found.' } },
+      { status: 404 },
+    );
+  }
+  try {
+    assertCaseIsOpen(caseRow.status);
+  } catch {
+    return NextResponse.json(
+      { error: { code: 'case_not_active', message: 'Case management is not active.' } },
+      { status: 409 },
+    );
+  }
+
   let result: { encounter: { id: string }; note: { id: string } };
   try {
     result = await prisma.$transaction(async (tx) =>
@@ -154,6 +180,7 @@ export async function POST(req: Request) {
         siteId,
         roomId: data.roomId,
         departmentId: data.departmentId,
+        caseManagementId: data.caseManagementId,
         episodeOfCareId: data.episodeOfCareId,
         actingUserId: user.id,
         pickerSource: data.pickerSource,
@@ -163,6 +190,12 @@ export async function POST(req: Request) {
       }),
     );
   } catch (err) {
+    if (err instanceof CaseResolutionError) {
+      return NextResponse.json(
+        { error: { code: err.code, message: err.message } },
+        { status: 400 },
+      );
+    }
     if (err instanceof DivisionResolutionError) {
       return NextResponse.json(
         {

@@ -18,12 +18,6 @@ import { StatusBanner } from '@/components/ui/status-banner';
 
 type Dept = { id: string; name: string; division: Division };
 
-const PICKABLE_DIVISIONS: Division[] = [
-  Division.MEDICAL,
-  Division.REHAB,
-  Division.BEHAVIORAL_HEALTH,
-];
-
 const DIVISION_LABEL: Record<Division, string> = {
   MEDICAL: 'MEDICAL',
   REHAB: 'REHAB',
@@ -32,47 +26,40 @@ const DIVISION_LABEL: Record<Division, string> = {
 };
 
 /**
- * NewEpisodeForm — client form for /patients/[id]/episodes/new.
+ * NewEpisodeForm — rehab plan of care under a CaseManagement (Sprint 0.11).
  *
- * Department dropdown filters to entries whose division matches the chosen
- * division (or whose division is MULTI). Submits to POST
- * /api/patients/[id]/episodes; on success redirects back to the patient page
- * with a `?episode_created=1` flash query so the patient page can render a
- * "Episode created — start visit again to link to it." notice.
+ * Requires `caseManagementId` from the parent page (query param). Submits to
+ * POST /api/patients/[id]/episodes with REHAB division enforced server-side.
  */
 export function NewEpisodeForm({
   patientId,
+  caseManagementId,
+  caseLabel,
   departments,
+  caseHasFlipPair,
 }: {
   patientId: string;
+  caseManagementId: string;
+  caseLabel: string;
   departments: Dept[];
+  /** True when parent case has both primary and secondary ICD for billing flip. */
+  caseHasFlipPair: boolean;
 }) {
   const router = useRouter();
   const [diagnosis, setDiagnosis] = useState('');
   const [bodyPart, setBodyPart] = useState('');
-  const [division, setDivision] = useState<Division>(Division.MEDICAL);
   const [departmentId, setDepartmentId] = useState<string>('');
+  const [flipIcdFromCase, setFlipIcdFromCase] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
   const compatibleDepts = useMemo(
     () =>
       departments.filter(
-        (d) => d.division === Division.MULTI || d.division === division,
+        (d) => d.division === Division.MULTI || d.division === Division.REHAB,
       ),
-    [departments, division],
+    [departments],
   );
-
-  // Reset department selection when division switch invalidates the prior one.
-  function changeDivision(next: Division) {
-    setDivision(next);
-    const stillFits = departments.some(
-      (d) =>
-        d.id === departmentId &&
-        (d.division === Division.MULTI || d.division === next),
-    );
-    if (!stillFits) setDepartmentId('');
-  }
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -82,10 +69,11 @@ export function NewEpisodeForm({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          caseManagementId,
           diagnosis: diagnosis.trim(),
           bodyPart: bodyPart.trim() ? bodyPart.trim() : null,
-          division,
           departmentId,
+          flipIcdFromCase: caseHasFlipPair ? flipIcdFromCase : undefined,
         }),
       });
       if (!res.ok) {
@@ -105,8 +93,12 @@ export function NewEpisodeForm({
 
   return (
     <form onSubmit={submit} className="space-y-4">
+      <p className="text-sm text-muted-foreground">
+        Under case: <span className="font-medium text-foreground">{caseLabel}</span>
+      </p>
+
       <div className="space-y-2">
-        <Label htmlFor="diagnosis">Diagnosis</Label>
+        <Label htmlFor="diagnosis">Plan-of-care diagnosis</Label>
         <Input
           id="diagnosis"
           required
@@ -130,53 +122,46 @@ export function NewEpisodeForm({
         />
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div className="space-y-2">
-          <Label>Division</Label>
-          <Select
-            value={division}
-            onValueChange={(v) => changeDivision(v as Division)}
-            disabled={pending}
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {PICKABLE_DIVISIONS.map((d) => (
-                <SelectItem key={d} value={d}>
-                  {DIVISION_LABEL[d]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div className="space-y-2">
-          <Label>Department</Label>
-          <Select
-            value={departmentId}
-            onValueChange={setDepartmentId}
-            disabled={pending || compatibleDepts.length === 0}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="Pick a department" />
-            </SelectTrigger>
-            <SelectContent>
-              {compatibleDepts.map((d) => (
-                <SelectItem key={d.id} value={d.id}>
-                  {d.name} ({DIVISION_LABEL[d.division]})
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {compatibleDepts.length === 0 && (
-            <p className="text-xs text-muted-foreground">
-              No departments in your organization match this division. Ask your administrator
-              to add one.
-            </p>
-          )}
-        </div>
+      <div className="space-y-2">
+        <Label>Department</Label>
+        <Select
+          value={departmentId}
+          onValueChange={setDepartmentId}
+          disabled={pending || compatibleDepts.length === 0}
+        >
+          <SelectTrigger>
+            <SelectValue placeholder="Pick a REHAB department" />
+          </SelectTrigger>
+          <SelectContent>
+            {compatibleDepts.map((d) => (
+              <SelectItem key={d.id} value={d.id}>
+                {d.name} ({DIVISION_LABEL[d.division]})
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {compatibleDepts.length === 0 && (
+          <p className="text-xs text-muted-foreground">
+            No REHAB or MULTI departments in your organization. Ask your administrator to add one.
+          </p>
+        )}
       </div>
+
+      {caseHasFlipPair && (
+        <label className="flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={flipIcdFromCase}
+            onChange={(e) => setFlipIcdFromCase(e.target.checked)}
+            disabled={pending}
+            className="mt-0.5"
+          />
+          <span>
+            Swap primary/secondary ICD from the parent case for rehab billing (case codes stay
+            unchanged).
+          </span>
+        </label>
+      )}
 
       {error && <StatusBanner variant="danger">{error}</StatusBanner>}
 
@@ -190,7 +175,7 @@ export function NewEpisodeForm({
           Cancel
         </Button>
         <Button type="submit" disabled={!canSubmit}>
-          {pending ? 'Creating…' : 'Create episode'}
+          {pending ? 'Creating…' : 'Create rehab episode'}
         </Button>
       </div>
     </form>

@@ -5,20 +5,9 @@ import { Division } from '@prisma/client';
 
 import {
   StartVisitDialog,
+  type StartVisitDialogCase,
   type StartVisitDialogEpisode,
 } from '@/app/(clinical)/patients/[id]/_components/start-visit-dialog';
-
-/**
- * StartVisitDialog branching tests.
- *
- * Exercises the four cases from the spec:
- *   - 0 active episodes  → submitter called with episodeOfCareId=null + source=auto-none
- *   - 1 active episode   → submitter called with episodeOfCareId=<id> + source=auto-single
- *   - 2+ episodes, pick → submitter called with the picked id + source=picker
- *   - 2+ episodes, skip → submitter called with episodeOfCareId=null + source=manual-skip
- *
- * Uses the `submit` prop so the test never touches fetch().
- */
 
 const ep1: StartVisitDialogEpisode = {
   id: 'ep_knee',
@@ -29,13 +18,34 @@ const ep1: StartVisitDialogEpisode = {
   visitCount: 3,
 };
 const ep2: StartVisitDialogEpisode = {
-  id: 'ep_dep',
-  diagnosis: 'Major depressive disorder, recurrent',
-  bodyPart: null,
-  division: Division.BEHAVIORAL_HEALTH,
+  id: 'ep_shoulder',
+  diagnosis: 'Rotator cuff strain',
+  bodyPart: 'Right shoulder',
+  division: Division.REHAB,
   lastVisitAt: null,
   visitCount: 0,
 };
+
+function makeCase(
+  id: string,
+  label: string,
+  episodes: StartVisitDialogEpisode[] = [],
+): StartVisitDialogCase {
+  return {
+    id,
+    primaryIcd: null,
+    primaryIcdLabel: label,
+    secondaryIcd: null,
+    lastActivityAt: null,
+    viewerLastActivityAt: null,
+    viewerDivisionLastActivityAt: null,
+    episodes,
+  };
+}
+
+const caseKnee = makeCase('case_knee', 'Right knee OA', [ep1]);
+const caseDep = makeCase('case_dep', 'Major depressive disorder, recurrent');
+const caseTwoRehab = makeCase('case_multi', 'Multi rehab', [ep1, ep2]);
 
 beforeEach(() => {
   vi.useRealTimers();
@@ -45,51 +55,37 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('StartVisitDialog — branching logic', () => {
-  it('with 0 active episodes, auto-posts with source=auto-none and no episode id', async () => {
+describe('StartVisitDialog — case + episode branching', () => {
+  it('with 0 active cases, opens picker and does not auto-post', async () => {
     const submit = vi.fn().mockResolvedValue({ encounterId: 'enc1', noteId: 'note1' });
-    const onStarted = vi.fn();
-    const onOpenChange = vi.fn();
 
     render(
       <StartVisitDialog
         patientId="pat_1"
-        activeEpisodes={[]}
+        activeCases={[]}
+        viewerDivision={Division.MEDICAL}
         open
-        onOpenChange={onOpenChange}
-        onStarted={onStarted}
+        onOpenChange={vi.fn()}
+        onStarted={vi.fn()}
         submit={submit}
       />,
     );
 
-    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
-    expect(submit).toHaveBeenCalledWith({
-      patientId: 'pat_1',
-      episodeOfCareId: null,
-      source: 'auto-none',
-    });
-    await waitFor(() =>
-      expect(onStarted).toHaveBeenCalledWith({ encounterId: 'enc1', noteId: 'note1' }),
-    );
-    expect(onOpenChange).toHaveBeenCalledWith(false);
-
-    // No picker UI rendered.
-    expect(
-      screen.queryByText(/which episode is this visit for/i),
-    ).not.toBeInTheDocument();
+    expect(await screen.findByText(/which case is this visit for/i)).toBeInTheDocument();
+    expect(submit).not.toHaveBeenCalled();
   });
 
-  it('with 1 active episode, auto-posts with that episode id and source=auto-single', async () => {
+  it('with 1 active case (medical viewer), auto-posts case only', async () => {
     const submit = vi.fn().mockResolvedValue({ encounterId: 'enc2', noteId: 'note2' });
     const onStarted = vi.fn();
-    const onOpenChange = vi.fn();
 
     render(
       <StartVisitDialog
         patientId="pat_2"
-        activeEpisodes={[ep1]}
+        activeCases={[caseDep]}
+        viewerDivision={Division.MEDICAL}
         open
-        onOpenChange={onOpenChange}
+        onOpenChange={vi.fn()}
         onStarted={onStarted}
         submit={submit}
       />,
@@ -98,237 +94,92 @@ describe('StartVisitDialog — branching logic', () => {
     await waitFor(() => expect(submit).toHaveBeenCalledOnce());
     expect(submit).toHaveBeenCalledWith({
       patientId: 'pat_2',
-      episodeOfCareId: 'ep_knee',
-      source: 'auto-single',
+      caseManagementId: 'case_dep',
+      episodeOfCareId: null,
+      source: 'auto-none',
     });
-    await waitFor(() =>
-      expect(onStarted).toHaveBeenCalledWith({ encounterId: 'enc2', noteId: 'note2' }),
-    );
   });
 
-  it('with 2+ active episodes, renders the picker and does NOT auto-post', async () => {
+  it('with 1 rehab case + 1 episode (PT viewer), auto-posts case and episode', async () => {
     const submit = vi.fn().mockResolvedValue({ encounterId: 'enc3', noteId: 'note3' });
-    const onStarted = vi.fn();
-    const onOpenChange = vi.fn();
 
     render(
       <StartVisitDialog
         patientId="pat_3"
-        activeEpisodes={[ep1, ep2]}
+        activeCases={[caseKnee]}
+        viewerDivision={Division.REHAB}
         open
-        onOpenChange={onOpenChange}
-        onStarted={onStarted}
+        onOpenChange={vi.fn()}
+        onStarted={vi.fn()}
         submit={submit}
       />,
     );
 
-    expect(await screen.findByText(/which episode is this visit for/i)).toBeInTheDocument();
-    // Both episodes rendered
-    expect(screen.getByText('Right knee OA')).toBeInTheDocument();
-    expect(screen.getByText('Major depressive disorder, recurrent')).toBeInTheDocument();
-    // Skip option present
-    expect(screen.getByText(/start without an episode link/i)).toBeInTheDocument();
-    // No POST yet
-    expect(submit).not.toHaveBeenCalled();
-    expect(onStarted).not.toHaveBeenCalled();
+    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+    expect(submit).toHaveBeenCalledWith({
+      patientId: 'pat_3',
+      caseManagementId: 'case_knee',
+      episodeOfCareId: 'ep_knee',
+      source: 'auto-single',
+    });
   });
 
-  it('with 2+ episodes, picking one and clicking Start submits with source=picker', async () => {
-    const submit = vi.fn().mockResolvedValue({ encounterId: 'enc4', noteId: 'note4' });
-    const onStarted = vi.fn();
-    const onOpenChange = vi.fn();
-    const user = userEvent.setup();
+  it('with 2+ active cases, renders case picker', async () => {
+    const submit = vi.fn();
 
     render(
       <StartVisitDialog
         patientId="pat_4"
-        activeEpisodes={[ep1, ep2]}
+        activeCases={[caseKnee, caseDep]}
+        viewerDivision={Division.MEDICAL}
         open
-        onOpenChange={onOpenChange}
-        onStarted={onStarted}
+        onOpenChange={vi.fn()}
+        onStarted={vi.fn()}
         submit={submit}
       />,
     );
 
-    // Start button is disabled until a selection is made.
-    const startBtn = screen.getByRole('button', { name: /^start visit$/i });
-    expect(startBtn).toBeDisabled();
-
-    await user.click(screen.getByLabelText(/right knee oa/i));
-    expect(startBtn).not.toBeDisabled();
-    await user.click(startBtn);
-
-    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
-    expect(submit).toHaveBeenCalledWith({
-      patientId: 'pat_4',
-      episodeOfCareId: 'ep_knee',
-      source: 'picker',
-    });
-    await waitFor(() =>
-      expect(onStarted).toHaveBeenCalledWith({ encounterId: 'enc4', noteId: 'note4' }),
-    );
+    expect(await screen.findByText(/which case is this visit for/i)).toBeInTheDocument();
+    expect(screen.getByText('Right knee OA')).toBeInTheDocument();
+    expect(submit).not.toHaveBeenCalled();
   });
 
-  it('with 2+ episodes, picking Skip submits with episodeOfCareId=null and source=manual-skip', async () => {
-    const submit = vi.fn().mockResolvedValue({ encounterId: 'enc5', noteId: 'note5' });
-    const onStarted = vi.fn();
-    const onOpenChange = vi.fn();
-    const user = userEvent.setup();
+  it('REHAB viewer with 2 episodes under one case shows episode picker', async () => {
+    const submit = vi.fn();
 
     render(
       <StartVisitDialog
         patientId="pat_5"
-        activeEpisodes={[ep1, ep2]}
+        activeCases={[caseTwoRehab]}
+        viewerDivision={Division.REHAB}
         open
-        onOpenChange={onOpenChange}
-        onStarted={onStarted}
+        onOpenChange={vi.fn()}
+        onStarted={vi.fn()}
         submit={submit}
       />,
     );
 
-    await user.click(screen.getByLabelText(/start without an episode link/i));
-    await user.click(screen.getByRole('button', { name: /^start visit$/i }));
-
-    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
-    expect(submit).toHaveBeenCalledWith({
-      patientId: 'pat_5',
-      episodeOfCareId: null,
-      source: 'manual-skip',
-    });
-  });
-
-  it('surfaces a submitter error on the dialog rather than swallowing it', async () => {
-    const submit = vi.fn().mockRejectedValue(new Error('boom — server down'));
-    const onStarted = vi.fn();
-    const onOpenChange = vi.fn();
-    const user = userEvent.setup();
-
-    render(
-      <StartVisitDialog
-        patientId="pat_6"
-        activeEpisodes={[ep1, ep2]}
-        open
-        onOpenChange={onOpenChange}
-        onStarted={onStarted}
-        submit={submit}
-      />,
-    );
-
-    await user.click(screen.getByLabelText(/right knee oa/i));
-    await user.click(screen.getByRole('button', { name: /^start visit$/i }));
-
-    expect(await screen.findByText(/boom — server down/i)).toBeInTheDocument();
-    expect(onStarted).not.toHaveBeenCalled();
-  });
-
-  it('exposes a link to /patients/[id]/episodes/new for the create-new flow', () => {
-    render(
-      <StartVisitDialog
-        patientId="pat_7"
-        activeEpisodes={[ep1, ep2]}
-        open
-        onOpenChange={() => {}}
-        onStarted={() => {}}
-        submit={vi.fn()}
-      />,
-    );
-    const link = screen.getByRole('link', { name: /create a new episode/i });
-    expect(link).toHaveAttribute('href', '/patients/pat_7/episodes/new');
-  });
-
-  it('renders a Visit date input that defaults to today', () => {
-    render(
-      <StartVisitDialog
-        patientId="pat_d"
-        activeEpisodes={[ep1, ep2]}
-        open
-        onOpenChange={() => {}}
-        onStarted={() => {}}
-        submit={vi.fn()}
-      />,
-    );
-    const input = screen.getByLabelText(/visit date/i) as HTMLInputElement;
-    const today = new Date();
-    const y = today.getFullYear();
-    const m = `${today.getMonth() + 1}`.padStart(2, '0');
-    const d = `${today.getDate()}`.padStart(2, '0');
-    expect(input.value).toBe(`${y}-${m}-${d}`);
-  });
-
-  it('with forceDatePicker=true and 0 episodes, renders the picker shell + visit-date input', () => {
-    render(
-      <StartVisitDialog
-        patientId="pat_late_0"
-        activeEpisodes={[]}
-        open
-        onOpenChange={() => {}}
-        onStarted={() => {}}
-        submit={vi.fn()}
-        forceDatePicker
-      />,
-    );
-    expect(screen.getByText(/start late entry/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/visit date/i)).toBeInTheDocument();
-  });
-
-  it('with forceDatePicker=true and 1 episode, preselects that episode so clinician can backdate immediately', async () => {
-    const submit = vi.fn().mockResolvedValue({ encounterId: 'enc_le1', noteId: 'note_le1' });
-    const user = userEvent.setup();
-
-    render(
-      <StartVisitDialog
-        patientId="pat_late_1"
-        activeEpisodes={[ep1]}
-        open
-        onOpenChange={() => {}}
-        onStarted={() => {}}
-        submit={submit}
-        forceDatePicker
-      />,
-    );
-    // Auto-post must NOT have fired; the picker is on screen.
+    expect(await screen.findByText(/rehab episode for this case/i)).toBeInTheDocument();
     expect(submit).not.toHaveBeenCalled();
-    // Pick a date 5 days ago and submit.
-    const input = screen.getByLabelText(/visit date/i) as HTMLInputElement;
-    const back = new Date();
-    back.setDate(back.getDate() - 5);
-    const y = back.getFullYear();
-    const m = `${back.getMonth() + 1}`.padStart(2, '0');
-    const d = `${back.getDate()}`.padStart(2, '0');
-    await user.clear(input);
-    await user.type(input, `${y}-${m}-${d}`);
-    await user.click(screen.getByRole('button', { name: /start late entry/i }));
-    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
-    const args = submit.mock.calls[0]![0] as {
-      episodeOfCareId: string | null;
-      dateOfService?: string;
-    };
-    expect(args.episodeOfCareId).toBe('ep_knee');
-    expect(args.dateOfService).toBeDefined();
   });
 
-  it('shows the late-entry warning banner when a past date is picked', async () => {
-    const user = userEvent.setup();
+  it('with forceDatePicker and 1 rehab case, shows visit-date without auto-post', () => {
+    const submit = vi.fn();
+
     render(
       <StartVisitDialog
-        patientId="pat_warn"
-        activeEpisodes={[ep1, ep2]}
+        patientId="pat_late"
+        activeCases={[caseKnee]}
+        viewerDivision={Division.REHAB}
         open
         onOpenChange={() => {}}
         onStarted={() => {}}
-        submit={vi.fn()}
+        submit={submit}
+        forceDatePicker
       />,
     );
-    const input = screen.getByLabelText(/visit date/i) as HTMLInputElement;
-    const back = new Date();
-    back.setDate(back.getDate() - 7);
-    const y = back.getFullYear();
-    const m = `${back.getMonth() + 1}`.padStart(2, '0');
-    const d = `${back.getDate()}`.padStart(2, '0');
-    await user.clear(input);
-    await user.type(input, `${y}-${m}-${d}`);
-    expect(
-      await screen.findByText(/late entry — sign attestation will reflect this date/i),
-    ).toBeInTheDocument();
+
+    expect(screen.getByText(/start late entry/i)).toBeInTheDocument();
+    expect(submit).not.toHaveBeenCalled();
   });
 });

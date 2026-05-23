@@ -16,6 +16,7 @@ vi.mock('@/lib/auth', () => ({
 
 const orgUserFindUnique = vi.fn();
 const patientFindFirst = vi.fn();
+const caseManagementFindFirst = vi.fn();
 const siteFindMany = vi.fn();
 const orgUserSiteFindMany = vi.fn();
 const txFn = vi.fn();
@@ -23,11 +24,14 @@ vi.mock('@/lib/prisma', () => ({
   prisma: {
     orgUser: { findUnique: (...a: unknown[]) => orgUserFindUnique(...a) },
     patient: { findFirst: (...a: unknown[]) => patientFindFirst(...a) },
+    caseManagement: { findFirst: (...a: unknown[]) => caseManagementFindFirst(...a) },
     site: { findMany: (...a: unknown[]) => siteFindMany(...a) },
     orgUserSite: { findMany: (...a: unknown[]) => orgUserSiteFindMany(...a) },
     $transaction: (cb: (tx: unknown) => unknown) => txFn(cb),
   },
 }));
+
+const baseBody = { patientId: 'pat_1', caseManagementId: 'case_1' };
 
 const startVisitMock = vi.fn();
 vi.mock('@/lib/encounters/start', () => ({
@@ -80,6 +84,7 @@ beforeEach(() => {
   mockAuth.mockReset();
   orgUserFindUnique.mockReset();
   patientFindFirst.mockReset();
+  caseManagementFindFirst.mockReset();
   siteFindMany.mockReset();
   orgUserSiteFindMany.mockReset();
   txFn.mockReset();
@@ -102,7 +107,7 @@ describe('POST /api/encounters — multi-site enforcement', () => {
     orgUserFindUnique.mockResolvedValueOnce({ role: 'CLINICIAN', orgId: 'org_1' });
     orgUserSiteFindMany.mockResolvedValueOnce([{ siteId: 's_enrolled' }]);
 
-    const res = await POST(buildRequest({ patientId: 'pat_1', siteId: 's_off_limits' }));
+    const res = await POST(buildRequest({ ...baseBody, siteId: 's_off_limits' }));
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error?: { code?: string } };
     expect(body.error?.code).toBe('site_not_enrolled');
@@ -124,12 +129,13 @@ describe('POST /api/encounters — multi-site enforcement', () => {
       organization: { forceMfa: false },
     });
     patientFindFirst.mockResolvedValueOnce({ id: 'pat_1', siteId: 's_any' });
+    caseManagementFindFirst.mockResolvedValueOnce({ id: 'case_1', status: 'ACTIVE' });
     orgUserFindUnique.mockResolvedValueOnce({ role: 'ORG_ADMIN', orgId: 'org_1' });
     siteFindMany.mockResolvedValueOnce([{ id: 's_any' }, { id: 's_other' }]);
     txFn.mockImplementationOnce(async (cb: (tx: unknown) => Promise<unknown>) => cb({}));
     startVisitMock.mockResolvedValueOnce({ encounter: { id: 'enc_1' }, note: { id: 'note_1' } });
 
-    const res = await POST(buildRequest({ patientId: 'pat_1', siteId: 's_any' }));
+    const res = await POST(buildRequest({ ...baseBody, siteId: 's_any' }));
     expect(res.status).toBe(200);
     expect(startVisitMock).toHaveBeenCalledOnce();
   });
@@ -146,12 +152,13 @@ describe('POST /api/encounters — multi-site enforcement', () => {
       organization: { forceMfa: false },
     });
     patientFindFirst.mockResolvedValueOnce({ id: 'pat_1', siteId: null });
+    caseManagementFindFirst.mockResolvedValueOnce({ id: 'case_1', status: 'ACTIVE' });
     orgUserFindUnique.mockResolvedValueOnce({ role: 'CLINICIAN', orgId: 'org_1' });
     orgUserSiteFindMany.mockResolvedValueOnce([{ siteId: 's_only' }]);
     txFn.mockImplementationOnce(async (cb: (tx: unknown) => Promise<unknown>) => cb({}));
     startVisitMock.mockResolvedValueOnce({ encounter: { id: 'enc_1' }, note: { id: 'note_1' } });
 
-    const res = await POST(buildRequest({ patientId: 'pat_1' }));
+    const res = await POST(buildRequest(baseBody));
     expect(res.status).toBe(200);
     const callArgs = startVisitMock.mock.calls[0]?.[0] as { siteId?: string } | undefined;
     expect(callArgs?.siteId).toBe('s_only');
@@ -172,7 +179,7 @@ describe('POST /api/encounters — multi-site enforcement', () => {
     orgUserFindUnique.mockResolvedValueOnce({ role: 'CLINICIAN', orgId: 'org_1' });
     orgUserSiteFindMany.mockResolvedValueOnce([]);
 
-    const res = await POST(buildRequest({ patientId: 'pat_1' }));
+    const res = await POST(buildRequest({ patientId: 'pat_1', caseManagementId: 'case_1' }));
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error?: { code?: string } };
     // No siteId at all → site_required short-circuit fires before the enrollment check.

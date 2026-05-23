@@ -16,6 +16,7 @@ import { redirect } from 'next/navigation';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { getClinicianSiteIds } from '@/lib/authz/site-scope';
+import { divisionForProfession } from '@/lib/professions';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { StatusBadge } from '@/components/ui/status-badge';
@@ -79,14 +80,18 @@ export default async function HomePage({
             firstName: true,
             lastName: true,
             mrn: true,
-            episodes: {
-              where: { status: { in: ['ACTIVE', 'RECERT_DUE'] } },
-              select: {
-                id: true,
-                diagnosis: true,
-                bodyPart: true,
-                division: true,
-                visitsCompleted: true,
+            caseManagements: {
+              where: { status: 'ACTIVE' },
+              include: {
+                episodes: {
+                  where: { status: { in: ['ACTIVE', 'RECERT_DUE'] } },
+                  select: {
+                    id: true,
+                    diagnosis: true,
+                    bodyPart: true,
+                    visitsCompleted: true,
+                  },
+                },
               },
             },
           },
@@ -174,13 +179,26 @@ export default async function HomePage({
         hasEncounter: !!s.encounter,
         encounterNoteId: s.encounter?.notes[0]?.id ?? null,
         scheduleEpisodeOfCareId: s.episodeOfCareId,
-        activeEpisodes: s.patient.episodes.map((ep) => ({
-          id: ep.id,
-          diagnosis: ep.diagnosis,
-          bodyPart: ep.bodyPart,
-          division: ep.division,
-          lastVisitAt: null,
-          visitCount: ep.visitsCompleted,
+        viewerDivision: divisionForProfession(session.user.professionType ?? null),
+        activeCases: s.patient.caseManagements.map((c) => ({
+          id: c.id,
+          primaryIcd: c.primaryIcd,
+          primaryIcdLabel: c.primaryIcdLabel,
+          secondaryIcd: c.secondaryIcd,
+          lastActivityAt: null,
+          // The home/schedule path doesn't precompute viewer-recency signals.
+          // The StartVisitDialog falls back to overall + 1-case auto-post here
+          // (sort is stable when all three signals are null).
+          viewerLastActivityAt: null,
+          viewerDivisionLastActivityAt: null,
+          episodes: c.episodes.map((ep) => ({
+            id: ep.id,
+            diagnosis: ep.diagnosis,
+            bodyPart: ep.bodyPart,
+            division: 'REHAB' as const,
+            lastVisitAt: null,
+            visitCount: ep.visitsCompleted,
+          })),
         })),
       }}
     />

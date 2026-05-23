@@ -75,34 +75,45 @@ export function EpisodesPanel({
   patientId,
   episodes,
   canEdit = true,
+  embedded = false,
 }: {
   patientId: string;
   episodes: Episode[];
   canEdit?: boolean;
+  /** When nested inside a Case card, omit the outer Card chrome. */
+  embedded?: boolean;
 }) {
+  const list = (
+    <>
+      {episodes.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No episodes on file.</p>
+      ) : (
+        episodes.map((ep) => (
+          <EpisodeCard
+            key={ep.id}
+            patientId={patientId}
+            episode={ep}
+            defaultExpanded={episodes.length === 1}
+            canEdit={canEdit}
+          />
+        ))
+      )}
+    </>
+  );
+
+  if (embedded) {
+    return <div className="space-y-3">{list}</div>;
+  }
+
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-md">Episodes of care</CardTitle>
+        <CardTitle className="text-md">Rehab episodes of care</CardTitle>
         <CardDescription>
-          Active + recert-due + discharged. Each episode carries its own division.
+          Plans of care under this case — recert, visit auth, and goals.
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-3">
-        {episodes.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No episodes on file.</p>
-        ) : (
-          episodes.map((ep) => (
-            <EpisodeCard
-              key={ep.id}
-              patientId={patientId}
-              episode={ep}
-              defaultExpanded={episodes.length === 1}
-              canEdit={canEdit}
-            />
-          ))
-        )}
-      </CardContent>
+      <CardContent className="space-y-3">{list}</CardContent>
     </Card>
   );
 }

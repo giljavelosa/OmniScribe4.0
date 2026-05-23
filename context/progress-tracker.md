@@ -16,6 +16,12 @@
 
 ## Completed
 
+- **2026-05-22 — Sprint 0.11 Phase 1: Case Management + REHAB-only episodes** (branch WIP — `feat(sprint-0.11): case-management-phase-1`).
+  - **What shipped**: `CaseManagement` model + migration/backfill; required `Encounter.caseManagementId`; `EpisodeOfCare` REHAB-only with required `caseManagementId` + episode-level ICD flip fields; `/api/case-management/*`; visit start resolves case then optional rehab episode; patient chart **Cases** tab with role-aware division stratification; `NewCaseDialog` de-dup (Phase 1); `start-visit-dialog` case + rehab episode pickers; seed refactored (cases per patient, rehab episodes only); `/episodes/new` requires `?caseManagementId=`.
+  - **Verify**: `npm test` 560/560; `npm run typecheck`; `npx prisma db seed`; eslint clean on sprint-touched paths.
+  - **Deferred in Phase 1**: draft edit ownership UI on review; cockpit Problems ICD source (`sprint-0-overview-cockpit.md` lockstep); ICD-10 picker + FHIR de-dup (Phase 2).
+  - **Three-lens**: Clinician — visits anchor to a diagnosis arc; PTs pick rehab episode under case; MD/BH skip episode picker. Compliance — lineage `Note → Encounter → CaseManagement` (+ episode when REHAB). Auditor — case create/close audited; de-dup before persist; rehab ICD flip stored on episode not inferred.
+
 - **2026-05-21 — Seed corpus expansion: 4 organizations × 10 patients with rich multi-division corpus** (`chore(seed): add Cascadia + Riverbend orgs with 4 rich multi-division patients`).
   - **Why**: Demo data only spanned 2 organizations and 6 patients. To exercise the full multi-tenant cockpit, episode-of-care gating, brief generation, and 30-min visit narrative depth, expanded to 4 organizations and 10 patients with production-feeling clinical narratives.
   - **What shipped**:
