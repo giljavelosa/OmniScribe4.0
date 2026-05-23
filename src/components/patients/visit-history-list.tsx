@@ -39,9 +39,18 @@ export type VisitHistoryRow = {
   episodeDiagnosis: string | null;
   episodeDivision: string | null;
   episodeStatus: string | null;
+  /** Case management (Sprint 0.11 — the umbrella above episode). Optional on the
+   *  type so older callers that pre-date the "By case" view still compile; the
+   *  patient page populates them on every row today. */
+  caseManagementId?: string | null;
+  caseManagementPrimaryIcd?: string | null;
+  caseManagementPrimaryIcdLabel?: string | null;
+  /** `ACTIVE` | `CLOSED` | `CANCELLED` | `PENDING_ROUTER` — used by the
+   *  "By case" view to flag pending-router cases distinctly. */
+  caseManagementStatus?: string | null;
 };
 
-type ViewMode = 'episode' | 'clinician' | 'division' | 'chronological';
+type ViewMode = 'episode' | 'case' | 'clinician' | 'division' | 'chronological';
 
 const STORAGE_KEY = 'omniscribe.visit-history.view-mode';
 const DIVISION_LABELS: Record<string, string> = {
@@ -53,6 +62,7 @@ const DIVISION_LABELS: Record<string, string> = {
 
 const VIEW_MODES: { value: ViewMode; label: string }[] = [
   { value: 'episode', label: 'By episode' },
+  { value: 'case', label: 'By case' },
   { value: 'clinician', label: 'By clinician' },
   { value: 'division', label: 'By division' },
   { value: 'chronological', label: 'Chronological' },
@@ -219,6 +229,8 @@ export function VisitHistoryList({ visits }: { visits: VisitHistoryRow[] }) {
           <FlatList visits={filtered} />
         ) : view === 'episode' ? (
           <EpisodeGrouped visits={filtered} />
+        ) : view === 'case' ? (
+          <CaseGrouped visits={filtered} />
         ) : view === 'clinician' ? (
           <ClinicianGrouped visits={filtered} />
         ) : (
@@ -275,6 +287,71 @@ function EpisodeGrouped({ visits }: { visits: VisitHistoryRow[] }) {
             )}
             {g.header.status && (
               <StatusBadge variant="neutral" noIcon>{g.header.status}</StatusBadge>
+            )}
+            <span className="text-xs text-muted-foreground">
+              · {g.visits.length} visit{g.visits.length === 1 ? '' : 's'}
+            </span>
+          </div>
+          <ul className="divide-y divide-border">
+            {g.visits.map((v) => (
+              <VisitRow key={v.id} v={v} />
+            ))}
+          </ul>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function CaseGrouped({ visits }: { visits: VisitHistoryRow[] }) {
+  const groups = useMemo(() => {
+    const byCase = new Map<string, VisitHistoryRow[]>();
+    for (const v of visits) {
+      const key = v.caseManagementId ?? '__unrouted__';
+      const list = byCase.get(key) ?? [];
+      list.push(v);
+      byCase.set(key, list);
+    }
+    return Array.from(byCase.entries()).map(([key, list]) => {
+      const first = list[0]!;
+      return {
+        key,
+        isUnrouted: key === '__unrouted__',
+        isPending: first.caseManagementStatus === 'PENDING_ROUTER',
+        primaryIcd: first.caseManagementPrimaryIcd ?? null,
+        primaryIcdLabel: first.caseManagementPrimaryIcdLabel ?? null,
+        status: first.caseManagementStatus ?? null,
+        visits: list,
+      };
+    });
+  }, [visits]);
+
+  return (
+    <div className="divide-y divide-border">
+      {groups.map((g) => (
+        <div key={g.key}>
+          <div className="px-4 py-2 bg-muted/30 flex items-center gap-2 flex-wrap text-sm">
+            {g.isUnrouted ? (
+              <>
+                <span className="font-medium">Unrouted visit</span>
+                <StatusBadge variant="warning" noIcon>No case</StatusBadge>
+              </>
+            ) : (
+              <>
+                {g.primaryIcd && (
+                  <StatusBadge variant="neutral" noIcon>{g.primaryIcd}</StatusBadge>
+                )}
+                <span className="font-medium">
+                  {g.primaryIcdLabel ?? '(case)'}
+                </span>
+                {g.isPending ? (
+                  <StatusBadge variant="warning" noIcon>Awaiting routing</StatusBadge>
+                ) : g.status === 'ACTIVE' ? (
+                  <StatusBadge variant="success" noIcon>ACTIVE</StatusBadge>
+                ) : g.status ? (
+                  <StatusBadge variant="neutral" noIcon>{g.status}</StatusBadge>
+                ) : null}
+              </>
             )}
             <span className="text-xs text-muted-foreground">
               · {g.visits.length} visit{g.visits.length === 1 ? '' : 's'}
