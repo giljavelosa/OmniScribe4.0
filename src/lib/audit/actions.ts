@@ -557,4 +557,27 @@ export type AuditAction =
   // metadata is extended (no new action) to carry { isLateEntry,
   // lateEntryDaysGap, dateOfService } so a reviewer can prove the
   // attestation copy switch fired without joining tables.
-  | 'NOTE_LATE_ENTRY_CREATED';
+  | 'NOTE_LATE_ENTRY_CREATED'
+  // ---- Stuck PENDING_ROUTER backfill ----
+  //
+  // Operational backfill that resolves CaseManagement rows stuck in
+  // PENDING_ROUTER while at least one of their encounters carries a
+  // SIGNED/TRANSFERRED note. Sprint 0.13 Decision 3 requires routing to
+  // lock at review before sign — until that's enforced server-side, a few
+  // signed notes slip through and disappear from the chart (CasesPanel
+  // excludes PENDING_ROUTER; the "By case" view labels them "Routing in
+  // progress"). The backfill promotes each stuck case to ACTIVE with the
+  // same "Uncategorized care" placeholder Sprint 0.11's migration used
+  // for orphaned encounters, so it surfaces with a "Needs coding" badge
+  // for a clinician to recode via the existing EditCaseDialog flow.
+  //
+  // CASE_BACKFILLED_FROM_PENDING_ROUTER fires once per promoted case.
+  // Metadata: { caseManagementId, sweepId, signedNoteCount, prevStatus:
+  // 'PENDING_ROUTER', newStatus: 'ACTIVE' }. PHI-free.
+  //
+  // CASE_BACKFILL_SWEEP_RUN fires once per sweep invocation (mirrors
+  // EPISODE_SWEEP_RUN). Metadata: { sweepId, scanned, backfilled,
+  // errors, reachedCap, dryRun }. resourceId is the literal string
+  // 'sweep' (same convention as the episodes sweep).
+  | 'CASE_BACKFILLED_FROM_PENDING_ROUTER'
+  | 'CASE_BACKFILL_SWEEP_RUN';
