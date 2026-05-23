@@ -42,6 +42,15 @@ vi.mock('@/lib/phi-access', () => ({
   assertOrgScoped: vi.fn(),
 }));
 
+// Stub @/lib/queue so route.ts's transitive import of @/lib/redis (which
+// throws at module-load when REDIS_URL is unset) is broken. The accept
+// route invokes `enqueueCleoStateRefresh` on success; we mock it as a no-op
+// — the test asserts the audit + DB side effects, not the queue side effect
+// (queue throttle is tested in test/workers/cleo-state-handler.test.ts).
+vi.mock('@/lib/queue', () => ({
+  enqueueCleoStateRefresh: vi.fn(),
+}));
+
 import { POST } from '@/app/api/notes/[id]/case-router/accept/route';
 
 function authedAsClinician() {

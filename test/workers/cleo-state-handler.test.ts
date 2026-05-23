@@ -37,6 +37,15 @@ vi.mock('@/services/copilot/state-builder', async () => {
   };
 });
 
+// Stub @/lib/queue so the throttle-shape test below (which does a dynamic
+// import of '@/lib/queue') doesn't trigger src/lib/redis.ts's module-load
+// throw when REDIS_URL is unset in CI. The handler imported on line 40
+// does NOT touch the queue directly — it's only the throttle test that
+// imports it.
+vi.mock('@/lib/queue', () => ({
+  enqueueCleoStateRefresh: vi.fn(),
+}));
+
 import { handle } from '@/workers/cleo-state/handler';
 
 function makeJob(overrides: Record<string, unknown> = {}) {
