@@ -21,6 +21,11 @@ import { FlagReviewPanel } from './flag-review-panel';
 import { NoteStyleToggle } from './note-style-toggle';
 import { TranscriptSheet } from './transcript-sheet';
 import {
+  CaseRoutingPanel,
+  type CaseRouterRunDTO,
+  type CaseRouterPanelCase,
+} from './case-routing-panel';
+import {
   deriveProgressStrip,
   isReadyForSign,
   type ProgressStripCell,
@@ -78,6 +83,12 @@ type Props = {
   /** True when the Plan section's text matches the follow-up regex helper.
    *  Controls whether the soft nudge banner shows on the new card. */
   planHasFollowUps: boolean;
+  /** Sprint 0.13 — Miss Cleo's case-routing run + active-cases context.
+   *  Server-rendered when the worker fired before /review loaded; the
+   *  CaseRoutingPanel polls a GET endpoint when this is null. */
+  initialRouterRun: CaseRouterRunDTO | null;
+  initialRouterActiveCases: CaseRouterPanelCase[];
+  initialCurrentCaseManagementId: string | null;
 };
 
 /**
@@ -94,6 +105,9 @@ export function ReviewClient({
   copilotFollowUps,
   nextVisitFollowUps,
   planHasFollowUps,
+  initialRouterRun,
+  initialRouterActiveCases,
+  initialCurrentCaseManagementId,
 }: Props) {
   const router = useRouter();
   const [snap, setSnap] = useState<ReviewSnapshot>(initial);
@@ -165,6 +179,20 @@ export function ReviewClient({
           isDeleted: snap.patient.isDeleted,
         }}
       />
+
+      {/* Sprint 0.13 — Miss Cleo's case-routing panel. Mounted at the top
+          of the review surface so the routing decision is the first thing
+          the clinician sees. Hides itself once accepted (collapses to a
+          compact pill via internal state). Hidden on signed notes (routing
+          is locked at sign). */}
+      {!isSigned && (
+        <CaseRoutingPanel
+          noteId={noteId}
+          initial={initialRouterRun}
+          initialActiveCases={initialRouterActiveCases}
+          initialCurrentCaseId={initialCurrentCaseManagementId}
+        />
+      )}
 
       {snap.isLateEntry && snap.dateOfService && (
         <LateEntryBanner

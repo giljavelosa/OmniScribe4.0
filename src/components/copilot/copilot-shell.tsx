@@ -102,6 +102,21 @@ export function CopilotShell({
     fireAudit(open ? 'COPILOT_BEACON_OPENED' : 'COPILOT_BEACON_CLOSED');
   }, [open, fireAudit]);
 
+  // Sprint 0.14 — listen for `cleo:open-sheet` so surface-level CTAs
+  // (e.g. CleoReadCard's "Ask me anything") can open the Sheet without
+  // a parent prop drill. The shell is always mounted on the chart, so
+  // a global event is the lightest-touch coupling.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onOpen = () => {
+      setOpen(true);
+      setViewMode('full');
+      setActiveTab('chart');
+    };
+    window.addEventListener('cleo:open-sheet', onOpen);
+    return () => window.removeEventListener('cleo:open-sheet', onOpen);
+  }, []);
+
   function closeShell() {
     setOpen(false);
   }

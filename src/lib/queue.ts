@@ -40,6 +40,15 @@ export const QUEUE_NAMES = {
   noteBrief: 'note-brief',
   postSignArtifacts: 'post-sign-artifacts',
   externalContextTranscription: 'external-context-transcription',
+  /** Sprint 0.13 — Miss Cleo's case-router agent. Chained from the
+   *  ai-generation worker on completion. Same retry/backoff defaults as
+   *  other queues (3 attempts, exponential 5s base — anti-regression rule 10). */
+  caseRouter: 'case-router',
+  /** Sprint 0.14 — Miss Cleo's per-(patient × clinician) state-projection
+   *  worker. Chained from ai-generation completion, NOTE_SIGNED, and
+   *  CASE_ROUTER_ACCEPTED. Throttled per-tuple (5 min) via the stable
+   *  jobId; same retry semantics as other queues (rule 10). */
+  cleoState: 'cleo-state',
 } as const;
 
 export const transcriptionQueue = new Queue(QUEUE_NAMES.transcription, defaultOptions);
@@ -52,6 +61,8 @@ export const externalContextTranscriptionQueue = new Queue(
   QUEUE_NAMES.externalContextTranscription,
   defaultOptions,
 );
+export const caseRouterQueue = new Queue(QUEUE_NAMES.caseRouter, defaultOptions);
+export const cleoStateQueue = new Queue(QUEUE_NAMES.cleoState, defaultOptions);
 
 // ---------------------------------------------------------------------------
 // Enqueue helpers — keep the call sites typed + idempotent.
@@ -139,4 +150,35 @@ export function enqueueExternalContextTranscriptionJob(payload: {
   return externalContextTranscriptionQueue.add('transcribe-external-context', payload, {
     jobId: `external-ctx:${payload.externalContextId}:${payload.requestId}`,
   });
+}
+
+/**
+ * Sprint 0.13 — chain-enqueued by the ai-generation worker on completion.
+ * Idempotent on noteId (stable jobId); a retried enqueue collapses to one
+ * Redis entry. Same retry semantics as other queues (rule 10).
+ */
+export function enqueueCaseRouterJob(payload: { noteId: string; orgId: string }) {
+  return caseRouterQueue.add('propose-case-routing', payload, {
+    jobId: `case-router:${payload.noteId}`,
+  });
+}
+
+/**
+ * Sprint 0.14 — chain-enqueued from ai-generation completion, NOTE_SIGNED,
+ * and CASE_ROUTER_ACCEPTED.
+ *
+ * Throttle: stable jobId per (org × patient × clinician × 5-minute bucket).
+ * BullMQ rejects duplicate jobIds silently (returns the existing job), so
+ * multiple events arriving inside one 5-min window coalesce to one rebuild.
+ * Honors the spec's "at most one rebuild per (patient × clinician) per
+ * 5 minutes" requirement without an extra mutex.
+ */
+export function enqueueCleoStateRefresh(payload: {
+  orgId: string;
+  patientId: string;
+  clinicianOrgUserId: string;
+}) {
+  const bucket = Math.floor(Date.now() / (5 * 60 * 1000));
+  const jobId = `cleo-state:${payload.orgId}:${payload.patientId}:${payload.clinicianOrgUserId}:${bucket}`;
+  return cleoStateQueue.add('refresh-cleo-state', payload, { jobId });
 }

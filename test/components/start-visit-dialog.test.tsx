@@ -1,5 +1,4 @@
 import { render, screen, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Division } from '@prisma/client';
 
@@ -8,6 +7,13 @@ import {
   type StartVisitDialogCase,
   type StartVisitDialogEpisode,
 } from '@/app/(clinical)/patients/[id]/_components/start-visit-dialog';
+
+/**
+ * Sprint 0.13 — Miss Cleo's case-router agent. The case picker became the
+ * OVERRIDE path: the default flow auto-posts WITHOUT a case id and the
+ * worker proposes the destination at review time. The chart hero "Continue
+ * this case" button supplies forceCaseId to bind explicitly.
+ */
 
 const ep1: StartVisitDialogEpisode = {
   id: 'ep_knee',
@@ -55,9 +61,9 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('StartVisitDialog — case + episode branching', () => {
-  it('with 0 active cases, opens picker and does not auto-post', async () => {
-    const submit = vi.fn().mockResolvedValue({ encounterId: 'enc1', noteId: 'note1' });
+describe('StartVisitDialog — Sprint 0.13 agent-routed default flow', () => {
+  it('with 0 active cases, auto-posts WITHOUT a case id (Cleo routes at review)', async () => {
+    const submit = vi.fn().mockResolvedValue({ encounterId: 'enc0', noteId: 'note0' });
 
     render(
       <StartVisitDialog
@@ -71,43 +77,23 @@ describe('StartVisitDialog — case + episode branching', () => {
       />,
     );
 
-    expect(await screen.findByText(/which case is this visit for/i)).toBeInTheDocument();
-    expect(submit).not.toHaveBeenCalled();
+    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+    expect(submit).toHaveBeenCalledWith({
+      patientId: 'pat_1',
+      caseManagementId: null,
+      episodeOfCareId: null,
+      source: 'auto-none',
+    });
   });
 
-  it('with 1 active case (medical viewer), auto-posts case only', async () => {
+  it('with 1 active case (medical viewer), still auto-posts without case id', async () => {
     const submit = vi.fn().mockResolvedValue({ encounterId: 'enc2', noteId: 'note2' });
-    const onStarted = vi.fn();
 
     render(
       <StartVisitDialog
         patientId="pat_2"
         activeCases={[caseDep]}
         viewerDivision={Division.MEDICAL}
-        open
-        onOpenChange={vi.fn()}
-        onStarted={onStarted}
-        submit={submit}
-      />,
-    );
-
-    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
-    expect(submit).toHaveBeenCalledWith({
-      patientId: 'pat_2',
-      caseManagementId: 'case_dep',
-      episodeOfCareId: null,
-      source: 'auto-none',
-    });
-  });
-
-  it('with 1 rehab case + 1 episode (PT viewer), auto-posts case and episode', async () => {
-    const submit = vi.fn().mockResolvedValue({ encounterId: 'enc3', noteId: 'note3' });
-
-    render(
-      <StartVisitDialog
-        patientId="pat_3"
-        activeCases={[caseKnee]}
-        viewerDivision={Division.REHAB}
         open
         onOpenChange={vi.fn()}
         onStarted={vi.fn()}
@@ -117,15 +103,15 @@ describe('StartVisitDialog — case + episode branching', () => {
 
     await waitFor(() => expect(submit).toHaveBeenCalledOnce());
     expect(submit).toHaveBeenCalledWith({
-      patientId: 'pat_3',
-      caseManagementId: 'case_knee',
-      episodeOfCareId: 'ep_knee',
-      source: 'auto-single',
+      patientId: 'pat_2',
+      caseManagementId: null,
+      episodeOfCareId: null,
+      source: 'auto-none',
     });
   });
 
-  it('with 2+ active cases, renders case picker', async () => {
-    const submit = vi.fn();
+  it('with 2+ active cases, auto-posts (no picker) — Cleo routes at review', async () => {
+    const submit = vi.fn().mockResolvedValue({ encounterId: 'enc3', noteId: 'note3' });
 
     render(
       <StartVisitDialog
@@ -139,13 +125,17 @@ describe('StartVisitDialog — case + episode branching', () => {
       />,
     );
 
-    expect(await screen.findByText(/which case is this visit for/i)).toBeInTheDocument();
-    expect(screen.getByText('Right knee OA')).toBeInTheDocument();
-    expect(submit).not.toHaveBeenCalled();
+    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+    expect(submit).toHaveBeenCalledWith({
+      patientId: 'pat_4',
+      caseManagementId: null,
+      episodeOfCareId: null,
+      source: 'auto-none',
+    });
   });
 
-  it('REHAB viewer with 2 episodes under one case shows episode picker', async () => {
-    const submit = vi.fn();
+  it('REHAB viewer with 2 episodes under a case but no forceCaseId still auto-posts', async () => {
+    const submit = vi.fn().mockResolvedValue({ encounterId: 'enc5', noteId: 'note5' });
 
     render(
       <StartVisitDialog
@@ -159,11 +149,65 @@ describe('StartVisitDialog — case + episode branching', () => {
       />,
     );
 
+    // No forceCaseId → no episode picker; the agent flow auto-posts. The
+    // rehab episode picker is a property of the override path only.
+    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+    expect(submit).toHaveBeenCalledWith({
+      patientId: 'pat_5',
+      caseManagementId: null,
+      episodeOfCareId: null,
+      source: 'auto-none',
+    });
+  });
+});
+
+describe('StartVisitDialog — Sprint 0.13 override paths', () => {
+  it('forceCaseId binds explicitly + skips the case picker', async () => {
+    const submit = vi.fn().mockResolvedValue({ encounterId: 'enc6', noteId: 'note6' });
+
+    render(
+      <StartVisitDialog
+        patientId="pat_6"
+        activeCases={[caseDep]}
+        viewerDivision={Division.MEDICAL}
+        open
+        forceCaseId={caseDep.id}
+        onOpenChange={vi.fn()}
+        onStarted={vi.fn()}
+        submit={submit}
+      />,
+    );
+
+    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+    expect(submit).toHaveBeenCalledWith({
+      patientId: 'pat_6',
+      caseManagementId: 'case_dep',
+      episodeOfCareId: null,
+      source: 'picker',
+    });
+  });
+
+  it('forceCaseId on a REHAB case with 2 episodes opens the episode picker', async () => {
+    const submit = vi.fn();
+
+    render(
+      <StartVisitDialog
+        patientId="pat_7"
+        activeCases={[caseTwoRehab]}
+        viewerDivision={Division.REHAB}
+        open
+        forceCaseId={caseTwoRehab.id}
+        onOpenChange={vi.fn()}
+        onStarted={vi.fn()}
+        submit={submit}
+      />,
+    );
+
     expect(await screen.findByText(/rehab episode for this case/i)).toBeInTheDocument();
     expect(submit).not.toHaveBeenCalled();
   });
 
-  it('with forceDatePicker and 1 rehab case, shows visit-date without auto-post', () => {
+  it('forceDatePicker shows the visit-date picker without auto-post', () => {
     const submit = vi.fn();
 
     render(

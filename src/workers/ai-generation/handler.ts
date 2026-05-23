@@ -3,7 +3,7 @@ import { Prisma, NoteStatus, Division } from '@prisma/client';
 
 import { prisma } from '@/lib/prisma';
 import { writeAuditLog } from '@/lib/audit/log';
-import { enqueueCaseRouterJob } from '@/lib/queue';
+import { enqueueCaseRouterJob, enqueueCleoStateRefresh } from '@/lib/queue';
 import { getLLMService } from '@/services/llm';
 import { buildMasterPrompt, buildSectionPrompt, type NoteSectionDef } from '@/lib/notes/build-prompt';
 import { projectPatientForPrompt, projectEpisodeForPrompt } from '@/lib/notes/projections';
@@ -249,6 +249,13 @@ export async function handle(job: Job<AiGenerationJob>) {
     // enqueueNoteBriefJob from the sign route. Idempotent on noteId
     // (queue.ts) so a retried completion collapses to one Redis entry.
     await enqueueCaseRouterJob({ noteId, orgId });
+    // Sprint 0.14 — chain-enqueue the cleo-state refresh for the note's
+    // authoring clinician. Throttled per-tuple (5 min) at the queue layer.
+    await enqueueCleoStateRefresh({
+      orgId,
+      patientId: note.patientId,
+      clinicianOrgUserId: note.clinicianOrgUserId,
+    });
     return { ok: true, sections: sections.length, failed: 0, skipped: 'no_transcript' };
   }
 
@@ -347,6 +354,13 @@ export async function handle(job: Job<AiGenerationJob>) {
   // noteId (queue.ts) so a retried completion collapses to one Redis
   // entry. Same pattern as enqueueNoteBriefJob from the sign route.
   await enqueueCaseRouterJob({ noteId, orgId });
+  // Sprint 0.14 — chain-enqueue the cleo-state refresh for the note's
+  // authoring clinician. Throttled per-tuple (5 min) at the queue layer.
+  await enqueueCleoStateRefresh({
+    orgId,
+    patientId: note.patientId,
+    clinicianOrgUserId: note.clinicianOrgUserId,
+  });
 
   return { ok: true, sections: sections.length, failed: failedCount };
 }

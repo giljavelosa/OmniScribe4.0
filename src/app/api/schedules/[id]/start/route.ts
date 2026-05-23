@@ -165,16 +165,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }
     }
     if (err instanceof CaseResolutionError) {
+      // Sprint 0.13 — `case_required` no longer throws (resolver returns
+      // null + startVisit auto-creates a PENDING_ROUTER case). Only
+      // `case_not_found` (explicit id mismatch) still surfaces here.
       return NextResponse.json(
-        {
-          error: {
-            code: err.code,
-            message:
-              err.code === 'case_required'
-                ? 'Select a case management for this visit.'
-                : 'Case management not found.',
-          },
-        },
+        { error: { code: err.code, message: 'Case management not found.' } },
         { status: 400 },
       );
     }

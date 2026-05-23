@@ -15,6 +15,7 @@ import type { VisitHistoryRow } from '@/components/patients/visit-history-list';
 import type { PatientSnapshotStrip as PatientSnapshotStripData } from '@/lib/snapshots/types';
 import type { ExternalContextSummary } from './external-context-section';
 import { CasesPanel, type CasePanelData } from './cases-panel';
+import { CleoReadCard, type CleoReadCardData } from './cleo-read-card';
 import { StartVisitButton } from './start-visit-button';
 import {
   StartVisitDialog,
@@ -101,6 +102,10 @@ type Props = {
   /** EhrLinkPanel is a Server Component — passed as rendered ReactNode so it
    *  can live in the Profile tab without breaking the client boundary. */
   ehrPanel: React.ReactNode;
+  /** Sprint 0.14 — Miss Cleo's per-(patient × clinician) memory projected
+   *  into the card-friendly shape. Null when no state row exists yet —
+   *  the card renders an empty-state stub + ASK CTA. */
+  cleoRead: CleoReadCardData | null;
 };
 
 const DIVISION_DISPLAY = [
@@ -165,6 +170,7 @@ export function PatientChartTabs({
   startVisitDefaultSiteId,
   canEditEpisodes,
   ehrPanel,
+  cleoRead,
 }: Props) {
   const router = useRouter();
   const age = computeAge(patient.dobIso);
@@ -357,6 +363,19 @@ export function PatientChartTabs({
 
             {/* ── Overview cockpit ─────────────────────────────────────────── */}
             <TabsContent value="overview" className="space-y-5">
+              {/* Sprint 0.14 — Miss Cleo's read. Mounts at the TOP per spec
+                  decision 6 (same anchor priority as the safety band). The
+                  card is purely informational; tapping the CTA dispatches a
+                  global event that CopilotShell listens for and opens the
+                  Sheet (see copilot-shell.tsx: 'cleo:open-sheet'). */}
+              <CleoReadCard
+                patientFirstName={patient.firstName}
+                data={cleoRead}
+                onAskOpen={() => {
+                  if (typeof window === 'undefined') return;
+                  window.dispatchEvent(new CustomEvent('cleo:open-sheet'));
+                }}
+              />
               {/* Division summary line — kept per spec */}
               {totalVisits > 0 && (
                 <div className="flex items-center gap-2 flex-wrap text-sm">
@@ -547,10 +566,10 @@ export function PatientChartTabs({
         problems={activeProblems}
       />
 
-      {/* "Continue this case" — opened from the Cases-tab hero card. Mounts
-          a scoped StartVisitDialog with activeCases=[justThisCase] so the
-          dialog's existing 1-case path handles it: site + rehab-episode
-          pickers still render when needed, but the case picker is skipped. */}
+      {/* Sprint 0.13 — "Continue this case" override. Opened from the Cases-
+          tab hero card. Sets forceCaseId so the dialog binds explicitly to
+          the chosen case (skipping Miss Cleo's case-router); site + rehab-
+          episode pickers still render when needed. */}
       {continueCaseId !== null &&
         (() => {
           const c = activeCasesForPicker.find((x) => x.id === continueCaseId);
@@ -563,6 +582,7 @@ export function PatientChartTabs({
               sites={startVisitSites}
               defaultSiteId={startVisitDefaultSiteId}
               open
+              forceCaseId={c.id}
               onOpenChange={(next) => {
                 if (!next) setContinueCaseId(null);
               }}

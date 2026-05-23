@@ -7,6 +7,7 @@ import { requireFeatureAccess } from '@/lib/authz/server';
 import { writeAuditLog } from '@/lib/audit/log';
 import { verifyTotpToken } from '@/lib/mfa';
 import {
+  enqueueCleoStateRefresh,
   enqueueNoteBriefJob,
   enqueuePostSignArtifactJob,
 } from '@/lib/queue';
@@ -364,6 +365,32 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     } catch (e) {
       console.warn('[sign] referral-letter enqueue failed (note already signed):', e instanceof Error ? e.message : e);
     }
+  }
+
+  // Sprint 0.14 — chain-enqueue cleo-state refresh for (a) the signing
+  // clinician AND (b) every other clinician who already has a
+  // CopilotPatientState row on this patient. Both groups need to learn
+  // from the new signed note. Throttled per-tuple (5-min bucket) at the
+  // queue layer so a burst of signs collapses to one rebuild per
+  // (patient × clinician). Wrapped to keep Redis hiccups from 500ing
+  // the sign (the note already committed; the worker can replay).
+  try {
+    const signerOrgUserId = note.clinicianOrgUserId;
+    const peers = await prisma.copilotPatientState.findMany({
+      where: { orgId: orgUser.orgId, patientId: note.patientId },
+      select: { clinicianOrgUserId: true },
+    });
+    const targets = new Set<string>([signerOrgUserId]);
+    for (const p of peers) targets.add(p.clinicianOrgUserId);
+    for (const clinicianOrgUserId of targets) {
+      await enqueueCleoStateRefresh({
+        orgId: orgUser.orgId,
+        patientId: note.patientId,
+        clinicianOrgUserId,
+      });
+    }
+  } catch (e) {
+    console.warn('[sign] cleo-state refresh enqueue failed:', e instanceof Error ? e.message : e);
   }
 
   return NextResponse.json({ data: { ok: true, signedAt: now.toISOString() } });

@@ -64,7 +64,10 @@ export type StartVisitDialogSite = {
 
 export type StartVisitSubmitArgs = {
   patientId: string;
-  caseManagementId: string;
+  /** Sprint 0.13 — null when starting an agent-routed visit. The server
+   *  auto-creates a PENDING_ROUTER case in the same tx and Miss Cleo's
+   *  case-router worker proposes the destination at review time. */
+  caseManagementId: string | null;
   episodeOfCareId: string | null;
   source: 'picker' | 'auto-single' | 'auto-none' | 'manual-skip';
   /** Site-of-record for THIS visit. Required for the ad-hoc path
@@ -112,6 +115,15 @@ type Props = {
    * defaults to today and the clinician picks the actual date-of-service.
    */
   forceDatePicker?: boolean;
+  /**
+   * Sprint 0.13 override path. When set, the dialog binds the new visit to
+   * this case (skipping Miss Cleo's case-router). Used by:
+   *   - the chart hero "Continue this case" button (id of the chosen case)
+   *   - the routing panel's "Change manually" branch
+   * When unset, the default flow posts without a case id and the worker
+   * proposes the destination at review time.
+   */
+  forceCaseId?: string;
 };
 
 /** Sentinel — rehab visit without linking an episode of care. */
@@ -119,38 +131,34 @@ const NO_EPISODE = '__no_episode__';
 const NEW_CASE = '__new_case__';
 
 /**
- * StartVisitDialog — Sheet that picks which episode an ad-hoc / scheduled visit
- * is for, so Note.division resolves to the right value (REHAB CPT codes, BH
- * lens, MEDICAL fallback).
+ * StartVisitDialog — Sheet that starts a visit. Sprint 0.13 made the case
+ * picker an OVERRIDE path: the default flow POSTs without a case id and Miss
+ * Cleo's case-router worker proposes the destination at review time. Existing
+ * surfaces (the chart hero "Continue this case" shortcut, the routing-panel
+ * "Change manually" branch) set `forceCaseId` to bind explicitly + still get
+ * the site / date / rehab-episode pickers as needed.
  *
- * Four cases:
- *   - 0 active episodes:   POST { patientId } immediately, no UI.
- *   - 1 active episode:    POST { patientId, episodeOfCareId } immediately.
- *   - 2+ active episodes:  open the picker; clinician picks an episode OR the
- *                          "skip" option OR navigates to /episodes/new.
- *   - new-episode flow:    link out to /patients/[id]/episodes/new; clinician
- *                          comes back and starts again from the patient page.
+ * Picker is forced (vs. auto-post) when ANY of:
+ *   - forceDatePicker (late-entry path)
+ *   - 2+ pickable sites (clinician needs to pick where they are physically)
+ *   - REHAB clinician + forceCaseId points at a case with 2+ active episodes
  */
 export function StartVisitDialog(props: Props) {
-  // The picker shell now ALSO carries the Site dropdown when sites are
-  // provided. We still keep the auto-post path for the everyday "0/1
-  // episode + 0 or 1 pickable site" case — it auto-uses defaultSiteId
-  // (when set) and skips UI entirely.
-  //
-  // Forced picker when: late entry, 2+ episodes, OR 2+ pickable sites
-  // (clinician needs to choose where they are physically).
   const needsSitePicker = (props.sites?.length ?? 0) >= 2;
-  const rehabEpisodes =
-    props.activeCases.length === 1 ? props.activeCases[0]!.episodes : [];
-  const needsCasePicker = props.activeCases.length === 0 || props.activeCases.length >= 2;
+  // Rehab episode picker only applies when an explicit case is being bound
+  // (override flow). The default agent-routed flow doesn't pick an episode
+  // — Cleo's proposal handles routing entirely.
+  const forcedCase = props.forceCaseId
+    ? (props.activeCases.find((c) => c.id === props.forceCaseId) ?? null)
+    : null;
+  const rehabEpisodes = forcedCase?.episodes ?? [];
   const needsRehabEpisodePicker =
+    !!forcedCase &&
     props.viewerDivision === 'REHAB' &&
-    props.activeCases.length === 1 &&
     rehabEpisodes.length >= 2;
 
   if (
     props.forceDatePicker ||
-    needsCasePicker ||
     needsRehabEpisodePicker ||
     needsSitePicker
   ) {
@@ -161,37 +169,30 @@ export function StartVisitDialog(props: Props) {
 
 function AutoPostShell({
   patientId,
-  activeCases,
-  viewerDivision,
   sites,
   defaultSiteId,
   open,
   onOpenChange,
   onStarted,
   submit,
+  forceCaseId,
 }: Props) {
   const [error, setError] = useState<string | null>(null);
   const submitter = submit ?? defaultEncountersSubmit;
   const sitesGovernedHere = sites !== undefined;
-  const soleCase = activeCases.length === 1 ? activeCases[0]! : null;
-  const rehabEpisodes = soleCase?.episodes ?? [];
-  const autoPost =
-    open &&
-    !!soleCase &&
-    (viewerDivision !== 'REHAB' || rehabEpisodes.length <= 1) &&
-    (!sitesGovernedHere || !!defaultSiteId);
+  const autoPost = open && (!sitesGovernedHere || !!defaultSiteId);
 
   useEffect(() => {
-    if (!autoPost || !soleCase) return;
-    const explicitEp =
-      viewerDivision === 'REHAB' && rehabEpisodes.length === 1
-        ? rehabEpisodes[0]!.id
-        : null;
+    if (!autoPost) return;
+    // Sprint 0.13 — default flow posts WITHOUT a case id. Miss Cleo's
+    // case-router worker proposes the destination at review time. The
+    // override paths (chart hero "Continue this case" + the routing
+    // panel's "Change manually") set forceCaseId to bind explicitly.
     submitter({
       patientId,
-      caseManagementId: soleCase.id,
-      episodeOfCareId: explicitEp,
-      source: explicitEp ? 'auto-single' : 'auto-none',
+      caseManagementId: forceCaseId ?? null,
+      episodeOfCareId: null,
+      source: forceCaseId ? 'picker' : 'auto-none',
       ...(sitesGovernedHere && defaultSiteId ? { siteId: defaultSiteId } : {}),
     })
       .then((res) => {
@@ -223,19 +224,21 @@ function PickerShell({
   onStarted,
   submit,
   forceDatePicker,
+  forceCaseId,
 }: Props) {
   const [newCaseOpen, setNewCaseOpen] = useState(false);
   const siteListLen = sites?.length ?? 0;
   const sitesGovernedHere = sites !== undefined;
-  // Pre-select by clinician-aware recency (matches the chart's hero pick).
-  // Falls back to "no selection" only when there are zero cases.
+  // Sprint 0.13 — case picker is reachable only via the explicit
+  // "New case management…" button OR when forceCaseId is supplied. In both
+  // cases the dialog is bound to a specific case (not Cleo-routed). The
+  // default agent flow never enters PickerShell with a case picker visible.
   const sortedCases = useMemo(
     () => sortCasesByViewerRecency(activeCases),
     [activeCases],
   );
-  const initialCaseId = sortedCases[0]?.id ?? '';
   const heroCaseId = sortedCases.length >= 2 ? sortedCases[0]!.id : null;
-  const [caseId, setCaseId] = useState<string>(initialCaseId);
+  const [caseId, setCaseId] = useState<string>(forceCaseId ?? '');
   const selectedCase = activeCases.find((c) => c.id === caseId) ?? null;
   const rehabEpisodes = selectedCase?.episodes ?? [];
   const initialEpisodeChoice =
@@ -278,7 +281,7 @@ function PickerShell({
   const dateOfServiceIso = picked && !dateInvalid && daysBack !== 0 ? picked.toISOString() : undefined;
 
   function submitChoice() {
-    if (!caseId || caseId === NEW_CASE) return;
+    if (caseId === NEW_CASE) return;
     if (viewerDivision === 'REHAB' && rehabEpisodes.length >= 2 && !episodeChoice) return;
     if (sitesGovernedHere && !siteId) {
       setError('Pick the site you are at for this visit.');
@@ -290,13 +293,18 @@ function PickerShell({
       try {
         const res = await submitter({
           patientId,
-          caseManagementId: caseId,
+          // Sprint 0.13 — caseId is empty in the default agent-routed path
+          // (no case picker shown); send null and let Cleo propose at review.
+          caseManagementId: caseId || null,
           episodeOfCareId:
             viewerDivision === 'REHAB' && episodeChoice && episodeChoice !== NO_EPISODE
               ? episodeChoice
               : null,
-          source:
-            episodeChoice === NO_EPISODE || !episodeChoice ? 'manual-skip' : 'picker',
+          source: !caseId
+            ? 'auto-none'
+            : episodeChoice === NO_EPISODE || !episodeChoice
+              ? 'manual-skip'
+              : 'picker',
           ...(sitesGovernedHere && siteId ? { siteId } : {}),
           dateOfService: dateOfServiceIso,
         });
@@ -308,19 +316,17 @@ function PickerShell({
     });
   }
 
-  const showCasePicker = activeCases.length === 0 || activeCases.length >= 2;
+  // Sprint 0.13 — the inline case picker is reachable only when the parent
+  // explicitly hits "New case management…" inside the picker (override path).
+  // Default agent-routed flow never shows a case list here.
+  const showCasePicker = false;
   const showRehabEpisodePicker =
     viewerDivision === 'REHAB' && !!selectedCase && rehabEpisodes.length >= 2;
   const showSitePicker = sitesGovernedHere && siteListLen >= 2;
   const showSiteReadonly = sitesGovernedHere && siteListLen === 1;
-  const title = showCasePicker
-    ? 'Which case is this visit for?'
-    : forceDatePicker
-      ? 'Start late entry'
-      : 'Start visit';
-  const description = showCasePicker
-    ? 'Every visit anchors to a case management. Pick the diagnosis arc this visit continues.'
-    : 'Set the date the visit actually happened. Today is fine for a normal visit — backdate to chart a past one.';
+  const title = forceDatePicker ? 'Start late entry' : 'Start visit';
+  const description =
+    'Set the date the visit actually happened. Today is fine for a normal visit — backdate to chart a past one.';
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -746,7 +752,11 @@ async function defaultEncountersSubmit(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       patientId: args.patientId,
-      caseManagementId: args.caseManagementId,
+      // Sprint 0.13 — only send caseManagementId when explicit (override
+      // path). Default flow omits the field; the server auto-creates a
+      // PENDING_ROUTER case and Miss Cleo proposes the destination at
+      // review time.
+      ...(args.caseManagementId ? { caseManagementId: args.caseManagementId } : {}),
       ...(args.siteId ? { siteId: args.siteId } : {}),
       ...(args.episodeOfCareId ? { episodeOfCareId: args.episodeOfCareId } : {}),
       ...(args.dateOfService ? { dateOfService: args.dateOfService } : {}),

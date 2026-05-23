@@ -1,12 +1,32 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState, useTransition } from 'react';
-import { BookOpen, CornerUpRight, ExternalLink, Loader2, Send, User, X } from 'lucide-react';
+import {
+  BookOpen,
+  CornerUpRight,
+  ExternalLink,
+  Loader2,
+  MoreHorizontal,
+  RotateCcw,
+  Send,
+  User,
+  X,
+} from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { StatusBanner } from '@/components/ui/status-banner';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { cn } from '@/lib/cn';
 import { ReasoningChain, type ReasoningStep } from './reasoning-chain';
 import { COPILOT_DISPLAY_NAME, buildGreeting } from '@/services/copilot/persona';
@@ -82,14 +102,55 @@ export function ResearchSurface({
   greetedRef?: React.MutableRefObject<boolean>;
 } = {}) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [hydrated, setHydrated] = useState(false);
   const [draft, setDraft] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const [resetMenuOpen, setResetMenuOpen] = useState(false);
+  const [resetPending, setResetPending] = useState(false);
   const scrollAnchorRef = useRef<HTMLDivElement | null>(null);
   const localGreetedRef = useRef(false);
   const greetedRefResolved = greetedRef ?? localGreetedRef;
 
+  // Sprint 0.14 — hydrate the persistent RESEARCH conversation on mount.
+  // One thread per (org × clinician); patient-agnostic by design.
   useEffect(() => {
+    let cancelled = false;
+    void fetch('/api/copilot/conversations?mode=RESEARCH')
+      .then(async (res) => {
+        if (!res.ok || cancelled) return;
+        const body = (await res.json()) as {
+          data: {
+            conversation: { id: string } | null;
+            messages: Array<{
+              role: string;
+              content: string;
+              sources: unknown;
+              toolCalls: unknown;
+            }>;
+          };
+        };
+        if (cancelled) return;
+        const hydratedMessages: ChatMessage[] = body.data.messages.map((m) => ({
+          role: m.role === 'assistant' ? ('assistant' as const) : ('user' as const),
+          content: m.content,
+          sources: Array.isArray(m.sources) ? (m.sources as Source[]) : undefined,
+        }));
+        setMessages(hydratedMessages);
+        setConversationId(body.data.conversation?.id ?? null);
+        setHydrated(true);
+      })
+      .catch(() => {
+        if (!cancelled) setHydrated(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
     if (greetedRefResolved.current) return;
     if (messages.length > 0) return;
     greetedRefResolved.current = true;
@@ -98,11 +159,31 @@ export function ResearchSurface({
       surface: surface ?? 'review',
       mode: 'research',
     });
-    // Intentional: greeting fires once per session (ref guard).
+    // Sprint 0.14 — greeting only on truly-fresh threads (post-hydrate).
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setMessages([{ role: 'assistant', content: greeting }]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [hydrated]);
+
+  const resetConversation = useCallback(async () => {
+    if (!conversationId || resetPending) return;
+    setResetPending(true);
+    try {
+      const res = await fetch(`/api/copilot/conversations/${conversationId}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) {
+        setError('Could not reset the conversation.');
+        return;
+      }
+      setMessages([]);
+      setConversationId(null);
+      greetedRefResolved.current = false;
+      setResetMenuOpen(false);
+    } finally {
+      setResetPending(false);
+    }
+  }, [conversationId, resetPending, greetedRefResolved]);
 
   const send = useCallback(
     (text: string) => {
@@ -113,16 +194,11 @@ export function ResearchSurface({
       setMessages((prev) => [...prev, userMsg]);
       setDraft('');
       startTransition(async () => {
-        const history = [...messages, userMsg]
-          .slice(0, -1)
-          .map((m) => ({
-            role: m.role === 'assistant' ? ('assistant' as const) : ('user' as const),
-            content: m.content,
-          }));
+        // Sprint 0.14 — server reads research-mode history from DB.
         const res = await fetch('/api/copilot/research', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ question: trimmed, history }),
+          body: JSON.stringify({ question: trimmed }),
         });
         if (!res.ok) {
           setError(`Research failed (${res.status}).`);
@@ -139,6 +215,7 @@ export function ResearchSurface({
             toolCalls: Array<{ tool: string; rowCount: number; resultOk: boolean }>;
             reasoningSteps?: ReasoningStep[];
             stub: boolean;
+            conversationId?: string;
           };
         };
         const a = body.data.answer;
@@ -155,16 +232,61 @@ export function ResearchSurface({
             reasoningSteps: body.data.reasoningSteps ?? [],
           },
         ]);
+        if (body.data.conversationId) {
+          setConversationId(body.data.conversationId);
+        }
         setTimeout(() => scrollAnchorRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
       });
     },
-    [messages, pending],
+    [pending],
   );
 
   const hasUserMessage = messages.some((m) => m.role === 'user');
 
   return (
     <div className="flex h-full flex-col">
+      {/* Sprint 0.14 — persistent-conversation header (research mode). */}
+      {conversationId && (
+        <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-1.5 text-[11px] text-muted-foreground">
+          <span className="italic">Research conversation saved.</span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-6 gap-1 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+            onClick={() => setResetMenuOpen(true)}
+            disabled={resetPending}
+            aria-label="Reset this conversation"
+          >
+            <MoreHorizontal className="size-3" aria-hidden />
+            Reset
+          </Button>
+        </div>
+      )}
+
+      <AlertDialog open={resetMenuOpen} onOpenChange={setResetMenuOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reset this research conversation?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Clears the literature-search thread. Doesn&apos;t affect any
+              patient memory (research mode is patient-agnostic).
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={resetPending}>Keep conversation</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={resetConversation}
+              disabled={resetPending}
+              className="gap-1"
+            >
+              <RotateCcw className="size-3.5" aria-hidden />
+              {resetPending ? 'Resetting…' : 'Reset conversation'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
         {messages.map((m, i) => (
           <MessageBubble

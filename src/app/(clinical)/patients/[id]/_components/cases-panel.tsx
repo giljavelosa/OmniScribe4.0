@@ -53,7 +53,10 @@ export type CasePanelData = {
   secondaryIcd: string | null;
   secondaryIcdLabel: string | null;
   description: string | null;
-  status: 'ACTIVE' | 'CLOSED' | 'CANCELLED';
+  /** PENDING_ROUTER cases never reach the panel (the chart filter excludes
+   *  them) — listed here so the union matches Prisma's enum type without
+   *  a cast at the call site. */
+  status: 'ACTIVE' | 'CLOSED' | 'CANCELLED' | 'PENDING_ROUTER';
   /** ISO — most recent encounter on this case by the viewing clinician (if any). */
   viewerLastActivityAt: string | null;
   /** ISO — most recent encounter in viewer's division on this case. */

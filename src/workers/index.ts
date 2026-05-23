@@ -8,6 +8,8 @@ import { aiGenerationHandler } from './ai-generation.worker';
 import { postSignArtifactsHandler } from './post-sign-artifacts.worker';
 import { noteBriefHandler } from './note-brief.worker';
 import { externalContextHandler } from './external-context.worker';
+import { caseRouterHandler } from './case-router.worker';
+import { cleoStateHandler } from './cleo-state.worker';
 import { noteFinalizeStub } from './stubs';
 
 /**
@@ -36,6 +38,8 @@ const workers = [
   new Worker(QUEUE_NAMES.noteBrief, noteBriefHandler, baseOptions),
   new Worker(QUEUE_NAMES.postSignArtifacts, postSignArtifactsHandler, baseOptions),
   new Worker(QUEUE_NAMES.externalContextTranscription, externalContextHandler, baseOptions),
+  new Worker(QUEUE_NAMES.caseRouter, caseRouterHandler, baseOptions),
+  new Worker(QUEUE_NAMES.cleoState, cleoStateHandler, baseOptions),
 ];
 
 for (const w of workers) {

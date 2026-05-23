@@ -213,6 +213,74 @@ export type AuditAction =
   | 'CASE_MANAGEMENT_CLOSED'
   | 'GOAL_STATUS_CHANGED'
   | 'GOAL_PROGRESS_ENTRY_ADDED'
+  // ---- Sprint 0.14: Miss Cleo's persistent memory + chart card ----
+  //
+  // CLEO_STATE_REBUILT fires when the cleo-state worker upserts a
+  // CopilotPatientState row. Metadata: { stateId, patientId,
+  // clinicianOrgUserId, generatorVersion, rebuildDurationMs,
+  // patternCount, caseCount, factCount, personaVersion }. PHI-free.
+  //
+  // CLEO_CONVERSATION_OPENED fires on the first message in a brand-new
+  // CopilotConversation row. Metadata: { conversationId, mode, patientId,
+  // personaVersion }. patientId is null for RESEARCH-mode threads.
+  //
+  // CLEO_CONVERSATION_PURGED fires when "Reset this conversation" is hit.
+  // Metadata: { conversationId, mode, patientId, messageCount, personaVersion }.
+  // The CopilotPatientState row is NOT purged — only the chat thread (facts
+  // distilled into state survive).
+  | 'CLEO_STATE_REBUILT'
+  | 'CLEO_CONVERSATION_OPENED'
+  | 'CLEO_CONVERSATION_PURGED'
+  // ---- Sprint 0.13: Miss Cleo's case-router agent ----
+  //
+  // CASE_ROUTER_PROPOSED fires once per CaseRouterRun row written by the
+  // worker. Metadata: { caseRouterRunId, confidence, modelVersion, action,
+  // alternativesCount, personaVersion: 'miss-cleo-v1' }. PHI-free —
+  // structural counts + enums only; reasoning + ICD codes live on the
+  // CaseRouterRun row, not in metadata.
+  //
+  // CASE_ROUTER_ACCEPTED + CASE_ROUTER_OVERRIDDEN fire from the accept
+  // endpoint. ACCEPTED metadata: { caseRouterRunId, caseManagementId,
+  // action, personaVersion }. OVERRIDDEN metadata: { caseRouterRunId,
+  // proposedAction, chosenAction, caseManagementId, personaVersion }.
+  // The pair (CaseRouterRun + audit) lets a regulator reconstruct *every*
+  // routing decision — what the AI proposed (with reasoning + confidence)
+  // and what the clinician chose.
+  | 'CASE_ROUTER_PROPOSED'
+  | 'CASE_ROUTER_ACCEPTED'
+  | 'CASE_ROUTER_OVERRIDDEN'
+  // ---- Sprint 0.15: FHIR Phase D₁ — Conditions in the case-router ----
+  //
+  // CASE_ROUTER_FHIR_CITED fires when the case-router worker shipped a
+  // proposal that cited at least one verified FHIR Condition (i.e.
+  // `proposalJson.fhirCitations.length > 0`). Metadata: {
+  // caseRouterRunId, citationCount, fhirIds: string[],
+  // personaVersion: 'miss-cleo-v1' }. PHI-free — fhirIds are EHR-side
+  // identifiers, not HIPAA Safe Harbor PHI. The full citation payload
+  // (recorder names, recordedDate, lastUpdated) lives on the
+  // CaseRouterRun row.
+  //
+  // CASE_ROUTER_FHIR_UNAVAILABLE fires when the worker tried to read
+  // FHIR Conditions but the read failed (cache stale / read error /
+  // bounded-timeout). Auditor lens: distinguishes "the agent had FHIR
+  // data and didn't cite it" from "the system degraded silently."
+  // Metadata: { orgId, patientId, errorKind: 'no_cache' | 'timeout' |
+  // 'cache_error', personaVersion }. The `not_linked` kind is NOT
+  // audited — patients with no verified FHIR link are the baseline
+  // state, not a degraded one.
+  //
+  // CASE_FHIR_LINKED fires from the accept endpoint when a clinician
+  // confirms an `open-new-from-condition` proposal and the resulting
+  // case is created with `mirrorsFhirConditionId` populated. Metadata:
+  // { caseManagementId, caseRouterRunId, fhirConditionId,
+  // personaVersion }. The pair (CaseRouterRun.proposalJson.fhirCitations
+  // + this audit) gives an auditor a single coherent provenance chain
+  // from "the EHR coded this diagnosis" → "Miss Cleo proposed it" →
+  // "the clinician accepted" → "the OmniScribe case carries the
+  // verified ICD."
+  | 'CASE_ROUTER_FHIR_CITED'
+  | 'CASE_ROUTER_FHIR_UNAVAILABLE'
+  | 'CASE_FHIR_LINKED'
   // ---- Unit 12: Patient detail redesign ----
   | 'SNAPSHOT_OVERRIDE_CREATED'
   | 'SNAPSHOT_OVERRIDE_SUPERSEDED'

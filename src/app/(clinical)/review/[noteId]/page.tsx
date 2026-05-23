@@ -11,6 +11,11 @@ import type { CopilotFollowUp } from '@/components/copilot/cards/open-followups-
 import type { NextVisitFollowUp } from './_components/follow-ups-for-next-visit';
 import { hasPlanFollowUps } from '@/lib/notes/has-plan-followups';
 import { ReviewClient } from './_components/review-client';
+import type {
+  CaseRouterRunDTO,
+  CaseRouterPanelCase,
+  ProposalDTO,
+} from './_components/case-routing-panel';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Review note' };
@@ -30,6 +35,8 @@ export default async function ReviewPage({ params }: { params: Promise<{ noteId:
     include: {
       template: true,
       patient: true,
+      encounter: { select: { caseManagementId: true } },
+      caseRouterRun: true,
     },
   });
   if (!note) notFound();
@@ -98,6 +105,48 @@ export default async function ReviewPage({ params }: { params: Promise<{ noteId:
     createdAt: r.createdAt.toISOString(),
   }));
 
+  // Sprint 0.13 — Miss Cleo's case-routing panel state. Server-render the
+  // CaseRouterRun if the worker fired before the page loaded; the panel
+  // polls a GET endpoint for late-arrivers. Active cases are scoped to
+  // the patient + exclude the encounter's currently-bound PENDING_ROUTER
+  // case so the manual picker only surfaces bindable destinations.
+  const initialRouterRun: CaseRouterRunDTO | null = note.caseRouterRun
+    ? {
+        id: note.caseRouterRun.id,
+        confidence: note.caseRouterRun.confidence,
+        reasoning: note.caseRouterRun.reasoning,
+        modelVersion: note.caseRouterRun.modelVersion,
+        createdAt: note.caseRouterRun.createdAt.toISOString(),
+        acceptedAction: note.caseRouterRun.acceptedAction,
+        acceptedAt: note.caseRouterRun.acceptedAt?.toISOString() ?? null,
+        proposalJson: note.caseRouterRun.proposalJson as unknown as ProposalDTO,
+      }
+    : null;
+  const currentCaseManagementId = note.encounter?.caseManagementId ?? null;
+  const initialActiveCasesRaw = await prisma.caseManagement.findMany({
+    where: {
+      orgId: session.user.orgId,
+      patientId: note.patientId,
+      status: 'ACTIVE',
+      ...(currentCaseManagementId ? { id: { not: currentCaseManagementId } } : {}),
+    },
+    orderBy: { openedAt: 'desc' },
+    select: {
+      id: true,
+      primaryIcd: true,
+      primaryIcdLabel: true,
+      secondaryIcd: true,
+      secondaryIcdLabel: true,
+    },
+  });
+  const initialActiveCases: CaseRouterPanelCase[] = initialActiveCasesRaw.map((c) => ({
+    id: c.id,
+    primaryIcd: c.primaryIcd,
+    primaryIcdLabel: c.primaryIcdLabel,
+    secondaryIcd: c.secondaryIcd,
+    secondaryIcdLabel: c.secondaryIcdLabel,
+  }));
+
   // Soft-nudge gate: does the Plan section text mention a follow-up?
   // Reads draftJson (pre-sign) or finalJson (signed). The Plan section is
   // identified by label regex (matches the FollowupExtractor's behavior).
@@ -145,6 +194,9 @@ export default async function ReviewPage({ params }: { params: Promise<{ noteId:
         copilotFollowUps={copilotFollowUps}
         nextVisitFollowUps={nextVisitFollowUps}
         planHasFollowUps={planHasFollowUps}
+        initialRouterRun={initialRouterRun}
+        initialRouterActiveCases={initialActiveCases}
+        initialCurrentCaseManagementId={currentCaseManagementId}
       />
       <CopilotShell
         surface="review"

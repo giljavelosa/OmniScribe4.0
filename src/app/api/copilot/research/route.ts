@@ -5,6 +5,11 @@ import { requireFeatureAccess } from '@/lib/authz/server';
 import { writeAuditLog } from '@/lib/audit/log';
 import { runAgent, type AgentTurn } from '@/services/copilot/agent';
 import { PERSONA_VERSION } from '@/services/copilot/persona';
+import {
+  appendTurn,
+  loadOrCreateConversation,
+  messagesToAgentHistory,
+} from '@/services/copilot/conversation-store';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -16,7 +21,10 @@ const turnSchema = z.object({
 
 const bodySchema = z.object({
   question: z.string().min(1).max(2000),
-  history: z.array(turnSchema).max(20),
+  /** Sprint 0.14 — DB-stored conversation is the source of truth; client
+   *  may still send `history` (legacy). Accepted + ignored in favor of
+   *  the persisted thread. */
+  history: z.array(turnSchema).max(50).optional(),
 });
 
 /**
@@ -59,7 +67,34 @@ export async function POST(req: Request) {
       { status: 400 },
     );
   }
-  const { question, history } = parsed.data;
+  const { question } = parsed.data;
+
+  // Sprint 0.14 — research-mode conversations persist per (org × clinician).
+  // patientId is null (research is patient-agnostic). One RESEARCH thread
+  // per clinician per org; the partial-unique index in the migration
+  // enforces that.
+  const { conversation, messages: priorMessages, wasCreated } = await loadOrCreateConversation({
+    orgId: authorizationUser.orgId,
+    patientId: null,
+    clinicianOrgUserId: authorizationUser.orgUserId,
+    mode: 'RESEARCH',
+  });
+  if (wasCreated) {
+    await writeAuditLog({
+      userId: user.id,
+      orgId: authorizationUser.orgId,
+      action: 'CLEO_CONVERSATION_OPENED',
+      resourceType: 'CopilotConversation',
+      resourceId: conversation.id,
+      metadata: {
+        conversationId: conversation.id,
+        mode: 'RESEARCH',
+        patientId: null,
+        personaVersion: PERSONA_VERSION,
+      },
+    });
+  }
+  const history = messagesToAgentHistory(priorMessages);
 
   await writeAuditLog({
     userId: user.id,
@@ -83,6 +118,19 @@ export async function POST(req: Request) {
     },
     { orgId: authorizationUser.orgId },
   );
+
+  // Sprint 0.14 — persist the turn into the research conversation.
+  await appendTurn({
+    conversationId: conversation.id,
+    userContent: question,
+    assistantContent: result.answer.text,
+    sources: result.answer.sources,
+    toolCalls: result.toolCalls.map((c) => ({
+      tool: c.tool,
+      rowCount: c.rowCount,
+      resultOk: c.resultOk,
+    })),
+  });
 
   for (const call of result.toolCalls) {
     await writeAuditLog({
@@ -154,6 +202,9 @@ export async function POST(req: Request) {
       reasoningSteps: result.reasoningSteps,
       iterations: result.iterations,
       stub: result.stub,
+      // Sprint 0.14 — surface the persistent conversation id so the
+      // chat UI can render the "Reset this conversation" menu item.
+      conversationId: conversation.id,
     },
   });
 }

@@ -21,7 +21,14 @@ const bodySchema = z.object({
   siteId: z.string().optional(),
   roomId: z.string().optional(),
   departmentId: z.string().optional(),
-  caseManagementId: z.string().min(1),
+  /**
+   * Sprint 0.13 — optional. When omitted, the server auto-creates a
+   * `PENDING_ROUTER` case and binds the encounter to it; Miss Cleo's
+   * case-router worker proposes the destination at review time. When
+   * supplied, this is the override path (e.g. the chart hero's
+   * "Continue this case" button or the picker's manual override).
+   */
+  caseManagementId: z.string().min(1).optional(),
   episodeOfCareId: z.string().optional(),
   /**
    * Where the episode link decision came from. Recorded in the
@@ -146,27 +153,32 @@ export async function POST(req: Request) {
     };
   }
 
-  const caseRow = await prisma.caseManagement.findFirst({
-    where: {
-      id: data.caseManagementId,
-      orgId: authorizationUser.orgId,
-      patientId: patient.id,
-    },
-    select: { id: true, status: true },
-  });
-  if (!caseRow) {
-    return NextResponse.json(
-      { error: { code: 'case_not_found', message: 'Case management not found.' } },
-      { status: 404 },
-    );
-  }
-  try {
-    assertCaseIsOpen(caseRow.status);
-  } catch {
-    return NextResponse.json(
-      { error: { code: 'case_not_active', message: 'Case management is not active.' } },
-      { status: 409 },
-    );
+  // Sprint 0.13 — caseManagementId is optional. When provided (override path,
+  // chart hero shortcut, etc.) we still validate it; when omitted, startVisit
+  // auto-creates a PENDING_ROUTER case in the same tx.
+  if (data.caseManagementId) {
+    const caseRow = await prisma.caseManagement.findFirst({
+      where: {
+        id: data.caseManagementId,
+        orgId: authorizationUser.orgId,
+        patientId: patient.id,
+      },
+      select: { id: true, status: true },
+    });
+    if (!caseRow) {
+      return NextResponse.json(
+        { error: { code: 'case_not_found', message: 'Case management not found.' } },
+        { status: 404 },
+      );
+    }
+    try {
+      assertCaseIsOpen(caseRow.status);
+    } catch {
+      return NextResponse.json(
+        { error: { code: 'case_not_active', message: 'Case management is not active.' } },
+        { status: 409 },
+      );
+    }
   }
 
   let result: { encounter: { id: string }; note: { id: string } };
@@ -180,7 +192,7 @@ export async function POST(req: Request) {
         siteId,
         roomId: data.roomId,
         departmentId: data.departmentId,
-        caseManagementId: data.caseManagementId,
+        caseManagementId: data.caseManagementId ?? null,
         episodeOfCareId: data.episodeOfCareId,
         actingUserId: user.id,
         pickerSource: data.pickerSource,

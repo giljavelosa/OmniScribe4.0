@@ -7,6 +7,11 @@ import { writeAuditLog } from '@/lib/audit/log';
 import { assertOrgScoped } from '@/lib/phi-access';
 import { runAgent, type AgentTurn } from '@/services/copilot/agent';
 import { PERSONA_VERSION } from '@/services/copilot/persona';
+import {
+  appendTurn,
+  loadOrCreateConversation,
+  messagesToAgentHistory,
+} from '@/services/copilot/conversation-store';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -20,7 +25,14 @@ const bodySchema = z.object({
   patientId: z.string().min(1).max(64),
   noteId: z.string().min(1).max(64),
   question: z.string().min(1).max(2000),
-  history: z.array(turnSchema).max(20),
+  /**
+   * Sprint 0.14 — `history` is OPTIONAL now. When present, the client is
+   * still sending its in-memory turns (existing surfaces that haven't
+   * been updated yet); we accept + ignore in favor of the DB-stored
+   * thread to keep semantics consistent across browser sessions. When
+   * absent, the server pulls the last N turns from CopilotConversation.
+   */
+  history: z.array(turnSchema).max(50).optional(),
 });
 
 /**
@@ -61,7 +73,7 @@ export async function POST(req: Request) {
       { status: 400 },
     );
   }
-  const { patientId, noteId, question, history } = parsed.data;
+  const { patientId, noteId, question } = parsed.data;
 
   // Org scope check before spending any LLM tokens.
   const note = await prisma.note.findFirst({
@@ -78,6 +90,34 @@ export async function POST(req: Request) {
   if (!patient) {
     return NextResponse.json({ error: { code: 'patient_not_found' } }, { status: 404 });
   }
+
+  // Sprint 0.14 — load (or create) the persistent CHART conversation for
+  // this (patient × clinician). Audit CLEO_CONVERSATION_OPENED exactly
+  // once when the row is newly created. Lazy create — first message is
+  // also conversation birth.
+  const { conversation, messages: priorMessages, wasCreated } = await loadOrCreateConversation({
+    orgId: authorizationUser.orgId,
+    patientId,
+    clinicianOrgUserId: authorizationUser.orgUserId,
+    mode: 'CHART',
+  });
+  if (wasCreated) {
+    await writeAuditLog({
+      userId: user.id,
+      orgId: authorizationUser.orgId,
+      action: 'CLEO_CONVERSATION_OPENED',
+      resourceType: 'CopilotConversation',
+      resourceId: conversation.id,
+      metadata: {
+        conversationId: conversation.id,
+        mode: 'CHART',
+        patientId,
+        personaVersion: PERSONA_VERSION,
+      },
+    });
+  }
+
+  const history = messagesToAgentHistory(priorMessages);
 
   await writeAuditLog({
     userId: user.id,
@@ -98,6 +138,23 @@ export async function POST(req: Request) {
     },
     { orgId: authorizationUser.orgId },
   );
+
+  // Sprint 0.14 — persist BOTH the user message AND the assistant turn
+  // into the conversation thread. Stub-mode responses still persist so the
+  // chat history is accurate even when Bedrock is unconfigured. Source
+  // pills land in sourcesJson; the state-builder distills them on next
+  // refresh.
+  await appendTurn({
+    conversationId: conversation.id,
+    userContent: question,
+    assistantContent: result.answer.text,
+    sources: result.answer.sources,
+    toolCalls: result.toolCalls.map((c) => ({
+      tool: c.tool,
+      rowCount: c.rowCount,
+      resultOk: c.resultOk,
+    })),
+  });
 
   // Per-tool audit (one row each). Suppressed when no tools were called
   // — the answer-only path doesn't need a tool-call audit row.
@@ -184,6 +241,9 @@ export async function POST(req: Request) {
       reasoningSteps: result.reasoningSteps,
       iterations: result.iterations,
       stub: result.stub,
+      // Sprint 0.14 — surface the persistent conversation id so the
+      // chat UI can render the "Reset this conversation" menu item.
+      conversationId: conversation.id,
     },
   });
 }

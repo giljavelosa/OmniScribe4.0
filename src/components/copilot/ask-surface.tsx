@@ -2,12 +2,22 @@
 
 import { useCallback, useEffect, useRef, useState, useTransition } from 'react';
 import Link from 'next/link';
-import { CornerUpRight, Loader2, Send, Sparkles, User, X } from 'lucide-react';
+import { CornerUpRight, Loader2, MoreHorizontal, RotateCcw, Send, Sparkles, User, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { StatusBanner } from '@/components/ui/status-banner';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { cn } from '@/lib/cn';
 import { DraftCard } from './draft-card';
 import { ReasoningChain, type ReasoningStep } from './reasoning-chain';
@@ -119,14 +129,67 @@ export function AskSurface({
   greetedRef?: React.MutableRefObject<boolean>;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  // Sprint 0.14 — hydrated tracks "has the GET /api/copilot/conversations
+  // request returned yet?" so the greeting effect doesn't fire BEFORE
+  // we've had a chance to load a returning thread. Without this, the
+  // first-render greeting would inject itself + then a prior message
+  // load would race on top.
+  const [hydrated, setHydrated] = useState(false);
   const [draft, setDraft] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const [resetMenuOpen, setResetMenuOpen] = useState(false);
+  const [resetPending, setResetPending] = useState(false);
   const scrollAnchorRef = useRef<HTMLDivElement | null>(null);
   const localGreetedRef = useRef(false);
   const greetedRefResolved = greetedRef ?? localGreetedRef;
 
+  // Sprint 0.14 — hydrate the persistent CHART conversation on mount.
+  // Survives browser refresh, re-login, and session expiry. The server
+  // returns { conversation: null, messages: [] } when no thread exists
+  // yet (fresh patient × clinician); the greeting effect fires only
+  // in that case.
   useEffect(() => {
+    let cancelled = false;
+    void fetch(
+      `/api/copilot/conversations?mode=CHART&patientId=${encodeURIComponent(patientId)}`,
+    )
+      .then(async (res) => {
+        if (!res.ok || cancelled) return;
+        const body = (await res.json()) as {
+          data: {
+            conversation: { id: string } | null;
+            messages: Array<{
+              role: string;
+              content: string;
+              sources: unknown;
+              toolCalls: unknown;
+            }>;
+          };
+        };
+        if (cancelled) return;
+        const hydratedMessages: ChatMessage[] = body.data.messages.map((m) => ({
+          role: m.role === 'assistant' ? ('assistant' as const) : ('user' as const),
+          content: m.content,
+          sources: Array.isArray(m.sources) ? (m.sources as Source[]) : undefined,
+        }));
+        setMessages(hydratedMessages);
+        setConversationId(body.data.conversation?.id ?? null);
+        setHydrated(true);
+      })
+      .catch(() => {
+        if (!cancelled) setHydrated(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // patientId is the only meaningful dep; clinician identity is
+    // implicit via session and doesn't change mid-mount.
+  }, [patientId]);
+
+  useEffect(() => {
+    if (!hydrated) return;
     if (greetedRefResolved.current) return;
     if (messages.length > 0) return;
     greetedRefResolved.current = true;
@@ -136,13 +199,33 @@ export function AskSurface({
       surface: surface ?? 'review',
       mode: 'chart',
     });
-    // Intentional: greeting fires once per session (ref guard). Names
-    // updating mid-session must not re-greet — that would jarringly
-    // break the conversation flow.
+    // Sprint 0.14 — greeting only fires for brand-new conversations
+    // (zero messages in DB after hydration). Returning conversations
+    // pick up where the clinician left off — no greeting.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setMessages([{ role: 'assistant', content: greeting }]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [hydrated]);
+
+  const resetConversation = useCallback(async () => {
+    if (!conversationId || resetPending) return;
+    setResetPending(true);
+    try {
+      const res = await fetch(`/api/copilot/conversations/${conversationId}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) {
+        setError('Could not reset the conversation.');
+        return;
+      }
+      setMessages([]);
+      setConversationId(null);
+      greetedRefResolved.current = false;
+      setResetMenuOpen(false);
+    } finally {
+      setResetPending(false);
+    }
+  }, [conversationId, resetPending, greetedRefResolved]);
 
   const send = useCallback(
     (text: string) => {
@@ -153,10 +236,9 @@ export function AskSurface({
       setMessages((prev) => [...prev, userMsg]);
       setDraft('');
       startTransition(async () => {
-        const history = [...messages, userMsg].map((m) => ({
-          role: m.role === 'assistant' ? ('assistant' as const) : ('user' as const),
-          content: m.content,
-        }));
+        // Sprint 0.14 — the server reads conversation history from DB
+        // (persistent per patient × clinician). Client no longer ships
+        // an explicit `history` field; the route ignores it if sent.
         const res = await fetch('/api/copilot/ask', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -164,9 +246,6 @@ export function AskSurface({
             patientId,
             noteId,
             question: trimmed,
-            // Server adds the current question itself; we send PRIOR
-            // turns only.
-            history: history.slice(0, -1),
           }),
         });
         if (!res.ok) {
@@ -180,6 +259,7 @@ export function AskSurface({
             drafts?: Draft[];
             reasoningSteps?: ReasoningStep[];
             stub: boolean;
+            conversationId?: string;
           };
         };
         const a = body.data.answer;
@@ -196,11 +276,14 @@ export function AskSurface({
             reasoningSteps: body.data.reasoningSteps ?? [],
           },
         ]);
+        if (body.data.conversationId) {
+          setConversationId(body.data.conversationId);
+        }
         // Defer scroll so the new message is in the DOM.
         setTimeout(() => scrollAnchorRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
       });
     },
-    [messages, noteId, patientId, pending],
+    [noteId, patientId, pending],
   );
 
   // Unit 42 — example chips remain visible until the clinician sends
@@ -210,6 +293,52 @@ export function AskSurface({
 
   return (
     <div className="flex h-full flex-col">
+      {/* Sprint 0.14 — sub-header with persistent-conversation affordances.
+          Shows only when we have a real conversation id (post-first turn).
+          The reset action lives behind an AlertDialog (rule 22) — no native
+          confirm in clinical surfaces. */}
+      {conversationId && (
+        <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-1.5 text-[11px] text-muted-foreground">
+          <span className="italic">Conversation saved with this patient.</span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-6 gap-1 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+            onClick={() => setResetMenuOpen(true)}
+            disabled={resetPending}
+            aria-label="Reset this conversation"
+          >
+            <MoreHorizontal className="size-3" aria-hidden />
+            Reset
+          </Button>
+        </div>
+      )}
+
+      <AlertDialog open={resetMenuOpen} onOpenChange={setResetMenuOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reset this conversation?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This clears Miss Cleo&apos;s chat history with you on this patient.
+              The facts she&apos;s already cited from signed notes stay in your
+              memory state — you only lose the chat thread.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={resetPending}>Keep conversation</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={resetConversation}
+              disabled={resetPending}
+              className="gap-1"
+            >
+              <RotateCcw className="size-3.5" aria-hidden />
+              {resetPending ? 'Resetting…' : 'Reset conversation'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
         {messages.map((m, i) => {
           // The previous user turn (if any) — used to detect "the clinician

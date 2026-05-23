@@ -141,6 +141,10 @@ model Organization {
   llmCostDaily       OrgLlmCostDaily[]
   externalContexts   ExternalContext[]
   caseManagements    CaseManagement[]
+  caseRouterRuns     CaseRouterRun[]
+  // Sprint 0.14 — Miss Cleo's per-(patient × clinician) memory + chat threads.
+  copilotPatientStates  CopilotPatientState[]
+  copilotConversations  CopilotConversation[]
 
   @@index([baaExecutedAt])
   @@index([subscriptionPlan])
@@ -292,6 +296,7 @@ model User {
   orgUsers            OrgUser[]
   sessions            UserSession[]
   passwordResetTokens PasswordResetToken[]
+  caseRouterAccepts   CaseRouterRun[]      @relation("CaseRouterAcceptedBy")
 }
 
 model OrgUser {
@@ -321,6 +326,9 @@ model OrgUser {
   siteEnrollments     OrgUserSite[]        @relation("OrgUserSiteMember")
   siteEnrollmentsCreated OrgUserSite[]     @relation("OrgUserSiteEnroller")
   voiceProfile        VoiceProfile?
+  // Sprint 0.14 — per-clinician Cleo memory + persistent chat threads.
+  copilotPatientStates  CopilotPatientState[]
+  copilotConversations  CopilotConversation[]
 
   @@unique([userId, orgId])
   @@index([orgId, role])
@@ -577,6 +585,18 @@ enum CaseManagementStatus {
   ACTIVE
   CLOSED
   CANCELLED
+  /// Sprint 0.13 — encounter is bound while Miss Cleo's case-router agent
+  /// proposes the destination case at review time. Append-only per rule 2.
+  PENDING_ROUTER
+}
+
+/// Sprint 0.13 — confidence the case-router agent expressed in its proposal.
+/// HIGH = pre-select + primary "Confirm" CTA. MEDIUM = pre-select + reasoning
+/// expanded by default. LOW = no pre-selection; clinician picks from peers.
+enum RouterConfidence {
+  HIGH
+  MEDIUM
+  LOW
 }
 
 enum EpisodeStatus {
@@ -690,6 +710,9 @@ model Patient {
   fhirIdentities           PatientFhirIdentity[]
   fhirCachedResources      FhirCachedResource[]
   externalContexts         ExternalContext[]
+  // Sprint 0.14 — Miss Cleo memory + chat threads anchored to this patient.
+  copilotPatientStates     CopilotPatientState[]
+  copilotConversations     CopilotConversation[]
 
   @@unique([orgId, mrn])
   @@index([orgId, lastName, firstName])
@@ -874,12 +897,54 @@ model CaseManagement {
   closedAt          DateTime?
   closedByOrgUserId String?
   closeReason       String?
+  /// Sprint 0.13 — forward-compatible with Sprint 0.15's FHIR phase. Set when
+  /// the case opens from a verified FHIR Condition; null until then.
+  mirrorsFhirConditionId String?
 
   episodes   EpisodeOfCare[]
   encounters Encounter[]
 
   @@index([orgId, patientId, status])
   @@index([orgId, primaryIcd])
+}
+
+/// Sprint 0.13 — Miss Cleo's case-routing proposal for a single Note.
+///
+/// One row per Note (1:1) written by the case-router BullMQ worker after
+/// AI-generation completes. Captures the AI proposal (with reasoning +
+/// confidence), the model that produced it, and the clinician's eventual
+/// accept / override decision. Pairs with three append-only audit actions
+/// (CASE_ROUTER_PROPOSED / _ACCEPTED / _OVERRIDDEN) so a regulator can
+/// reconstruct *every* routing decision end-to-end.
+///
+/// Rule 20: the agent reads only SIGNED/TRANSFERRED notes, clinician-
+/// confirmed FollowUp rows, and verified FHIR resources. Rule 24: the
+/// agent does data routing only — never clinical recommendations.
+model CaseRouterRun {
+  id               String            @id @default(cuid())
+  orgId            String
+  organization     Organization      @relation(fields: [orgId], references: [id])
+  noteId           String            @unique
+  note             Note              @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  /// Strict CaseRouterProposal (see src/services/copilot/case-router.ts).
+  /// Zod-validated at write time; stored as Json so additive Sprint 0.15
+  /// fields (e.g. open-new-from-condition) don't require a migration.
+  proposalJson     Json
+  confidence       RouterConfidence
+  reasoning        String
+  /// Bedrock model id family (e.g. 'sonnet', 'haiku', or 'stub') so the
+  /// auditor can filter "all decisions made by model X" without an extra
+  /// join. Full model id is in the audit metadata.
+  modelVersion     String
+  createdAt        DateTime          @default(now())
+  /// 'accepted' | 'overridden-attach' | 'overridden-open-new'
+  /// | 'overridden-attach-with-secondary' | 'overridden-manual'
+  acceptedAction   String?
+  acceptedAt       DateTime?
+  acceptedByUserId String?
+  acceptedBy       User?             @relation("CaseRouterAcceptedBy", fields: [acceptedByUserId], references: [id])
+
+  @@index([orgId, createdAt])
 }
 
 model Encounter {
@@ -1072,6 +1137,9 @@ model Note {
 
   // Unit 16 — telehealth session this note belongs to (1:1, optional).
   telehealthSession TelehealthSession?
+
+  // Sprint 0.13 — Miss Cleo's case-router proposal for this note (1:1, optional).
+  caseRouterRun CaseRouterRun?
 
   @@index([orgId, status])
   @@index([patientId, createdAt])
@@ -1693,4 +1761,119 @@ model OrgUserSite {
 
   @@unique([orgUserId, siteId])
   @@index([siteId])
+}
+
+// =============================================================================
+// Sprint 0.14 — Miss Cleo's persistent memory + chat threads.
+//
+// Three additive models + one new enum. No changes to existing tables.
+//
+//   CopilotPatientState — per-(orgId × patientId × clinicianOrgUserId)
+//     projection / cache of what Miss Cleo has learned about this patient
+//     from this clinician's vantage. Source of truth remains signed notes +
+//     CaseManagement + FollowUp + CaseRouterRun + FHIR; this row is
+//     rebuildable on demand from primary sources (rule 20).
+//
+//   CopilotConversation — one persistent chat thread per
+//     (orgId × patientId × clinicianOrgUserId × mode). Research-mode rows
+//     have patientId=null; the unique index treats that as a distinct slot.
+//
+//   CopilotMessage — append-only message rows under a conversation.
+//     content may carry PHI; stored under the org's standard at-rest
+//     encryption (no separate column encryption — same posture as note
+//     bodies). Audit metadata stays PHI-free per rule 8.
+// =============================================================================
+
+enum CopilotConversationMode {
+  CHART
+  RESEARCH
+}
+
+/// Per-(patient × clinician) projection cache populated by the cleo-state
+/// worker. Source-of-truth remains signed notes + CaseManagement + FollowUp +
+/// CaseRouterRun + FHIR. Rebuilt deterministically on signed-note +
+/// case-router-accept events. Bump `generatorVersion` when the JSON shape
+/// changes so future rebuilds re-emit cleanly.
+model CopilotPatientState {
+  id                 String @id @default(cuid())
+  orgId              String
+  patientId          String
+  clinicianOrgUserId String
+
+  /// `{ cases: [{id, primaryIcd, primaryIcdLabel, lastViewerActivityAt,
+  ///    routingConfidenceHistory, fhirMirror?}] }`. Zod-validated on write.
+  caseAwarenessJson    Json
+  /// `{ patterns: [{kind, ...detector-specific fields, observedInNoteIds,
+  ///    count, firstSeen, lastSeen}] }`. Zod-validated on write.
+  observedPatternsJson Json
+  /// `{ facts: [{summary, sourceNoteId?, sourceFollowUpId?,
+  ///    sourceConditionId?, citedAt}] }`. Distilled from prior Ask
+  ///    assistant turns' source pills (no LLM call in Phase 1).
+  conversationFactsJson Json
+
+  lastRebuiltAt    DateTime @default(now()) @updatedAt
+  generatorVersion String
+
+  organization     Organization @relation(fields: [orgId], references: [id])
+  patient          Patient      @relation(fields: [patientId], references: [id])
+  clinicianOrgUser OrgUser      @relation(fields: [clinicianOrgUserId], references: [id])
+
+  @@unique([orgId, patientId, clinicianOrgUserId])
+  @@index([orgId, patientId])
+  @@index([clinicianOrgUserId, lastRebuiltAt])
+}
+
+/// One persistent chat thread per (patient × clinician × mode). Survives
+/// browser refresh, re-login, and session expiry. "Reset this conversation"
+/// purges the row (cascades to messages); the CopilotPatientState row is
+/// untouched — facts are already distilled from primary sources.
+model CopilotConversation {
+  id                 String                  @id @default(cuid())
+  orgId              String
+  /// null for RESEARCH-mode conversations (research is patient-agnostic).
+  patientId          String?
+  clinicianOrgUserId String
+  mode               CopilotConversationMode
+
+  startedAt      DateTime @default(now())
+  lastActivityAt DateTime @default(now()) @updatedAt
+  /// Stamps the persona version at thread-creation time. Lets a regulator
+  /// filter "all conversations under miss-cleo-v1" in one query.
+  personaVersion String
+
+  messages CopilotMessage[]
+
+  organization     Organization @relation(fields: [orgId], references: [id])
+  patient          Patient?     @relation(fields: [patientId], references: [id])
+  clinicianOrgUser OrgUser      @relation(fields: [clinicianOrgUserId], references: [id])
+
+  /// One thread per (org × patient × clinician × mode). Research-mode rows
+  /// have patientId=NULL — Postgres treats NULL values as distinct under a
+  /// unique constraint, so each (org × clinician × RESEARCH) gets its own
+  /// research thread, NOT a single global one. A partial unique index in
+  /// the migration enforces "one RESEARCH thread per (org × clinician)".
+  @@unique([orgId, patientId, clinicianOrgUserId, mode])
+  @@index([orgId, clinicianOrgUserId, lastActivityAt])
+}
+
+model CopilotMessage {
+  id             String   @id @default(cuid())
+  conversationId String
+  /// 'user' | 'assistant' — kept as plain string (no enum) to mirror the
+  /// runtime agent turn shape without an extra migration when we add
+  /// 'tool-result' or 'system' in future iterations.
+  role           String
+  /// May carry PHI. Same at-rest posture as note bodies; audit metadata
+  /// stays PHI-free (we never log content + we log length only when needed).
+  content        String
+  /// Assistant-only: source pills used to render citations + to distill
+  /// `conversationFactsJson` in the state builder. `[{kind, id, label}]`.
+  sourcesJson    Json?
+  /// Assistant-only: tool calls made during this turn (informational).
+  toolCallsJson  Json?
+  createdAt      DateTime @default(now())
+
+  conversation CopilotConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
 }

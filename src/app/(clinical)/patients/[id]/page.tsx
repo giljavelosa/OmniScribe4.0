@@ -13,7 +13,8 @@ import { CopilotShell } from '@/components/copilot/copilot-shell';
 import { PatientChartTabs } from './_components/patient-chart-tabs';
 import type { FollowUpSummary } from './_components/follow-ups-sheet';
 import type { CasePanelData } from './_components/cases-panel';
-import type { Division } from '@prisma/client';
+import type { CleoReadCardData } from './_components/cleo-read-card';
+import type { Division, Prisma } from '@prisma/client';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Patient' };
@@ -416,6 +417,42 @@ export default async function PatientDetailPage({
   // doesn't reflexively add a "Cleo unavailable" tile.
   const lastSignedNoteId = visits[0]?.id ?? null;
 
+  // Sprint 0.14 — Miss Cleo's per-(patient × clinician) memory. Server-
+  // fetched so the chart's first paint has the card ready. Null when
+  // the viewer hasn't generated state yet (lazy-built on first Ask
+  // interaction); the card renders an empty-state stub.
+  const cleoStateRow = viewerOrgUserId
+    ? await prisma.copilotPatientState.findUnique({
+        where: {
+          orgId_patientId_clinicianOrgUserId: {
+            orgId,
+            patientId: patient.id,
+            clinicianOrgUserId: viewerOrgUserId,
+          },
+        },
+        select: {
+          caseAwarenessJson: true,
+          observedPatternsJson: true,
+          lastRebuiltAt: true,
+        },
+      })
+    : null;
+  // Project the state JSONs into the card-friendly shape. PHI-fence: we
+  // only forward labels + counts + ids to the client. Detector `detail`
+  // bodies stay server-side (they're stored on the state row for the
+  // agent's prompt context; the card just needs the headline labels).
+  // viewerOrgUserId is non-null here because cleoStateRow only loaded
+  // when it was set above.
+  const cleoReadData = cleoStateRow && viewerOrgUserId
+    ? projectCleoReadCard({
+        caseAwarenessJson: cleoStateRow.caseAwarenessJson,
+        observedPatternsJson: cleoStateRow.observedPatternsJson,
+        lastRebuiltAt: cleoStateRow.lastRebuiltAt,
+        openFollowUpCount: followUpItems.filter((f) => f.status === 'OPEN').length,
+        viewerOrgUserId,
+      })
+    : null;
+
   return (
     <>
       <PatientChartTabs
@@ -471,6 +508,7 @@ export default async function PatientDetailPage({
             }}
           />
         }
+        cleoRead={cleoReadData}
       />
       {lastSignedNoteId && (
         <CopilotShell
@@ -483,4 +521,65 @@ export default async function PatientDetailPage({
       )}
     </>
   );
+}
+
+// =============================================================================
+// Sprint 0.14 — server-side projection from CopilotPatientState JSON shapes
+// into the card-friendly summary the client renders. PHI-fence: forward
+// labels + counts only — detector `detail` bodies stay on the state row.
+// =============================================================================
+
+type ProjectCleoReadArgs = {
+  caseAwarenessJson: Prisma.JsonValue;
+  observedPatternsJson: Prisma.JsonValue;
+  lastRebuiltAt: Date;
+  openFollowUpCount: number;
+  viewerOrgUserId: string;
+};
+
+function projectCleoReadCard(args: ProjectCleoReadArgs): CleoReadCardData {
+  // Note: caseAwarenessJson uses the shape from state-builder.ts; we
+  // index defensively in case a future projection version reshapes.
+  const ca = args.caseAwarenessJson as
+    | { cases?: Array<{ primaryIcd?: string | null; primaryIcdLabel?: string; status?: string; lastViewerActivityAt?: string | null }> }
+    | null;
+  const op = args.observedPatternsJson as
+    | { patterns?: Array<{ kind?: string; label?: string }> }
+    | null;
+
+  const cases = Array.isArray(ca?.cases) ? ca!.cases : [];
+  const activeCases = cases.filter((c) => c?.status === 'ACTIVE');
+  // Pick the top case by viewer activity for the "Your active case" badge.
+  const ordered = [...activeCases].sort(
+    (a, b) => msFor(b?.lastViewerActivityAt) - msFor(a?.lastViewerActivityAt),
+  );
+  const top = ordered[0] ?? null;
+  const topCaseLabel = top
+    ? `${top.primaryIcd ? `${top.primaryIcd} · ` : ''}${top.primaryIcdLabel ?? ''}`.trim()
+    : null;
+
+  const patterns = Array.isArray(op?.patterns)
+    ? op!.patterns.filter(
+        (p): p is { kind: 'topic_mentioned_unaddressed' | 'measure_trend' | 'recert_due_soon' | 'goal_stalled'; label: string } =>
+          (p?.kind === 'topic_mentioned_unaddressed' ||
+            p?.kind === 'measure_trend' ||
+            p?.kind === 'recert_due_soon' ||
+            p?.kind === 'goal_stalled') &&
+          typeof p?.label === 'string',
+      )
+    : [];
+
+  return {
+    cases: {
+      activeCaseCount: activeCases.length,
+      topCaseLabel,
+    },
+    patterns: patterns.map((p) => ({ kind: p.kind, label: p.label })),
+    openFollowUpCount: args.openFollowUpCount,
+    lastRebuiltAt: args.lastRebuiltAt.toISOString(),
+  };
+}
+
+function msFor(iso: string | null | undefined): number {
+  return iso ? new Date(iso).getTime() : 0;
 }

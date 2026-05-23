@@ -10,6 +10,7 @@
 import {
   Prisma,
   type PrismaClient,
+  CaseManagementStatus,
   Division,
   EncounterStatus,
   ScheduleStatus,
@@ -53,8 +54,13 @@ export type StartVisitArgs = {
   roomId?: string | null;
   scheduleId?: string;
   departmentId?: string | null;
-  /** Required — every encounter anchors to a CaseManagement (Sprint 0.11). */
-  caseManagementId: string;
+  /**
+   * Sprint 0.11 — every encounter anchors to a CaseManagement. Optional
+   * since Sprint 0.13: when omitted, startVisit auto-creates a
+   * `PENDING_ROUTER` case and binds the encounter to it. The
+   * "every encounter has a case" invariant is preserved either way.
+   */
+  caseManagementId?: string | null;
   episodeOfCareId?: string | null;
   actingUserId: string;
   pickerSource?: PickerSource;
@@ -82,15 +88,17 @@ export async function startVisit(args: StartVisitArgs) {
       where: { id: args.clinicianOrgUserId },
       select: { professionType: true, division: true },
     }),
-    args.tx.caseManagement.findFirst({
-      where: {
-        id: args.caseManagementId,
-        patientId: args.patientId,
-        orgId: args.orgId,
-      },
-      select: { id: true, status: true },
-    }),
-    args.episodeOfCareId
+    args.caseManagementId
+      ? args.tx.caseManagement.findFirst({
+          where: {
+            id: args.caseManagementId,
+            patientId: args.patientId,
+            orgId: args.orgId,
+          },
+          select: { id: true, status: true },
+        })
+      : Promise.resolve(null),
+    args.episodeOfCareId && args.caseManagementId
       ? args.tx.episodeOfCare.findFirst({
           where: {
             id: args.episodeOfCareId,
@@ -105,8 +113,31 @@ export async function startVisit(args: StartVisitArgs) {
   if (!patient) throw new Error('startVisit: patient missing');
   if (!org) throw new Error('startVisit: org missing');
   if (!clinician) throw new Error('startVisit: clinician OrgUser missing');
-  if (!caseRow) throw new Error('startVisit: caseManagement missing');
-  assertCaseIsOpen(caseRow.status);
+
+  // Sprint 0.13 — caseManagementId is optional now. When the caller passed
+  // one, it must exist + be open (ACTIVE or PENDING_ROUTER). When the caller
+  // omitted it, we create a PENDING_ROUTER case in the same tx so Miss
+  // Cleo's case-router worker can settle the routing at review time.
+  let caseManagementIdForEncounter: string;
+  if (args.caseManagementId) {
+    if (!caseRow) throw new Error('startVisit: caseManagement missing');
+    assertCaseIsOpen(caseRow.status);
+    caseManagementIdForEncounter = caseRow.id;
+  } else {
+    const pending = await args.tx.caseManagement.create({
+      data: {
+        orgId: args.orgId,
+        patientId: args.patientId,
+        primaryIcd: null,
+        primaryIcdLabel: 'Routing in progress',
+        status: CaseManagementStatus.PENDING_ROUTER,
+        openedByOrgUserId: args.clinicianOrgUserId,
+        openedAt: new Date(),
+      },
+      select: { id: true },
+    });
+    caseManagementIdForEncounter = pending.id;
+  }
 
   const division = resolveDivisionForNote({
     clinician: { professionType: clinician.professionType, division: clinician.division },
@@ -114,13 +145,14 @@ export async function startVisit(args: StartVisitArgs) {
   });
 
   // Auto-link to the case's single ACTIVE rehab episode when caller omitted one
-  // and the note division is REHAB.
+  // and the note division is REHAB. A pending-router case has no episodes
+  // yet (we just created it); the loop below short-circuits to auto-none.
   let episode: { id: string } | null = explicitEpisode;
   let resolvedSource: PickerSource = args.pickerSource ?? 'unspecified';
   if (!episode && !args.episodeOfCareId && division === Division.REHAB) {
     const active = await args.tx.episodeOfCare.findMany({
       where: {
-        caseManagementId: args.caseManagementId,
+        caseManagementId: caseManagementIdForEncounter,
         patientId: args.patientId,
         status: 'ACTIVE',
       },
@@ -156,7 +188,7 @@ export async function startVisit(args: StartVisitArgs) {
       roomId: args.roomId ?? null,
       scheduleId: args.scheduleId,
       departmentId: args.departmentId ?? null,
-      caseManagementId: args.caseManagementId,
+      caseManagementId: caseManagementIdForEncounter,
       episodeOfCareId: encounterEpisodeId,
       status: EncounterStatus.IN_PROGRESS,
       startedAt: new Date(),
@@ -205,7 +237,8 @@ export async function startVisit(args: StartVisitArgs) {
     metadata: {
       source: args.scheduleId ? 'schedule' : 'adhoc',
       division,
-      caseManagementId: args.caseManagementId,
+      caseManagementId: caseManagementIdForEncounter,
+      caseRoutingPending: !args.caseManagementId,
       hasEpisodeLink: !!encounterEpisodeId,
       // Coerce explicit-link without picker context to 'picker' so the
       // metadata is still readable; only the truly-legacy case stays
