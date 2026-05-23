@@ -35,7 +35,16 @@ export default async function ReviewPage({ params }: { params: Promise<{ noteId:
     include: {
       template: true,
       patient: true,
-      encounter: { select: { caseManagementId: true } },
+      encounter: {
+        select: {
+          caseManagementId: true,
+          // Drives the pre-sign reminder banner: when the encounter is still
+          // bound to a PENDING_ROUTER case, the clinician hasn't accepted
+          // Miss Cleo's proposal yet, and Sprint 0.13 Decision 3 says
+          // routing must lock before sign.
+          caseManagement: { select: { status: true } },
+        },
+      },
       caseRouterRun: true,
     },
   });
@@ -123,6 +132,7 @@ export default async function ReviewPage({ params }: { params: Promise<{ noteId:
       }
     : null;
   const currentCaseManagementId = note.encounter?.caseManagementId ?? null;
+  const currentCaseManagementStatus = note.encounter?.caseManagement?.status ?? null;
   const initialActiveCasesRaw = await prisma.caseManagement.findMany({
     where: {
       orgId: session.user.orgId,
@@ -197,6 +207,7 @@ export default async function ReviewPage({ params }: { params: Promise<{ noteId:
         initialRouterRun={initialRouterRun}
         initialRouterActiveCases={initialActiveCases}
         initialCurrentCaseManagementId={currentCaseManagementId}
+        initialCurrentCaseManagementStatus={currentCaseManagementStatus}
       />
       <CopilotShell
         surface="review"
