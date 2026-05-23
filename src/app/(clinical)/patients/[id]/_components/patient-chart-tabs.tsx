@@ -16,6 +16,8 @@ import type { PatientSnapshotStrip as PatientSnapshotStripData } from '@/lib/sna
 import type { ExternalContextSummary } from './external-context-section';
 import { CasesPanel, type CasePanelData } from './cases-panel';
 import { CleoReadCard, type CleoReadCardData } from './cleo-read-card';
+import { ChartNudgeStack } from '@/components/cleo/chart-nudge-stack';
+import type { NudgeCardData } from '@/components/cleo/nudge-card';
 import { StartVisitButton } from './start-visit-button';
 import {
   StartVisitDialog,
@@ -106,6 +108,11 @@ type Props = {
    *  into the card-friendly shape. Null when no state row exists yet —
    *  the card renders an empty-state stub + ASK CTA. */
   cleoRead: CleoReadCardData | null;
+  /** Sprint 0.18 — proactive nudges for the (patient × clinician × CHART)
+   *  tuple. Empty when no candidates fire — the ChartNudgeStack
+   *  renders nothing (decision 10, backward compat for clinicians
+   *  whose state-rebuild hasn't yet seeded a candidate). */
+  chartNudges: NudgeCardData[];
 };
 
 const DIVISION_DISPLAY = [
@@ -171,6 +178,7 @@ export function PatientChartTabs({
   canEditEpisodes,
   ehrPanel,
   cleoRead,
+  chartNudges,
 }: Props) {
   const router = useRouter();
   const age = computeAge(patient.dobIso);
@@ -429,7 +437,15 @@ export function PatientChartTabs({
             </TabsContent>
 
             {casesForPanel.length > 0 && (
-              <TabsContent value="cases">
+              <TabsContent value="cases" className="space-y-3">
+                {/* Sprint 0.18 — proactive nudge stack. Lives ADJACENT
+                    to the active-case hero (not inside it) per spec:
+                    the hero is "your active case" — singular, primary;
+                    the stack is "what else should you notice" —
+                    secondary, default-collapsed pill. Decision 10:
+                    empty stack renders nothing → byte-identical
+                    Sprint-0.16/0.17 chart behavior. */}
+                <ChartNudgeStack nudges={chartNudges} />
                 <CasesPanel
                   patientId={patient.id}
                   cases={casesForPanel}

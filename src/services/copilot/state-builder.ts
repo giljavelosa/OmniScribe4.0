@@ -40,8 +40,18 @@ import type { PriorContextBriefContent } from '@/types/brief';
  * new kind extends an enum on a discriminator); a `cleo-state` event
  * (sign / case-router-accept / drift-resolve) picks up the richer
  * shape on next rebuild.
+ *
+ * v4 (Sprint 0.18): `observedPatternsJson` gains the
+ * `fhir_writeback_failed_permanent` kind for each unresolved
+ * permanent-failure `FhirWriteBackProposal` row (Sprint 0.17). The
+ * Sprint-0.18 nudge generator consumes this kind directly so the
+ * UI surfaces "EHR write blocked — review" as a proactive nudge,
+ * not just a passive chip on the case-panel chip stack. The pattern
+ * detection itself is cheap (one indexed query) and PHI-free. The
+ * version bump forces a re-rebuild on existing v3 rows so the new
+ * kind picks up across the active patient cohort.
  */
-export const CLEO_STATE_GENERATOR_VERSION = 'cleo-state-v3';
+export const CLEO_STATE_GENERATOR_VERSION = 'cleo-state-v4';
 
 // =============================================================================
 // Zod schemas — caseAwarenessJson / observedPatternsJson / conversationFactsJson
@@ -102,6 +112,13 @@ const ObservedPatternBaseSchema = z.object({
     // Sprint 0.16 — `CaseFhirDriftLog` row exists + is unresolved for
     // a mirrored case on this patient.
     'case_fhir_status_drift',
+    // Sprint 0.18 — a Sprint-0.17 `FhirWriteBackProposal` row sits in
+    // FAILED + failureKind=PERMANENT (or CONFLICT) for a case on this
+    // patient. The nudge generator promotes this into a proactive
+    // "EHR write blocked — review" nudge. PROPOSED/APPROVED/EXECUTING/
+    // SUCCEEDED/CANCELLED do NOT emit this pattern — only the FAILED
+    // + non-transient cohort that actually needs clinician attention.
+    'fhir_writeback_failed_permanent',
   ]),
   /** Short label for the card UI ("Sleep mentioned in last 3 visits"). */
   label: z.string().min(1).max(160),
@@ -205,6 +222,9 @@ type Tx = Pick<
   // Sprint 0.16 — surface unresolved drift logs as the
   // `case_fhir_status_drift` observed pattern.
   | 'caseFhirDriftLog'
+  // Sprint 0.18 — surface non-transient write-back failures as the
+  // `fhir_writeback_failed_permanent` observed pattern.
+  | 'fhirWriteBackProposal'
 >;
 
 /**
@@ -438,6 +458,32 @@ export async function buildStateProjections(
     },
   });
 
+  // Sprint 0.18 — Sprint-0.17 write-back proposals stuck in FAILED with
+  // a non-transient `failureKind` (PERMANENT or CONFLICT) become a
+  // proactive pattern. The Sprint-0.18 nudge generator consumes this
+  // kind to surface "EHR write blocked — review" as a chart-pill /
+  // visit-prepare nudge, not just a passive case-panel chip.
+  // TRANSIENT failures are NOT promoted — they'll either resolve on
+  // worker retry (rule 10) or escalate via the regular cases-panel
+  // retry affordance from Sprint 0.17.
+  const blockedWritebacks = await client.fhirWriteBackProposal.findMany({
+    where: {
+      orgId,
+      patientId,
+      status: 'FAILED',
+      failureKind: { in: ['PERMANENT', 'CONFLICT'] },
+    },
+    orderBy: { failedAt: 'desc' },
+    select: {
+      id: true,
+      caseManagementId: true,
+      operation: true,
+      failureKind: true,
+      failedAt: true,
+      failureCount: true,
+    },
+  });
+
   // ---- Observed patterns ----
   const patterns: ObservedPattern[] = [];
 
@@ -448,6 +494,7 @@ export async function buildStateProjections(
     ...detectRecertDueSoon(episodes),
     ...detectGoalStalled(episodes),
     ...detectCaseFhirDrift(openDriftLogs),
+    ...detectFhirWritebackFailedPermanent(blockedWritebacks),
   );
 
   const observedPatterns: ObservedPatternsJson = { patterns };
@@ -729,6 +776,54 @@ export function detectCaseFhirDrift(
     firstSeen: log.detectedAt.toISOString(),
     lastSeen: log.detectedAt.toISOString(),
   }));
+}
+
+/**
+ * Sprint 0.18 — emit a pattern entry per non-transient write-back
+ * failure (PERMANENT or CONFLICT — see decision 7 of Sprint 0.17).
+ *
+ * Pure function — no DB calls. Used by `buildStateProjections` to fold
+ * Sprint-0.17 outcome state into Cleo's observed patterns; the
+ * Sprint-0.18 nudge generator then promotes each pattern into a
+ * `FHIR_WRITEBACK_FAILED_PERMANENT` `CleoNudge` row.
+ *
+ * `observedInNoteIds` is intentionally empty — a failed write-back
+ * isn't anchored to a note; it's an event between OmniScribe + the
+ * EHR. The `detail` payload carries `proposalId` + `caseManagementId`
+ * so the nudge generator's snapshot hash + deep-link can both
+ * resolve without re-reading the row.
+ */
+export function detectFhirWritebackFailedPermanent(
+  blocked: Array<{
+    id: string;
+    caseManagementId: string;
+    operation: 'CREATE' | 'PATCH';
+    failureKind: 'PERMANENT' | 'CONFLICT' | 'TRANSIENT' | null;
+    failedAt: Date | null;
+    failureCount: number;
+  }>,
+): ObservedPattern[] {
+  return blocked
+    .filter((row) => row.failureKind === 'PERMANENT' || row.failureKind === 'CONFLICT')
+    .map((row) => {
+      const failedIso = (row.failedAt ?? new Date()).toISOString();
+      return {
+        kind: 'fhir_writeback_failed_permanent' as const,
+        label: `EHR write blocked — needs review`,
+        detail: {
+          proposalId: row.id,
+          caseManagementId: row.caseManagementId,
+          operation: row.operation,
+          failureKind: row.failureKind,
+          failureCount: row.failureCount,
+          failedAt: failedIso,
+        },
+        observedInNoteIds: [],
+        count: 1,
+        firstSeen: failedIso,
+        lastSeen: failedIso,
+      };
+    });
 }
 
 // =============================================================================

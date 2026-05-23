@@ -149,6 +149,8 @@ model Organization {
   caseFhirDriftLogs     CaseFhirDriftLog[]
   // Sprint 0.17 — FHIR write-back proposals (back-relation only).
   fhirWriteBackProposals FhirWriteBackProposal[]
+  // Sprint 0.18 — Cleo's proactive nudges (back-relation only).
+  cleoNudges            CleoNudge[]
 
   @@index([baaExecutedAt])
   @@index([subscriptionPlan])
@@ -307,6 +309,10 @@ model User {
   fhirWriteBackProposed FhirWriteBackProposal[] @relation("FhirWriteBackProposedBy")
   fhirWriteBackApproved FhirWriteBackProposal[] @relation("FhirWriteBackApprovedBy")
   fhirWriteBackCancelled FhirWriteBackProposal[] @relation("FhirWriteBackCancelledBy")
+  // Sprint 0.18 — Cleo nudge lifecycle (back-relations only).
+  cleoNudgesDismissed CleoNudge[] @relation("CleoNudgeDismissedBy")
+  cleoNudgesSnoozed   CleoNudge[] @relation("CleoNudgeSnoozedBy")
+  cleoNudgesActed     CleoNudge[] @relation("CleoNudgeActedBy")
 }
 
 model OrgUser {
@@ -339,6 +345,8 @@ model OrgUser {
   // Sprint 0.14 — per-clinician Cleo memory + persistent chat threads.
   copilotPatientStates  CopilotPatientState[]
   copilotConversations  CopilotConversation[]
+  // Sprint 0.18 — Cleo's proactive nudges, scoped to this clinician.
+  cleoNudges            CleoNudge[]
 
   @@unique([userId, orgId])
   @@index([orgId, role])
@@ -661,6 +669,62 @@ enum FhirWriteBackFailureKind {
   CONFLICT
 }
 
+/// Sprint 0.18 — discriminator for proactive nudge cards. Each kind
+/// maps 1:1 to a pattern detector (Sprint 0.14 + 0.16 + 0.17). Future
+/// kinds extend this enum additively; spec §5 / decision 11 forbids
+/// inventing new kinds outside a planned sprint to keep the
+/// generator deterministic + auditable.
+enum CleoNudgeKind {
+  RECERT_DUE_SOON
+  CASE_FHIR_STATUS_DRIFT
+  FHIR_WRITEBACK_FAILED_PERMANENT
+  MEASURE_TREND
+  GOAL_STALLED
+  TOPIC_MENTIONED_UNADDRESSED
+}
+
+/// Sprint 0.18 — priority chip variant. Drives the `<StatusBadge>`
+/// variant in the UI (warning / info / neutral) per rule 23 — no
+/// hardcoded status colors. Hardcoded per-kind in `nudge-selector.ts`;
+/// not clinician-tunable in this sprint.
+enum CleoNudgePriority {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+/// Sprint 0.18 — nudge state machine. Terminal states: ACTED,
+/// DISMISSED, EXPIRED. SNOOZED is non-terminal (the read-time filter
+/// re-surfaces once `snoozeUntil` passes). PROPOSED + SHOWN are
+/// pre-action; SHOWN audit only fires on first component mount.
+enum CleoNudgeStatus {
+  /// Generator created the row; not yet rendered.
+  PROPOSED
+  /// First-mount audit fired; clinician saw it (decision 5).
+  SHOWN
+  /// One-tap dismissal; cooldown begins per `nudge-selector.ts`.
+  DISMISSED
+  /// Defer until `snoozeUntil`; re-surfaces automatically at next read.
+  SNOOZED
+  /// Clinician pressed the contextual affordance; navigated to the
+  /// matching screen. Idempotent.
+  ACTED
+  /// Underlying pattern resolved; auto-expired at read time.
+  EXPIRED
+}
+
+/// Sprint 0.18 — eligible surface for a nudge row. Spec decision 2:
+/// most nudges are valid on both the chart and the visit-prepare
+/// surface; a few kinds are surface-locked (e.g. recert-due-soon makes
+/// sense on the chart hero AND on visit-prepare, while a
+/// goal-stalled nudge primarily fits visit-prepare). `BOTH` is the
+/// common case; the read-time filter narrows when needed.
+enum CleoNudgeSurface {
+  CHART
+  VISIT_PREPARE
+  BOTH
+}
+
 /// Sprint 0.13 — confidence the case-router agent expressed in its proposal.
 /// HIGH = pre-select + primary "Confirm" CTA. MEDIUM = pre-select + reasoning
 /// expanded by default. LOW = no pre-selection; clinician picks from peers.
@@ -788,6 +852,8 @@ model Patient {
   caseFhirDriftLogs        CaseFhirDriftLog[]
   // Sprint 0.17 — FHIR write-back proposals (back-relation only).
   fhirWriteBackProposals   FhirWriteBackProposal[]
+  // Sprint 0.18 — Cleo's proactive nudges anchored to this patient.
+  cleoNudges               CleoNudge[]
 
   @@unique([orgId, mrn])
   @@index([orgId, lastName, firstName])
@@ -1932,6 +1998,117 @@ model FhirWriteBackProposal {
   @@index([orgId, status])
   @@index([caseManagementId])
   @@index([patientId, status])
+  @@index([proposedAt])
+}
+
+/// Sprint 0.18 — Cleo's proactive nudge.
+///
+/// One row per logical nudge (decision 1 — uniqued on
+/// `(clinicianOrgUserId, patientId, kind, sourcePatternSnapshotHash)`).
+/// The generator runs inside the existing `cleo-state` worker (rule 18:
+/// no new BullMQ queue — decision 12) and upserts these rows; the
+/// matching `CLEO_NUDGE_PROPOSED` audit is emitted per inserted row
+/// outside any swallowing try-catch (rule 8). The clinician sees the
+/// nudge in the chart pill (collapsed) or the visit-prepare block
+/// (expanded), can act / dismiss / snooze in one tap (decision 6), and
+/// the row's state machine progresses to a terminal state (ACTED /
+/// DISMISSED / EXPIRED) or non-terminal SNOOZED (re-surfaces at
+/// `snoozeUntil`).
+///
+/// Anti-regression rules:
+///   - Rule 20: `sourcePatternSnapshotJson` derives ONLY from rule-20
+///     gated sources (SIGNED/TRANSFERRED notes, confirmed FollowUps,
+///     verified FHIR-cache rows; plus Sprint-0.17 `FhirWriteBackProposal`
+///     rows which are themselves derived from rule-20 sources via the
+///     accept endpoint).
+///   - Rule 24: nudges SURFACE data + offer a contextual *navigation*;
+///     the affordance `affordanceSlug` (e.g. 'open-reconcile-flow')
+///     takes the clinician to the screen where THEY decide. The
+///     generator is deterministic + rule-based; no LLM call in the
+///     nudge pathway (decision 11).
+///   - Decision 9: the audit log NEVER stores the rendered label
+///     string (which often contains PHI like PHQ-9 values). The label
+///     can be reconstructed from `sourcePatternSnapshotJson` at
+///     audit-replay time if ever needed.
+///
+/// Decision 3a (escalation): when a pattern escalates (e.g. recert
+/// "due in 14 days" → "due in 3 days"), the generator emits a NEW
+/// snapshot hash → a NEW row. The old DISMISSED row is left in place
+/// for the cooldown audit; the new row surfaces with full priority.
+/// An escalating clinical signal must not get silenced by a stale
+/// dismissal.
+model CleoNudge {
+  id                          String              @id @default(cuid())
+  orgId                       String
+  organization                Organization        @relation(fields: [orgId], references: [id])
+  patientId                   String
+  patient                     Patient             @relation(fields: [patientId], references: [id])
+  /// Per-clinician (Sprint 0.14 projection lineage). One clinician's
+  /// dismissal does NOT silence the nudge for their colleague.
+  clinicianOrgUserId          String
+  clinicianOrgUser            OrgUser             @relation(fields: [clinicianOrgUserId], references: [id])
+
+  kind                        CleoNudgeKind
+  priority                    CleoNudgePriority
+  /// Where the nudge is eligible to render. CHART / VISIT_PREPARE /
+  /// BOTH (most common). Read-time filter narrows by current surface.
+  eligibleSurfaces            CleoNudgeSurface    @default(BOTH)
+
+  /// Stable hash of the source pattern's identity (e.g.
+  /// `goal_stalled:goal_42:since_2026-04-15`). The compound unique
+  /// constraint below treats two patterns with the SAME hash as the
+  /// SAME logical nudge — re-running the generator is idempotent.
+  sourcePatternSnapshotHash   String
+  /// The pattern detail the detector saw at proposal time. Stored as
+  /// JSON so the read-time renderer doesn't need to re-derive from
+  /// the latest `observedPatternsJson` (which may have shifted).
+  /// PHI-bearing (measure values etc.) — clinical surface only,
+  /// never audit metadata.
+  sourcePatternSnapshotJson   Json
+  /// Affordance slug — the categorical action label that records
+  /// WHICH path the clinician chose on `_ACTED` (e.g.
+  /// 'open-reconcile-flow' / 'start-recert-visit' /
+  /// 'open-plan-editor' / 'review-failed-writeback' /
+  /// 'reevaluate-goal'). Decision 7 — generic 'open' regresses the
+  /// auditor lens.
+  affordanceSlug              String
+
+  // ---- State machine ----
+  status                      CleoNudgeStatus     @default(PROPOSED)
+  proposedAt                  DateTime            @default(now())
+  /// First-mount audit fired (decision 5). Subsequent mounts do NOT
+  /// re-stamp this field.
+  shownAt                     DateTime?
+  dismissedAt                 DateTime?
+  dismissedByUserId           String?
+  dismissedBy                 User?               @relation("CleoNudgeDismissedBy", fields: [dismissedByUserId], references: [id])
+  snoozedAt                   DateTime?
+  snoozedByUserId             String?
+  snoozedBy                   User?               @relation("CleoNudgeSnoozedBy", fields: [snoozedByUserId], references: [id])
+  /// Future timestamp; the read filter excludes the row until now ≥ this.
+  snoozeUntil                 DateTime?
+  actedAt                     DateTime?
+  actedByUserId               String?
+  actedBy                     User?               @relation("CleoNudgeActedBy", fields: [actedByUserId], references: [id])
+  /// The affordance slug the clinician pressed (echoes
+  /// `affordanceSlug` on the happy path; may differ if the UI ever
+  /// offers a secondary affordance under the same nudge — out of
+  /// scope this sprint).
+  actedAction                 String?
+  /// Stamped when the read-time expiry filter flips the row.
+  expiredAt                   DateTime?
+
+  // ---- Lineage ----
+  /// Sprint 0.12 persona-version stamp. Lets a regulator filter
+  /// "all Cleo nudges under miss-cleo-v1" in one query.
+  personaVersion              String              @default("miss-cleo-v1")
+
+  /// Decision 1 — one logical nudge per (clinician × patient × kind ×
+  /// snapshot-hash). Generator `upsert` uses this compound key so a
+  /// re-run on unchanged patterns is a no-op.
+  @@unique([clinicianOrgUserId, patientId, kind, sourcePatternSnapshotHash])
+  @@index([orgId, patientId, clinicianOrgUserId, status])
+  @@index([clinicianOrgUserId, status])
   @@index([proposedAt])
 }
 

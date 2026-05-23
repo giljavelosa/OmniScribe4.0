@@ -10,6 +10,7 @@ import { deriveAssessmentSnippet } from '@/lib/notes/note-text';
 import type { FinalJsonShape } from '@/lib/notes/build-artifact-prompt';
 import { divisionForProfession, professionLabel } from '@/lib/professions';
 import { CopilotShell } from '@/components/copilot/copilot-shell';
+import { loadEligibleNudgesForSurface } from '@/services/copilot/load-eligible-nudges';
 import { PatientChartTabs } from './_components/patient-chart-tabs';
 import type { FollowUpSummary } from './_components/follow-ups-sheet';
 import type { CasePanelData } from './_components/cases-panel';
@@ -473,6 +474,21 @@ export default async function PatientDetailPage({
       })
     : null;
 
+  // Sprint 0.18 — proactive nudge stack for the (patient × clinician
+  // × CHART) tuple. Empty when no candidates fire — the
+  // ChartNudgeStack renders nothing (decision 10 backward compat).
+  // The loader also runs the read-time expiry sweep (decision 8) —
+  // rows whose underlying pattern is gone flip to EXPIRED + emit
+  // CLEO_NUDGE_EXPIRED.
+  const chartNudges = viewerOrgUserId
+    ? await loadEligibleNudgesForSurface({
+        orgId,
+        patientId: patient.id,
+        clinicianOrgUserId: viewerOrgUserId,
+        surface: 'CHART',
+      })
+    : [];
+
   return (
     <>
       <PatientChartTabs
@@ -529,6 +545,7 @@ export default async function PatientDetailPage({
           />
         }
         cleoRead={cleoReadData}
+        chartNudges={chartNudges}
       />
       {lastSignedNoteId && (
         <CopilotShell

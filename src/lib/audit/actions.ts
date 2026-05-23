@@ -355,6 +355,46 @@ export type AuditAction =
   // into CANCELLED.
   | 'ORG_EHR_WRITEBACK_ENABLED'
   | 'ORG_EHR_WRITEBACK_DISABLED'
+  // ---- Sprint 0.18: Cleo's proactive nudges ----
+  //
+  // CLEO_NUDGE_PROPOSED fires from the cleo-state worker per inserted
+  // row when the nudge-generator emits a candidate. Outside any
+  // swallowing try-catch (rule 8). Metadata: { nudgeId, kind,
+  // priority, affordanceSlug, personaVersion }. PHI-free per
+  // decision 9 — the rendered label string (which can contain PHQ-9
+  // values etc.) is NEVER persisted in audit metadata; the label can
+  // be reconstructed from `sourcePatternSnapshotJson` at replay time
+  // if needed.
+  //
+  // CLEO_NUDGE_SHOWN fires from the NudgeCard component's first
+  // mount (decision 5 — "was it actually seen" needs the render
+  // lifecycle, not the server-side projection). Endpoint is
+  // idempotent — second-call no-ops via the `shownAt IS NOT NULL`
+  // guard. Metadata: { nudgeId, kind, priority, surface, personaVersion }.
+  //
+  // CLEO_NUDGE_DISMISSED fires per dismiss-route call (one-tap UX —
+  // decision 6). Metadata: { nudgeId, kind, priority, surface,
+  // personaVersion }.
+  //
+  // CLEO_NUDGE_SNOOZED fires per snooze-route call. Metadata:
+  // { nudgeId, kind, priority, snoozeUntilIso, personaVersion }.
+  //
+  // CLEO_NUDGE_ACTED fires per act-route call. Metadata: { nudgeId,
+  // kind, priority, affordanceSlug, personaVersion }. The
+  // affordanceSlug is the categorical record of WHICH path the
+  // clinician chose (decision 7 — generic 'open' regresses the
+  // auditor lens).
+  //
+  // CLEO_NUDGE_EXPIRED fires from the read-time expiry sweep
+  // (loadEligibleNudgesForSurface) when the underlying pattern is
+  // gone from the latest `observedPatternsJson`. Batched per call.
+  // Metadata: { nudgeId, kind, priority, personaVersion }.
+  | 'CLEO_NUDGE_PROPOSED'
+  | 'CLEO_NUDGE_SHOWN'
+  | 'CLEO_NUDGE_DISMISSED'
+  | 'CLEO_NUDGE_SNOOZED'
+  | 'CLEO_NUDGE_ACTED'
+  | 'CLEO_NUDGE_EXPIRED'
   // ---- Unit 12: Patient detail redesign ----
   | 'SNAPSHOT_OVERRIDE_CREATED'
   | 'SNAPSHOT_OVERRIDE_SUPERSEDED'

@@ -15,6 +15,8 @@ import { OpenFollowUpsCard, type CopilotFollowUp } from '@/components/copilot/ca
 import { PlanForTodayCard, type PlanItem } from '@/components/copilot/cards/plan-for-today-card';
 import { FhirWatchCards } from '@/components/copilot/cards/fhir-watch-cards';
 import { loadExternalEhrContext } from '@/lib/fhir/project-ehr-context';
+import { PrepareNudgeBlock } from '@/components/cleo/prepare-nudge-block';
+import { loadEligibleNudgesForSurface } from '@/services/copilot/load-eligible-nudges';
 import type { PriorContextBriefContent } from '@/types/brief';
 import { PasteTranscriptForm } from './_components/paste-transcript-form';
 import { UploadAudioForm } from './_components/upload-audio-form';
@@ -108,9 +110,28 @@ export default async function PreparePage({ params }: { params: Promise<{ noteId
       }))
     : [];
 
+  // Sprint 0.18 — proactive nudges for the visit-prepare surface.
+  // Empty when no patterns fire OR the clinician has no orgUserId
+  // (defense; the prepare gate normally ensures this is set).
+  // The loader also runs the read-time expiry sweep (decision 8).
+  const prepareNudges = session.user.orgUserId
+    ? await loadEligibleNudgesForSurface({
+        orgId: session.user.orgId,
+        patientId: note.patient.id,
+        clinicianOrgUserId: session.user.orgUserId,
+        surface: 'VISIT_PREPARE',
+      })
+    : [];
+
   return (
     <div className="mx-auto max-w-4xl px-4 py-6 space-y-6">
       <PatientIdentityHeader patient={note.patient} />
+
+      {/* Sprint 0.18 — proactive nudge block. Lives above the
+          recording CTA per spec §goal: visit-prepare is the
+          highest-leverage moment for continuity-story context. The
+          block renders nothing when no patterns fire — decision 10. */}
+      <PrepareNudgeBlock nudges={prepareNudges} />
 
       {/* HERO recording CTA — sits above brief/context so the highest-frequency
           action (live recording) is one tap away. Upload / Paste live below
