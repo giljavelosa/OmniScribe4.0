@@ -69,6 +69,26 @@ function buildRequest(body: unknown) {
   });
 }
 
+/**
+ * Sprint 0.17 default: writebackEnabled = false on the org's
+ * connection. Mixed into every tx mock so the new write-back gate in
+ * `maybeInsertWriteBackProposal` short-circuits cleanly for Sprint
+ * 0.13 / 0.15 / 0.16 scenarios that don't exercise write-back. Tests
+ * that DO exercise write-back override the mock per-test.
+ */
+function writebackOffDefaults() {
+  return {
+    orgEhrConnection: {
+      findFirst: vi.fn().mockResolvedValue({ writebackEnabled: false }),
+    },
+    patientFhirIdentity: { findFirst: vi.fn().mockResolvedValue(null) },
+    fhirCachedResource: { findFirst: vi.fn().mockResolvedValue(null) },
+    fhirWriteBackProposal: {
+      create: vi.fn(),
+    },
+  };
+}
+
 beforeEach(() => {
   noteFindFirst.mockReset();
   caseRouterRunFindFirst.mockReset();
@@ -104,6 +124,7 @@ describe('POST /api/notes/[id]/case-router/accept', () => {
     });
 
     const tx = {
+      ...writebackOffDefaults(),
       caseManagement: {
         findUnique: vi.fn().mockResolvedValueOnce({
           id: 'case_pending',
@@ -185,6 +206,7 @@ describe('POST /api/notes/[id]/case-router/accept', () => {
     });
 
     const tx = {
+      ...writebackOffDefaults(),
       caseManagement: {
         findUnique: vi.fn().mockResolvedValueOnce({
           id: 'case_pending_2',
@@ -242,6 +264,7 @@ describe('POST /api/notes/[id]/case-router/accept', () => {
     });
 
     const tx = {
+      ...writebackOffDefaults(),
       caseManagement: {
         findUnique: vi.fn().mockResolvedValueOnce({
           id: 'case_pending_3',
@@ -387,6 +410,7 @@ describe('POST /api/notes/[id]/case-router/accept', () => {
     });
 
     const tx = {
+      ...writebackOffDefaults(),
       caseManagement: {
         findUnique: vi.fn().mockResolvedValueOnce({
           id: 'case_pending_fhir',
@@ -489,6 +513,7 @@ describe('POST /api/notes/[id]/case-router/accept', () => {
     });
 
     const tx = {
+      ...writebackOffDefaults(),
       caseManagement: {
         findUnique: vi.fn().mockResolvedValueOnce({
           id: 'case_pending_d',
@@ -601,6 +626,7 @@ describe('POST /api/notes/[id]/case-router/accept', () => {
     });
 
     const tx = {
+      ...writebackOffDefaults(),
       caseManagement: {
         findUnique: vi.fn().mockResolvedValueOnce({
           id: 'case_pending_d',
@@ -697,6 +723,7 @@ describe('POST /api/notes/[id]/case-router/accept', () => {
     });
 
     const tx = {
+      ...writebackOffDefaults(),
       caseManagement: {
         findUnique: vi.fn().mockResolvedValueOnce({
           id: 'case_pending_d',
@@ -784,6 +811,7 @@ describe('POST /api/notes/[id]/case-router/accept', () => {
     });
 
     const tx = {
+      ...writebackOffDefaults(),
       caseManagement: {
         findUnique: vi.fn().mockResolvedValueOnce({
           id: 'case_pending_d',
@@ -814,6 +842,316 @@ describe('POST /api/notes/[id]/case-router/accept', () => {
     expect(res.status).toBe(409);
     const body = await res.json();
     expect(body.error.code).toBe('drift_already_resolved');
+  });
+
+  // ===========================================================================
+  // Sprint 0.17 — FHIR write-back proposal insert (decision 10 gating).
+  // ===========================================================================
+
+  it('Sprint 0.17: writebackEnabled=true on open-new with coded ICD → inserts FhirWriteBackProposal + emits FHIR_WRITEBACK_PROPOSED + returns writeBackProposal', async () => {
+    authedAsClinician();
+    noteFindFirst.mockResolvedValueOnce({
+      id: 'note_wb',
+      orgId: 'org_1',
+      patientId: 'pat_wb',
+      status: 'DRAFT',
+      clinicianOrgUserId: 'ou_1',
+      encounterId: 'enc_wb',
+      encounter: { id: 'enc_wb', caseManagementId: 'case_pending_wb' },
+    });
+    caseRouterRunFindFirst.mockResolvedValueOnce({
+      id: 'run_wb',
+      orgId: 'org_1',
+      noteId: 'note_wb',
+      acceptedAction: null,
+      proposalJson: {
+        action: 'open-new',
+        newCase: {
+          primaryIcd: 'F33.1',
+          primaryIcdLabel: 'Major depressive disorder',
+        },
+        confidence: 'high',
+        reasoning: 'New depression presentation.',
+        alternatives: [],
+      },
+    });
+
+    const tx = {
+      ...writebackOffDefaults(),
+      caseManagement: {
+        findUnique: vi
+          .fn()
+          .mockResolvedValueOnce({ id: 'case_pending_wb', status: 'PENDING_ROUTER' }) // mutation branch entry
+          .mockResolvedValueOnce({
+            id: 'case_pending_wb',
+            primaryIcd: 'F33.1',
+            primaryIcdLabel: 'Major depressive disorder',
+            status: 'ACTIVE',
+            mirrorsFhirConditionId: null,
+          }), // write-back gate re-reads post-mutation
+        update: vi.fn().mockResolvedValueOnce({}),
+      },
+      caseRouterRun: { update: vi.fn().mockResolvedValueOnce({}) },
+      // Sprint 0.17 — writeback ON for this test, override the default.
+      orgEhrConnection: {
+        findFirst: vi
+          .fn()
+          .mockResolvedValueOnce({ writebackEnabled: true }),
+      },
+      patientFhirIdentity: {
+        findFirst: vi.fn().mockResolvedValueOnce({ fhirPatientId: 'fhir-pat-wb' }),
+      },
+      fhirCachedResource: { findFirst: vi.fn() },
+      fhirWriteBackProposal: {
+        create: vi
+          .fn()
+          .mockResolvedValueOnce({ id: 'wbp_new_1', operation: 'CREATE' }),
+      },
+    };
+    txMock.mockImplementationOnce(async (cb: (tx: unknown) => Promise<unknown>) => cb(tx));
+
+    const res = await POST(
+      buildRequest({ caseRouterRunId: 'run_wb', decision: { kind: 'accept' } }),
+      { params: Promise.resolve({ id: 'note_wb' }) },
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data.writeBackProposal).toMatchObject({
+      id: 'wbp_new_1',
+      operation: 'CREATE',
+    });
+    expect(typeof body.data.writeBackProposal.summary).toBe('string');
+    // Proposal inserted with the right shape.
+    expect(tx.fhirWriteBackProposal.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          orgId: 'org_1',
+          caseManagementId: 'case_pending_wb',
+          patientId: 'pat_wb',
+          proposedByUserId: 'user_1',
+          operation: 'CREATE',
+          triggerKind: 'open-new',
+          status: 'PROPOSED',
+        }),
+      }),
+    );
+    // FHIR_WRITEBACK_PROPOSED audit fired with persona version.
+    expect(writeAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'FHIR_WRITEBACK_PROPOSED',
+        metadata: expect.objectContaining({
+          proposalId: 'wbp_new_1',
+          caseManagementId: 'case_pending_wb',
+          operation: 'CREATE',
+          triggerKind: 'open-new',
+          personaVersion: 'miss-cleo-v1',
+        }),
+      }),
+    );
+  });
+
+  it('Sprint 0.17: writebackEnabled=false → no proposal, no FHIR_WRITEBACK_* audit, byte-identical Sprint 0.16 (decision 10)', async () => {
+    authedAsClinician();
+    noteFindFirst.mockResolvedValueOnce({
+      id: 'note_wb_off',
+      orgId: 'org_1',
+      patientId: 'pat_wb_off',
+      status: 'DRAFT',
+      clinicianOrgUserId: 'ou_1',
+      encounterId: 'enc_wb_off',
+      encounter: { id: 'enc_wb_off', caseManagementId: 'case_pending_off' },
+    });
+    caseRouterRunFindFirst.mockResolvedValueOnce({
+      id: 'run_off',
+      orgId: 'org_1',
+      noteId: 'note_wb_off',
+      acceptedAction: null,
+      proposalJson: {
+        action: 'open-new',
+        newCase: { primaryIcd: 'F33.1', primaryIcdLabel: 'Major depressive disorder' },
+        confidence: 'high',
+        reasoning: 'x',
+        alternatives: [],
+      },
+    });
+
+    const tx = {
+      ...writebackOffDefaults(), // writebackEnabled defaults to false
+      caseManagement: {
+        findUnique: vi
+          .fn()
+          .mockResolvedValueOnce({ id: 'case_pending_off', status: 'PENDING_ROUTER' })
+          .mockResolvedValueOnce({
+            id: 'case_pending_off',
+            primaryIcd: 'F33.1',
+            primaryIcdLabel: 'Major depressive disorder',
+            status: 'ACTIVE',
+            mirrorsFhirConditionId: null,
+          }),
+        update: vi.fn().mockResolvedValueOnce({}),
+      },
+      caseRouterRun: { update: vi.fn().mockResolvedValueOnce({}) },
+    };
+    txMock.mockImplementationOnce(async (cb: (tx: unknown) => Promise<unknown>) => cb(tx));
+
+    const res = await POST(
+      buildRequest({ caseRouterRunId: 'run_off', decision: { kind: 'accept' } }),
+      { params: Promise.resolve({ id: 'note_wb_off' }) },
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    // The field is NULL — UI hides the inline section.
+    expect(body.data.writeBackProposal).toBeNull();
+    // No FHIR_WRITEBACK_* audit emissions whatsoever.
+    expect(writeAuditLog).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'FHIR_WRITEBACK_PROPOSED' }),
+    );
+    // CASE_ROUTER_ACCEPTED still fires (sprint 0.13/0.16 behavior).
+    expect(writeAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'CASE_ROUTER_ACCEPTED' }),
+    );
+  });
+
+  it('Sprint 0.17: attach action with writebackEnabled=true → no proposal (only mutating actions write back)', async () => {
+    authedAsClinician();
+    noteFindFirst.mockResolvedValueOnce({
+      id: 'note_attach',
+      orgId: 'org_1',
+      patientId: 'pat_attach',
+      status: 'DRAFT',
+      clinicianOrgUserId: 'ou_1',
+      encounterId: 'enc_attach',
+      encounter: { id: 'enc_attach', caseManagementId: 'case_pending_attach' },
+    });
+    caseRouterRunFindFirst.mockResolvedValueOnce({
+      id: 'run_attach',
+      orgId: 'org_1',
+      noteId: 'note_attach',
+      acceptedAction: null,
+      proposalJson: {
+        action: 'attach',
+        caseManagementId: 'case_existing',
+        confidence: 'high',
+        reasoning: 'Continues the active case.',
+        alternatives: [],
+      },
+    });
+
+    const tx = {
+      ...writebackOffDefaults(),
+      caseManagement: {
+        findUnique: vi
+          .fn()
+          .mockResolvedValueOnce({ id: 'case_pending_attach', status: 'PENDING_ROUTER' }),
+        findFirst: vi.fn().mockResolvedValueOnce({
+          id: 'case_existing',
+          status: 'ACTIVE',
+          secondaryIcd: null,
+          secondaryIcdLabel: null,
+        }),
+        delete: vi.fn().mockResolvedValueOnce({}),
+      },
+      encounter: { update: vi.fn().mockResolvedValueOnce({}) },
+      caseRouterRun: { update: vi.fn().mockResolvedValueOnce({}) },
+      // Even though writebackEnabled is true, attach is non-mutating.
+      orgEhrConnection: {
+        findFirst: vi.fn().mockResolvedValue({ writebackEnabled: true }),
+      },
+    };
+    txMock.mockImplementationOnce(async (cb: (tx: unknown) => Promise<unknown>) => cb(tx));
+
+    const res = await POST(
+      buildRequest({ caseRouterRunId: 'run_attach', decision: { kind: 'accept' } }),
+      { params: Promise.resolve({ id: 'note_attach' }) },
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data.writeBackProposal).toBeNull();
+    // The write-back gate short-circuits on `attach` BEFORE the org
+    // toggle read — so orgEhrConnection.findFirst is never called.
+    expect(tx.orgEhrConnection.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('Sprint 0.17: reconcile with attach-as-is + writebackEnabled=true → no proposal (decision 9)', async () => {
+    authedAsClinician();
+    noteFindFirst.mockResolvedValueOnce({
+      id: 'note_attach_as_is',
+      orgId: 'org_1',
+      patientId: 'pat_aai',
+      status: 'DRAFT',
+      clinicianOrgUserId: 'ou_1',
+      encounterId: 'enc_aai',
+      encounter: { id: 'enc_aai', caseManagementId: 'case_pending_aai' },
+    });
+    caseRouterRunFindFirst.mockResolvedValueOnce({
+      id: 'run_aai',
+      orgId: 'org_1',
+      noteId: 'note_attach_as_is',
+      acceptedAction: null,
+      proposalJson: {
+        action: 'reconcile',
+        reconcileProposal: {
+          driftLogId: 'drift_aai',
+          caseManagementId: 'case_knee',
+          fhirConditionId: 'cond_knee',
+          driftKind: 'STATUS',
+          summary: 's',
+          resolutionOptions: [
+            { kind: 'reopen-case', label: 'a', reasoning: 'r' },
+            { kind: 'attach-as-is', label: 'b', reasoning: 'r' },
+          ],
+        },
+        confidence: 'medium',
+        reasoning: 'x',
+        alternatives: [],
+      },
+    });
+
+    const tx = {
+      ...writebackOffDefaults(),
+      caseManagement: {
+        findUnique: vi
+          .fn()
+          .mockResolvedValueOnce({ id: 'case_pending_aai', status: 'PENDING_ROUTER' }),
+        findFirst: vi
+          .fn()
+          .mockResolvedValueOnce({ id: 'case_knee', status: 'ACTIVE' }),
+        delete: vi.fn(),
+        update: vi.fn().mockResolvedValueOnce({}),
+      },
+      encounter: { update: vi.fn().mockResolvedValueOnce({}) },
+      caseRouterRun: { update: vi.fn().mockResolvedValueOnce({}) },
+      caseFhirDriftLog: {
+        findFirst: vi.fn().mockResolvedValueOnce({
+          id: 'drift_aai',
+          caseManagementId: 'case_knee',
+          resolvedAt: null,
+        }),
+        update: vi.fn().mockResolvedValueOnce({}),
+      },
+      orgEhrConnection: {
+        findFirst: vi.fn().mockResolvedValue({ writebackEnabled: true }),
+      },
+    };
+    txMock.mockImplementationOnce(async (cb: (tx: unknown) => Promise<unknown>) => cb(tx));
+
+    const res = await POST(
+      buildRequest({
+        caseRouterRunId: 'run_aai',
+        decision: {
+          kind: 'reconcile',
+          driftLogId: 'drift_aai',
+          resolution: { kind: 'attach-as-is' },
+        },
+      }),
+      { params: Promise.resolve({ id: 'note_attach_as_is' }) },
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data.writeBackProposal).toBeNull();
+    expect(writeAuditLog).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'FHIR_WRITEBACK_PROPOSED' }),
+    );
   });
 
   it('refuses to mutate after a SIGNED note (routing locked)', async () => {

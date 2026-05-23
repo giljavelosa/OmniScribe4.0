@@ -147,6 +147,8 @@ model Organization {
   copilotConversations  CopilotConversation[]
   // Sprint 0.16 — FHIR reconciliation drift log (back-relation only).
   caseFhirDriftLogs     CaseFhirDriftLog[]
+  // Sprint 0.17 — FHIR write-back proposals (back-relation only).
+  fhirWriteBackProposals FhirWriteBackProposal[]
 
   @@index([baaExecutedAt])
   @@index([subscriptionPlan])
@@ -301,6 +303,10 @@ model User {
   caseRouterAccepts   CaseRouterRun[]      @relation("CaseRouterAcceptedBy")
   // Sprint 0.16 — drift logs resolved by this user (back-relation only).
   caseFhirDriftResolutions CaseFhirDriftLog[] @relation("CaseFhirDriftResolvedBy")
+  // Sprint 0.17 — FHIR write-back proposal authorship + lifecycle.
+  fhirWriteBackProposed FhirWriteBackProposal[] @relation("FhirWriteBackProposedBy")
+  fhirWriteBackApproved FhirWriteBackProposal[] @relation("FhirWriteBackApprovedBy")
+  fhirWriteBackCancelled FhirWriteBackProposal[] @relation("FhirWriteBackCancelledBy")
 }
 
 model OrgUser {
@@ -604,6 +610,57 @@ enum CaseFhirDriftKind {
   ICD
 }
 
+/// Sprint 0.17 — FHIR Phase D₃ write-back operation discriminator.
+/// CREATE = POST a new Condition resource. PATCH = PATCH an existing
+/// Condition (status or ICD change). No DELETE ever — clinical history
+/// is forever (decision 4); closing a case PATCHes clinicalStatus.
+enum FhirWriteBackOperation {
+  CREATE
+  PATCH
+}
+
+/// Sprint 0.17 — FHIR write-back proposal state machine. Transitions:
+///   PROPOSED → APPROVED → EXECUTING → SUCCEEDED
+///                                  ↘ FAILED → (retry: APPROVED)
+///                                  ↘ CANCELLED
+///   PROPOSED → CANCELLED
+///   FAILED   → CANCELLED
+/// Terminal states: SUCCEEDED, CANCELLED. FAILED is non-terminal when
+/// `failureKind = TRANSIENT` (the UI offers Retry); terminal otherwise.
+enum FhirWriteBackStatus {
+  /// Inserted by the accept endpoint; awaiting clinician approval click.
+  PROPOSED
+  /// Clinician clicked Confirm in the review-panel dialog; job enqueued.
+  APPROVED
+  /// Worker picked up the job and is mid-write.
+  EXECUTING
+  /// Worker wrote successfully; FHIR id stored on the proposal (and
+  /// back-filled to CaseManagement.mirrorsFhirConditionId for CREATE).
+  SUCCEEDED
+  /// Worker failed; `failureKind` set + UI offers Retry/Cancel.
+  FAILED
+  /// Clinician cancelled OR org-level toggle was flipped off OR the
+  /// worker found writebackEnabled = false at job pickup.
+  CANCELLED
+}
+
+/// Sprint 0.17 — failure taxonomy. The discriminator the UI uses to
+/// choose between "Retry" and "Open new proposal" affordances; the
+/// worker uses it to decide whether to throw (rule 10 retries) or
+/// fail-closed.
+enum FhirWriteBackFailureKind {
+  /// 5xx / network / timeout — worker throws so BullMQ retries (rule 10).
+  TRANSIENT
+  /// 401 / 403 / 422 — worker does NOT throw. UI shows
+  /// "EHR write blocked — review" and surfaces auth issues to the
+  /// org admin separately.
+  PERMANENT
+  /// 412 If-Match precondition (EHR moved out from under us between
+  /// drift detection and this write). Worker does NOT throw; UI
+  /// surfaces the new EHR state + offers to re-read + propose afresh.
+  CONFLICT
+}
+
 /// Sprint 0.13 — confidence the case-router agent expressed in its proposal.
 /// HIGH = pre-select + primary "Confirm" CTA. MEDIUM = pre-select + reasoning
 /// expanded by default. LOW = no pre-selection; clinician picks from peers.
@@ -729,6 +786,8 @@ model Patient {
   copilotConversations     CopilotConversation[]
   // Sprint 0.16 — FHIR reconciliation drift log (back-relation only).
   caseFhirDriftLogs        CaseFhirDriftLog[]
+  // Sprint 0.17 — FHIR write-back proposals (back-relation only).
+  fhirWriteBackProposals   FhirWriteBackProposal[]
 
   @@unique([orgId, mrn])
   @@index([orgId, lastName, firstName])
@@ -921,6 +980,8 @@ model CaseManagement {
   encounters Encounter[]
   // Sprint 0.16 — FHIR reconciliation drift log (back-relation only).
   fhirDriftLogs CaseFhirDriftLog[]
+  // Sprint 0.17 — FHIR write-back proposals (back-relation only).
+  fhirWriteBackProposals FhirWriteBackProposal[]
 
   @@index([orgId, patientId, status])
   @@index([orgId, primaryIcd])
@@ -963,6 +1024,8 @@ model CaseRouterRun {
   acceptedBy       User?             @relation("CaseRouterAcceptedBy", fields: [acceptedByUserId], references: [id])
   // Sprint 0.16 — drift logs written during this run (back-relation only).
   driftLogs        CaseFhirDriftLog[]
+  // Sprint 0.17 — FHIR write-back proposals lineage'd to this run.
+  fhirWriteBackProposals FhirWriteBackProposal[] @relation("FhirWriteBackByRun")
 
   @@index([orgId, createdAt])
 }
@@ -1028,6 +1091,9 @@ model CaseFhirDriftLog {
   resolvedAction   String?
   resolvedByUserId String?
   resolvedBy       User?             @relation("CaseFhirDriftResolvedBy", fields: [resolvedByUserId], references: [id])
+  // Sprint 0.17 — write-back proposals that resolved this drift via
+  // a PATCH (close-case / update-case-icd / reopen-case).
+  fhirWriteBackProposals FhirWriteBackProposal[] @relation("FhirWriteBackByDrift")
 
   @@index([orgId, patientId, resolvedAt])
   @@index([caseManagementId, resolvedAt])
@@ -1741,11 +1807,132 @@ model OrgEhrConnection {
   clientSecretEnc String   @db.Text
   redirectUri     String
   enabled         Boolean  @default(true)
+  /// Sprint 0.17 — FHIR Phase D₃ write-back master toggle. Defaults
+  /// FALSE for every existing org (decision 10, backward-compat). When
+  /// false, the accept endpoint's behavior is byte-identical to Sprint
+  /// 0.16: no proposal rows inserted, no audit emissions, no worker
+  /// jobs enqueued. Flipping to true requires an admin click on the
+  /// org-settings page; flipping back to false batch-cancels every
+  /// PROPOSED / APPROVED proposal for the org.
+  writebackEnabled        Boolean   @default(false)
+  /// Timestamp of the last toggle-on click (for audit + the
+  /// admin-settings "enabled since" copy).
+  writebackEnabledAt      DateTime?
+  /// Admin user id of the last toggle-on click.
+  writebackEnabledByUserId String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
   @@unique([orgId, ehrSystem])
   @@index([orgId])
+}
+
+/// Sprint 0.17 — FHIR Phase D₃ write-back proposal log.
+///
+/// One row per proposed EHR write. Inserted by the accept endpoint
+/// (in the same tx as the case mutation) when (a) the org has
+/// `writebackEnabled = true`, (b) the action is mutating (open-new /
+/// open-new-from-condition / reconcile with a mutating resolution),
+/// and (c) for PATCH triggers, the case is already mirrored. Approved
+/// by the clinician via the review-panel dialog; executed by the
+/// `fhir-writeback` BullMQ worker; status terminal at SUCCEEDED or
+/// CANCELLED (FAILED + TRANSIENT remains retryable).
+///
+/// Anti-regression rule 8: every status transition pairs with a
+/// `FHIR_WRITEBACK_*` audit row. The PROPOSED audit lives inside the
+/// accept-endpoint tx so a throw rolls both rows back together. The
+/// SUCCEEDED / FAILED / CANCELLED audits live OUTSIDE any swallowing
+/// try-catch in the worker (the FHIR client returns
+/// `{ ok: false, failureKind }` rather than throwing for HTTP failures).
+///
+/// Anti-regression rule 20: writes target ONLY the org's verified
+/// FHIR endpoint bound through `OrgEhrConnection`. The worker
+/// re-checks `writebackEnabled` at job pickup — defense in depth
+/// (the admin may have flipped the toggle between approve and pickup).
+///
+/// Decision 2 (idempotency): every proposal carries a `cuid2`
+/// `idempotencyKey` at insertion time, sent as the `X-Request-Id`
+/// header on the FHIR write. BullMQ jobId is `writeback:{proposalId}`
+/// so re-enqueue collapses to the same job. Where the vendor honors
+/// `X-Request-Id`, the EHR returns the same resource on retry; where
+/// not, the OS-side unique-key dedup prevents double-insertion.
+///
+/// Decision 4 (no deletes): closing a case PATCHes `clinicalStatus:
+/// resolved`; we never DELETE Condition. The FHIR resource history
+/// stays in the EHR.
+model FhirWriteBackProposal {
+  id                String                   @id @default(cuid())
+  orgId             String
+  organization      Organization             @relation(fields: [orgId], references: [id])
+  caseManagementId  String
+  caseManagement    CaseManagement           @relation(fields: [caseManagementId], references: [id])
+  patientId         String
+  patient           Patient                  @relation(fields: [patientId], references: [id])
+  /// Clinician who confirmed the case action that generated this
+  /// proposal (not the same as the eventual approver — though they
+  /// often coincide).
+  proposedByUserId  String
+  proposedBy        User                     @relation("FhirWriteBackProposedBy", fields: [proposedByUserId], references: [id])
+
+  // ---- Trigger lineage (why this write was proposed) ----
+  /// 'open-new' | 'open-new-from-condition' | 'reconcile-with-mutation'
+  triggerKind       String
+  /// The routing run that surfaced the underlying action.
+  caseRouterRunId   String?
+  caseRouterRun     CaseRouterRun?           @relation("FhirWriteBackByRun", fields: [caseRouterRunId], references: [id])
+  /// The drift log resolved (only set for reconcile triggers).
+  driftLogId        String?
+  driftLog          CaseFhirDriftLog?        @relation("FhirWriteBackByDrift", fields: [driftLogId], references: [id])
+
+  // ---- Payload ----
+  operation         FhirWriteBackOperation
+  /// Null for CREATE; populated for PATCH (the EHR Condition.id this
+  /// proposal patches).
+  fhirConditionId   String?
+  /// CREATE: the full FHIR R4 Condition resource. PATCH: the RFC 6902
+  /// JSON Patch array. Zod-validated at the service layer (no schema
+  /// constraint here — the JSON shape evolves additively).
+  payloadJson       Json
+  /// The `meta.versionId` captured at proposal time (Sprint 0.16 drift
+  /// detection). PATCH only — sent as `If-Match: W/"<version>"` so a
+  /// concurrent EHR-side mutation yields a 412 + `failureKind: CONFLICT`
+  /// rather than a silent overwrite (decision 6).
+  ifMatchVersion    String?
+  /// cuid2; sent as `X-Request-Id` on the upstream FHIR call. Unique so
+  /// a duplicate proposal-insert attempt fails closed at the DB.
+  idempotencyKey    String                   @unique
+
+  // ---- State machine ----
+  status            FhirWriteBackStatus      @default(PROPOSED)
+  proposedAt        DateTime                 @default(now())
+  approvedAt        DateTime?
+  approvedByUserId  String?
+  approvedBy        User?                    @relation("FhirWriteBackApprovedBy", fields: [approvedByUserId], references: [id])
+  executingAt       DateTime?
+  succeededAt       DateTime?
+  failedAt          DateTime?
+  cancelledAt       DateTime?
+  cancelledByUserId String?
+  cancelledBy       User?                    @relation("FhirWriteBackCancelledBy", fields: [cancelledByUserId], references: [id])
+
+  // ---- Outcome (populated by worker) ----
+  /// Resource id the EHR returned (CREATE) or echoed back (PATCH).
+  resultFhirId      String?
+  /// The new `meta.versionId` after a successful CREATE or PATCH.
+  resultFhirVersion String?
+  failureKind       FhirWriteBackFailureKind?
+  /// Sanitized HTTP error — PHI-free (the FHIR client strips any body
+  /// containing patient identifiers before persisting).
+  failureMessage    String?
+  /// Monotonic counter incremented per worker failure. Useful for the
+  /// auditor lens ("how often does this org's EHR reject writes?")
+  /// without scanning the audit log.
+  failureCount      Int                      @default(0)
+
+  @@index([orgId, status])
+  @@index([caseManagementId])
+  @@index([patientId, status])
+  @@index([proposedAt])
 }
 
 // =============================================================================

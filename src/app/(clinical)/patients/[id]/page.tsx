@@ -56,6 +56,21 @@ export default async function PatientDetailPage({
             },
             orderBy: [{ status: 'asc' }, { startedAt: 'desc' }],
           },
+          // Sprint 0.17 — most recent non-terminal write-back proposal
+          // for the chip. SUCCEEDED and CANCELLED are terminal silent
+          // (the chip falls off after a successful write — the EHR-side
+          // resource is the canonical verification on the next read
+          // sync). We pull at most one row per case; if there's a
+          // newer proposal layered (re-propose after CANCELLED), the
+          // newest wins (orderBy proposedAt desc).
+          fhirWriteBackProposals: {
+            where: {
+              status: { in: ['PROPOSED', 'APPROVED', 'EXECUTING', 'FAILED'] },
+            },
+            orderBy: { proposedAt: 'desc' },
+            take: 1,
+            select: { id: true, status: true, failureKind: true },
+          },
         },
         orderBy: { openedAt: 'desc' },
       },
@@ -390,6 +405,7 @@ export default async function PatientDetailPage({
       if (!n.signedAt) return best;
       return !best || n.signedAt > best ? n.signedAt : best;
     }, null);
+    const writebackProposal = c.fhirWriteBackProposals?.[0] ?? null;
     return {
       id: c.id,
       primaryIcd: c.primaryIcd,
@@ -404,6 +420,10 @@ export default async function PatientDetailPage({
       medicalVisitCount: caseNotes.filter((n) => n.division === 'MEDICAL').length,
       bhVisitCount: caseNotes.filter((n) => n.division === 'BEHAVIORAL_HEALTH').length,
       rehabEpisodes: c.episodes.map(mapEpisode),
+      // Sprint 0.17 — write-back status pill (terminal-silent on
+      // SUCCEEDED/CANCELLED — the chip falls off).
+      writebackStatus: writebackProposal?.status ?? null,
+      writebackFailureKind: writebackProposal?.failureKind ?? null,
     };
   });
 

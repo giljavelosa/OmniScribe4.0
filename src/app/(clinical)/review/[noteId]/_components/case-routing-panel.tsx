@@ -9,6 +9,21 @@ import { StatusBadge } from '@/components/ui/status-badge';
 import { StatusBanner } from '@/components/ui/status-banner';
 import { COPILOT_DISPLAY_NAME } from '@/services/copilot/persona';
 import { CaseFhirDriftBanner } from '@/app/(clinical)/patients/[id]/_components/case-fhir-drift-banner';
+import { WriteBackConfirmDialog } from '@/components/fhir/writeback-confirm-dialog';
+
+/**
+ * Sprint 0.17 — write-back proposal summary surfaced by the accept
+ * endpoint when (and only when) a `FhirWriteBackProposal` row was
+ * inserted in the tx. The inline "Write to EHR?" section renders only
+ * when this is non-null; non-eligible / writeback-off paths see
+ * identical Sprint-0.16 behavior.
+ */
+export type WriteBackProposalInline = {
+  id: string;
+  caseManagementId: string;
+  operation: 'CREATE' | 'PATCH';
+  summary: string;
+};
 
 /**
  * Sprint 0.13 — Miss Cleo's case-routing panel.
@@ -146,6 +161,15 @@ export function CaseRoutingPanel({ noteId, initial, initialActiveCases, initialC
   const [activeCases, setActiveCases] = useState<CaseRouterPanelCase[]>(initialActiveCases);
   const [currentCaseId, setCurrentCaseId] = useState<string | null>(initialCurrentCaseId);
   const [pollExhausted, setPollExhausted] = useState(false);
+  // Sprint 0.17 — captured from the accept response when a write-back
+  // proposal was inserted in the tx. Drives the inline "Write to EHR?"
+  // section beneath the AcceptedPill. Cleared when the clinician hits
+  // "Not now" (we don't auto-cancel server-side; the proposal stays
+  // PROPOSED until manually approved or cancelled).
+  const [writeBackProposal, setWriteBackProposal] = useState<WriteBackProposalInline | null>(null);
+  // Once the clinician taps "Yes, write to EHR" + Confirms in the
+  // dialog, the section transitions to a "queued" badge.
+  const [writeBackApproved, setWriteBackApproved] = useState(false);
 
   const refetch = useCallback(async () => {
     const res = await fetch(`/api/notes/${noteId}/case-router`);
@@ -184,8 +208,28 @@ export function CaseRoutingPanel({ noteId, initial, initialActiveCases, initialC
     };
   }, [run, refetch]);
 
+  const onAcceptResolved = useCallback(
+    (writeBack: WriteBackProposalInline | null) => {
+      if (writeBack) setWriteBackProposal(writeBack);
+      void refetch();
+    },
+    [refetch],
+  );
+
   if (run?.acceptedAction) {
-    return <AcceptedPill run={run} activeCases={activeCases} currentCaseId={currentCaseId} />;
+    return (
+      <div className="space-y-3">
+        <AcceptedPill run={run} activeCases={activeCases} currentCaseId={currentCaseId} />
+        {writeBackProposal && (
+          <WriteBackInlineSection
+            proposal={writeBackProposal}
+            approved={writeBackApproved}
+            onApproved={() => setWriteBackApproved(true)}
+            onNotNow={() => setWriteBackProposal(null)}
+          />
+        )}
+      </div>
+    );
   }
 
   if (!run) {
@@ -210,7 +254,7 @@ export function CaseRoutingPanel({ noteId, initial, initialActiveCases, initialC
         noteId={noteId}
         run={run}
         reconcileProposal={run.proposalJson.reconcileProposal}
-        onResolved={refetch}
+        onResolved={onAcceptResolved}
       />
     );
   }
@@ -221,7 +265,7 @@ export function CaseRoutingPanel({ noteId, initial, initialActiveCases, initialC
       run={run}
       activeCases={activeCases}
       currentCaseId={currentCaseId}
-      onResolved={refetch}
+      onResolved={onAcceptResolved}
     />
   );
 }
@@ -294,6 +338,72 @@ function AcceptedPill({
   );
 }
 
+/**
+ * Sprint 0.17 — inline "Write to EHR?" section rendered alongside the
+ * AcceptedPill after a write-back-eligible action. Three states:
+ *
+ *   - Not approved yet → "Yes, write to EHR" / "Not now" pair.
+ *     Clicking Yes opens the `<AlertDialog>`; the dialog POSTs to
+ *     `/api/cases/{caseId}/writeback/approve` and on success calls
+ *     `onApproved()` to flip this section to the "queued" state.
+ *   - Approved → small "EHR write queued" status badge.
+ *
+ * Rule 22 / 24: the confirmation lives in an `<AlertDialog>` (NOT a
+ * native confirm), and the write-back is gated by an explicit
+ * clinician click at every step.
+ */
+function WriteBackInlineSection({
+  proposal,
+  approved,
+  onApproved,
+  onNotNow,
+}: {
+  proposal: WriteBackProposalInline;
+  approved: boolean;
+  onApproved: () => void;
+  onNotNow: () => void;
+}) {
+  const [dialogOpen, setDialogOpen] = useState(false);
+
+  if (approved) {
+    return (
+      <StatusBadge variant="info" noIcon>
+        EHR write queued
+      </StatusBadge>
+    );
+  }
+
+  return (
+    <div className="rounded-md border border-border bg-muted/20 p-3 space-y-2">
+      <p className="text-sm">
+        {COPILOT_DISPLAY_NAME} can also write this back to your EHR.
+      </p>
+      <p className="text-xs text-muted-foreground">{proposal.summary}</p>
+      <div className="flex flex-wrap gap-2">
+        <Button
+          size="sm"
+          onClick={() => setDialogOpen(true)}
+          aria-label="Open write-back confirmation"
+        >
+          Yes, write to EHR
+        </Button>
+        <Button size="sm" variant="ghost" onClick={onNotNow}>
+          Not now
+        </Button>
+      </div>
+      <WriteBackConfirmDialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        caseId={proposal.caseManagementId}
+        proposalId={proposal.id}
+        operation={proposal.operation}
+        summary={proposal.summary}
+        onConfirmed={onApproved}
+      />
+    </div>
+  );
+}
+
 function ProposalCard({
   noteId,
   run,
@@ -305,7 +415,9 @@ function ProposalCard({
   run: CaseRouterRunDTO;
   activeCases: CaseRouterPanelCase[];
   currentCaseId: string | null;
-  onResolved: () => void;
+  /** Sprint 0.17 — receives the optional write-back proposal that the
+   *  accept endpoint returns when a row was inserted in the tx. */
+  onResolved: (writeBackProposal: WriteBackProposalInline | null) => void;
 }) {
   // Sprint 0.16 note: when proposal.action === 'reconcile', the
   // parent (`CaseRoutingPanel`) dispatches to `ReconcileCard` BEFORE
@@ -346,7 +458,18 @@ function ProposalCard({
         setError(body?.error?.message ?? 'Could not save the routing decision.');
         return;
       }
-      onResolved();
+      // Sprint 0.17 — capture the optional write-back proposal from
+      // the response so the parent can render the inline section.
+      const body = await res.json().catch(() => null);
+      const wb = (body?.data?.writeBackProposal ?? null) as
+        | (WriteBackProposalInline & { caseManagementId?: string })
+        | null;
+      // The accept response carries `caseManagementId` separately — we
+      // thread it through so the approve endpoint URL knows the case.
+      const caseId = (body?.data?.caseManagementId ?? '') as string;
+      onResolved(
+        wb && caseId ? { ...wb, caseManagementId: caseId } : null,
+      );
     });
   }
 
@@ -389,7 +512,11 @@ function ProposalCard({
       </fieldset>
 
       {manualOpen && (
-        <ManualPicker noteId={noteId} activeCases={activeCases} onResolved={onResolved} />
+        <ManualPicker
+          noteId={noteId}
+          activeCases={activeCases}
+          onResolved={() => onResolved(null)}
+        />
       )}
 
       {!isHigh && (
@@ -454,7 +581,7 @@ function ReconcileCard({
   noteId: string;
   run: CaseRouterRunDTO;
   reconcileProposal: ReconcileProposalDTO;
-  onResolved: () => void;
+  onResolved: (writeBackProposal: WriteBackProposalInline | null) => void;
 }) {
   const options = reconcileProposal.resolutionOptions;
   const initialIndex =
@@ -531,7 +658,12 @@ function ReconcileCard({
         setError(body?.error?.message ?? 'Could not save the reconciliation.');
         return;
       }
-      onResolved();
+      const body = await res.json().catch(() => null);
+      const wb = (body?.data?.writeBackProposal ?? null) as
+        | (WriteBackProposalInline & { caseManagementId?: string })
+        | null;
+      const caseId = (body?.data?.caseManagementId ?? '') as string;
+      onResolved(wb && caseId ? { ...wb, caseManagementId: caseId } : null);
     });
   }
 

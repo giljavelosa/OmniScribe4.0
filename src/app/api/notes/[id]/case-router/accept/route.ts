@@ -9,6 +9,12 @@ import { assertOrgScoped } from '@/lib/phi-access';
 import { enqueueCleoStateRefresh } from '@/lib/queue';
 import { PERSONA_VERSION } from '@/services/copilot/persona';
 import type { CaseRouterProposal } from '@/services/copilot/case-router';
+import {
+  proposeWriteBack,
+  type BuildPayloadInput,
+  type CaseWriteBackTrigger,
+  type ExistingConditionSnapshot,
+} from '@/services/fhir/case-writeback';
 
 export const runtime = 'nodejs';
 
@@ -181,6 +187,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const currentCaseId = note.encounter.caseManagementId;
 
   let appliedCaseId: string;
+  // Sprint 0.17 — captured inside the tx (when eligible), returned in
+  // the response so the UI knows whether to render the inline
+  // "Write to EHR?" section. Null when write-back is disabled or the
+  // action isn't write-back eligible — the UI hides the section.
+  let writeBackProposalForResponse: WriteBackProposalResponseSummary | null = null;
   try {
     const txResult = await prisma.$transaction(async (tx) => {
       // Look up current case so we can detect "promote-pending" vs "rebind".
@@ -568,9 +579,37 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         });
       }
 
-      return { appliedId };
+      // Sprint 0.17 — FHIR Phase D₃ write-back proposal. Three gates
+      // before a row is inserted (decision 1, the non-negotiables):
+      //   (1) Org has `writebackEnabled = true` on its
+      //       OrgEhrConnection. Default FALSE — non-FHIR / opt-out
+      //       orgs see byte-identical Sprint 0.16 behavior.
+      //   (2) The action is mutating: open-new, open-new-from-condition,
+      //       or reconcile with one of the four mutating resolutions.
+      //       attach / attach-with-secondary / attach-as-is never write.
+      //   (3) The case has a coded ICD post-mutation (CREATE path) OR
+      //       is mirrored + the patch actually diffs (PATCH path).
+      //
+      // The proposal row + the FHIR_WRITEBACK_PROPOSED audit are
+      // INSIDE the case-mutation tx (decision 3 — atomic rollback).
+      // The OS-side mutation has already committed at this point in
+      // the tx; the proposal is just a *follow-on intent* recorded
+      // alongside. The worker executes it later, after the clinician
+      // approves; if the EHR write fails, the OS state is unchanged.
+      const writeBackProposalSummary = await maybeInsertWriteBackProposal(tx, {
+        orgId: authorizationUser.orgId,
+        userId: user.id,
+        patientId: note.patientId,
+        clinicianRecorderDisplay: user.name ?? user.email ?? 'Clinician',
+        appliedCaseId: appliedId,
+        caseRouterRunId: run.id,
+        decision: eff,
+      });
+
+      return { appliedId, writeBackProposalSummary };
     });
     appliedCaseId = txResult.appliedId;
+    writeBackProposalForResponse = txResult.writeBackProposalSummary;
   } catch (err) {
     if (err instanceof TargetCaseError) {
       return NextResponse.json(
@@ -610,6 +649,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       caseRouterRunId: run.id,
       caseManagementId: appliedCaseId,
       override: isOverride,
+      // Sprint 0.17 — non-null only when a write-back proposal was
+      // inserted in the tx (decision 10 — gated on writebackEnabled).
+      // The UI renders the inline "Write to EHR?" section only when
+      // this field is present, so non-eligible / writeback-off paths
+      // see identical Sprint-0.16 behavior.
+      writeBackProposal: writeBackProposalForResponse,
     },
   });
 }
@@ -823,4 +868,290 @@ function auditDecisionLabel(decision: Decision, isOverride: boolean): string {
   }
   // accept that resolved to a different action — rare; treat as manual override.
   return 'overridden-manual';
+}
+
+// =============================================================================
+// Sprint 0.17 — FHIR write-back proposal helper.
+// =============================================================================
+
+/**
+ * Response-shape summary of an inserted FhirWriteBackProposal. Returned
+ * from the accept endpoint when (and only when) a proposal row was
+ * inserted. The UI uses the presence of this field (not the value of
+ * `writebackEnabled`) to decide whether to render the inline
+ * "Write to EHR?" section — that way a non-mutating action on a
+ * writeback-enabled org also hides the section.
+ */
+export type WriteBackProposalResponseSummary = {
+  id: string;
+  operation: 'CREATE' | 'PATCH';
+  /** Short human-readable line for the inline review-panel section.
+   *  PHI-free — caller-controlled string built from the case's ICD +
+   *  status, not from any FHIR-side response body. */
+  summary: string;
+};
+
+type WriteBackTxContext = {
+  orgId: string;
+  userId: string;
+  patientId: string;
+  clinicianRecorderDisplay: string;
+  appliedCaseId: string;
+  caseRouterRunId: string;
+  decision: ResolvedDecision;
+};
+
+/** The narrow Prisma transaction shape we touch — pinned so the type
+ *  surface stays tractable + tests can mock the slice. */
+type WriteBackTx = Pick<
+  Prisma.TransactionClient,
+  | 'orgEhrConnection'
+  | 'patientFhirIdentity'
+  | 'caseManagement'
+  | 'fhirCachedResource'
+  | 'fhirWriteBackProposal'
+>;
+
+/**
+ * Sprint 0.17 — three-gate eligibility check + proposal insert inside
+ * the accept-endpoint tx.
+ *
+ * Returns the response summary when a proposal was inserted; null
+ * when any gate failed (the UI hides the inline section). Failures
+ * are silent — the OS-side mutation already committed; a non-eligible
+ * write-back state is the baseline, not a degradation.
+ *
+ * Hot-loop reads (org connection + patient identity + post-mutation
+ * case + cached condition) all run inside the tx so a rollback at any
+ * step before commit unwinds everything together.
+ */
+async function maybeInsertWriteBackProposal(
+  tx: WriteBackTx,
+  ctx: WriteBackTxContext,
+): Promise<WriteBackProposalResponseSummary | null> {
+  const trigger = resolveWriteBackTrigger(ctx.decision, ctx.caseRouterRunId);
+  if (!trigger) return null;
+
+  // Gate 1: org-level writeback toggle. Defaults FALSE — most rows
+  // bail here (decision 10, backward compat).
+  const conn = await tx.orgEhrConnection.findFirst({
+    where: { orgId: ctx.orgId, enabled: true },
+    select: { writebackEnabled: true },
+  });
+  if (!conn?.writebackEnabled) return null;
+
+  // Gate 2: verified patient FHIR identity. Without one, write-back
+  // can't target a real FHIR endpoint (rule 20 — verified only). The
+  // accept endpoint's broader Sprint-0.15 path may have used the same
+  // link; we re-check inside the tx so a concurrent unverify is safe.
+  const verifiedLink = await tx.patientFhirIdentity.findFirst({
+    where: { patientId: ctx.patientId, matchConfidence: 'verified' },
+    select: { fhirPatientId: true },
+  });
+  if (!verifiedLink) return null;
+
+  // Gate 3: load the post-mutation case state. We re-read inside the
+  // tx so the proposal payload reflects exactly what the case row
+  // committed to (e.g. CLOSED + new ICD after a reconcile resolution).
+  const caseRow = await tx.caseManagement.findUnique({
+    where: { id: ctx.appliedCaseId },
+    select: {
+      id: true,
+      primaryIcd: true,
+      primaryIcdLabel: true,
+      status: true,
+      mirrorsFhirConditionId: true,
+    },
+  });
+  if (!caseRow) return null;
+  if (!caseRow.primaryIcd) {
+    // "Needs coding" case — write-back requires a coded ICD. The
+    // clinician can come back later via the chart admin to add the
+    // code; that's not a write-back trigger in this sprint.
+    return null;
+  }
+
+  // PATCH path: gather existing condition snapshot for the patch
+  // builder. CREATE path: no existingCondition needed.
+  let existingCondition: ExistingConditionSnapshot | null = null;
+  if (caseRow.mirrorsFhirConditionId) {
+    existingCondition = await loadExistingConditionSnapshot(
+      tx,
+      ctx.patientId,
+      caseRow.mirrorsFhirConditionId,
+    );
+    if (!existingCondition) {
+      // Mirrored case but no cached snapshot — we can't construct a
+      // PATCH without the version (decision 6: If-Match is required).
+      // The OS-side mutation already happened; we skip the write-back
+      // intent rather than block the routing flow.
+      return null;
+    }
+  }
+
+  // Build the proposal row data. proposeWriteBack returns null when
+  // a PATCH would have zero diffs (idempotent re-run) — same skip.
+  const buildInput: BuildPayloadInput = {
+    case: {
+      id: caseRow.id,
+      primaryIcd: caseRow.primaryIcd,
+      primaryIcdLabel: caseRow.primaryIcdLabel,
+      status: caseRow.status,
+      mirrorsFhirConditionId: caseRow.mirrorsFhirConditionId,
+    },
+    patient: { id: ctx.patientId, fhirPatientId: verifiedLink.fhirPatientId },
+    clinician: {
+      orgUserId: ctx.userId,
+      recorderRefDisplay: ctx.clinicianRecorderDisplay,
+    },
+    existingCondition,
+    trigger,
+  };
+  const row = proposeWriteBack(buildInput);
+  if (!row) return null;
+
+  // Insert the proposal row + the audit log INSIDE the tx so a throw
+  // anywhere upstream rolls all three writes (case mutation + proposal
+  // + audit) back together. Rule 8 satisfied — the audit is NOT in a
+  // swallowing try-catch; it'll bubble on a unique-key collision or
+  // any other DB error.
+  const inserted = await tx.fhirWriteBackProposal.create({
+    data: {
+      orgId: ctx.orgId,
+      caseManagementId: ctx.appliedCaseId,
+      patientId: ctx.patientId,
+      proposedByUserId: ctx.userId,
+      triggerKind: row.triggerKind,
+      caseRouterRunId: row.caseRouterRunId,
+      driftLogId: row.driftLogId,
+      operation: row.operation,
+      fhirConditionId: row.fhirConditionId,
+      payloadJson: row.payloadJson as unknown as Prisma.InputJsonValue,
+      ifMatchVersion: row.ifMatchVersion,
+      idempotencyKey: row.idempotencyKey,
+      status: 'PROPOSED',
+    },
+    select: { id: true, operation: true },
+  });
+
+  await writeAuditLog({
+    userId: ctx.userId,
+    orgId: ctx.orgId,
+    action: 'FHIR_WRITEBACK_PROPOSED',
+    resourceType: 'FhirWriteBackProposal',
+    resourceId: inserted.id,
+    metadata: {
+      proposalId: inserted.id,
+      caseManagementId: ctx.appliedCaseId,
+      operation: inserted.operation,
+      triggerKind: row.triggerKind,
+      personaVersion: PERSONA_VERSION,
+    },
+    tx: tx as unknown as Prisma.TransactionClient,
+  });
+
+  return {
+    id: inserted.id,
+    operation: inserted.operation,
+    summary: buildSummaryText(buildInput, inserted.operation),
+  };
+}
+
+/** Map the resolved accept-endpoint decision into a write-back
+ *  trigger. Returns null when the decision is non-mutating
+ *  (`attach`, `attach-with-secondary`) or non-eligible
+ *  (`reconcile` + `attach-as-is`). */
+function resolveWriteBackTrigger(
+  decision: ResolvedDecision,
+  caseRouterRunId: string,
+): CaseWriteBackTrigger | null {
+  if (decision.kind === 'open-new') {
+    return { kind: 'open-new', caseRouterRunId };
+  }
+  if (decision.kind === 'open-new-from-condition') {
+    return { kind: 'open-new-from-condition', caseRouterRunId };
+  }
+  if (decision.kind === 'reconcile') {
+    const r = decision.resolution.kind;
+    if (
+      r === 'reopen-case' ||
+      r === 'close-case' ||
+      r === 'open-new-case' ||
+      r === 'update-case-icd'
+    ) {
+      return {
+        kind: 'reconcile-with-mutation',
+        caseRouterRunId,
+        driftLogId: decision.driftLogId,
+        resolution: r,
+      };
+    }
+    // attach-as-is — no write-back per decision 9.
+    return null;
+  }
+  // attach / attach-with-secondary — no write-back per decision 8.
+  return null;
+}
+
+/** Read the FhirCachedResource row for the mirror Condition + project
+ *  the existing-condition snapshot the patch builder needs. Returns
+ *  null when the cached resource is missing or malformed. */
+async function loadExistingConditionSnapshot(
+  tx: WriteBackTx,
+  patientId: string,
+  fhirConditionId: string,
+): Promise<ExistingConditionSnapshot | null> {
+  const row = await tx.fhirCachedResource.findFirst({
+    where: {
+      patientId,
+      resourceType: 'Condition',
+      fhirResourceId: fhirConditionId,
+    },
+    select: { fhirResourceId: true, resource: true },
+  });
+  if (!row) return null;
+  const bundle = row.resource as
+    | {
+        raw?: { meta?: { versionId?: string } };
+        simplified?: {
+          code?: string | null;
+          display?: string | null;
+          clinicalStatus?: string | null;
+        };
+      }
+    | null;
+  const versionId = bundle?.raw?.meta?.versionId ?? null;
+  const simplified = bundle?.simplified;
+  if (!simplified?.code || !simplified.display) return null;
+  const status = simplified.clinicalStatus;
+  if (
+    status !== 'active' &&
+    status !== 'recurrence' &&
+    status !== 'relapse' &&
+    status !== 'resolved' &&
+    status !== 'remission'
+  ) {
+    return null;
+  }
+  return {
+    fhirConditionId: row.fhirResourceId,
+    versionId,
+    clinicalStatus: status,
+    icd: simplified.code,
+    icdLabel: simplified.display,
+  };
+}
+
+/** Build the human-readable summary for the review-panel inline
+ *  section. PHI-free — composed from the case's ICD + label + the
+ *  computed FHIR clinicalStatus. */
+function buildSummaryText(
+  input: BuildPayloadInput,
+  operation: 'CREATE' | 'PATCH',
+): string {
+  const ic = `${input.case.primaryIcd} — ${input.case.primaryIcdLabel}`;
+  if (operation === 'CREATE') {
+    return `Will create a new Condition in your EHR with ${ic} (status: ${input.case.status === 'CLOSED' ? 'resolved' : 'active'}).`;
+  }
+  return `Will update the existing EHR Condition for ${ic} (status: ${input.case.status === 'CLOSED' ? 'resolved' : 'active'}).`;
 }

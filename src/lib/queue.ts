@@ -49,6 +49,14 @@ export const QUEUE_NAMES = {
    *  CASE_ROUTER_ACCEPTED. Throttled per-tuple (5 min) via the stable
    *  jobId; same retry semantics as other queues (rule 10). */
   cleoState: 'cleo-state',
+  /** Sprint 0.17 — FHIR Phase D₃ write-back worker. Enqueued by
+   *  `POST /api/cases/[id]/writeback/approve` after the clinician
+   *  confirms the inline review-panel dialog. Idempotent on
+   *  proposalId. Conservative concurrency (2) because EHR write QPS
+   *  is vendor-gated. Standard rule-10 retry semantics — but ONLY
+   *  TRANSIENT failures throw inside the handler (PERMANENT +
+   *  CONFLICT fail-closed by design — decision 7). */
+  fhirWriteback: 'fhir-writeback',
 } as const;
 
 export const transcriptionQueue = new Queue(QUEUE_NAMES.transcription, defaultOptions);
@@ -63,6 +71,7 @@ export const externalContextTranscriptionQueue = new Queue(
 );
 export const caseRouterQueue = new Queue(QUEUE_NAMES.caseRouter, defaultOptions);
 export const cleoStateQueue = new Queue(QUEUE_NAMES.cleoState, defaultOptions);
+export const fhirWritebackQueue = new Queue(QUEUE_NAMES.fhirWriteback, defaultOptions);
 
 // ---------------------------------------------------------------------------
 // Enqueue helpers — keep the call sites typed + idempotent.
@@ -181,4 +190,24 @@ export function enqueueCleoStateRefresh(payload: {
   const bucket = Math.floor(Date.now() / (5 * 60 * 1000));
   const jobId = `cleo-state:${payload.orgId}:${payload.patientId}:${payload.clinicianOrgUserId}:${bucket}`;
   return cleoStateQueue.add('refresh-cleo-state', payload, { jobId });
+}
+
+/**
+ * Sprint 0.17 — chain-enqueued by `POST /api/cases/[id]/writeback/approve`
+ * (and `/retry`).
+ *
+ * Idempotent on `proposalId` — a duplicate enqueue (e.g. retried API
+ * request) collapses to the same Redis entry. This + the unique
+ * `idempotencyKey` column on `FhirWriteBackProposal` means we never
+ * double-write to the EHR even under worker retry (decision 2).
+ *
+ * Same rule-10 retry semantics as other queues (3 attempts, exponential
+ * 5s base). The handler itself only throws on TRANSIENT failures —
+ * PERMANENT + CONFLICT are recorded and the job completes without a
+ * retry attempt (decision 7).
+ */
+export function enqueueFhirWriteback(payload: { proposalId: string }) {
+  return fhirWritebackQueue.add('writeback', payload, {
+    jobId: `writeback:${payload.proposalId}`,
+  });
 }

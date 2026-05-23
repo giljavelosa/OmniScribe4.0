@@ -10,6 +10,7 @@ import { noteBriefHandler } from './note-brief.worker';
 import { externalContextHandler } from './external-context.worker';
 import { caseRouterHandler } from './case-router.worker';
 import { cleoStateHandler } from './cleo-state.worker';
+import { fhirWritebackHandler } from './fhir-writeback.worker';
 import { noteFinalizeStub } from './stubs';
 
 /**
@@ -40,6 +41,13 @@ const workers = [
   new Worker(QUEUE_NAMES.externalContextTranscription, externalContextHandler, baseOptions),
   new Worker(QUEUE_NAMES.caseRouter, caseRouterHandler, baseOptions),
   new Worker(QUEUE_NAMES.cleoState, cleoStateHandler, baseOptions),
+  // Sprint 0.17 — FHIR Phase D₃ write-back. Conservative concurrency
+  // (2) because EHR write QPS is typically vendor-gated; the spec
+  // calls this out explicitly.
+  new Worker(QUEUE_NAMES.fhirWriteback, fhirWritebackHandler, {
+    ...baseOptions,
+    concurrency: 2,
+  }),
 ];
 
 for (const w of workers) {

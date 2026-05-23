@@ -2,12 +2,18 @@
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
-import type { Division, Profession } from '@prisma/client';
+import type {
+  Division,
+  Profession,
+  FhirWriteBackStatus,
+  FhirWriteBackFailureKind,
+} from '@prisma/client';
 import { ChevronDown, ChevronRight, Mic, Plus } from 'lucide-react';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { StatusBadge } from '@/components/ui/status-badge';
+import { WritebackStatusChip } from '@/components/fhir/writeback-status-chip';
 import { divisionForProfession } from '@/lib/professions';
 import {
   isViewerActiveCase,
@@ -66,6 +72,14 @@ export type CasePanelData = {
   medicalVisitCount: number;
   bhVisitCount: number;
   rehabEpisodes: EpisodeData[];
+  /** Sprint 0.17 — most recent non-terminal write-back proposal
+   *  status, used to render the inline chip. Null when no proposal
+   *  exists OR the proposal is terminal (SUCCEEDED / CANCELLED). */
+  writebackStatus?: FhirWriteBackStatus | null;
+  /** Sprint 0.17 — paired with `writebackStatus`. Drives the FAILED
+   *  variant split (TRANSIENT → warning + retry; PERMANENT/CONFLICT
+   *  → danger + review). */
+  writebackFailureKind?: FhirWriteBackFailureKind | null;
 };
 
 type Props = {
@@ -266,6 +280,12 @@ function CaseCard({
               <StatusBadge variant="warning" noIcon>
                 Needs coding
               </StatusBadge>
+            )}
+            {caseRow.writebackStatus && (
+              <WritebackStatusChip
+                status={caseRow.writebackStatus}
+                failureKind={caseRow.writebackFailureKind ?? null}
+              />
             )}
           </div>
           {caseRow.secondaryIcd && (

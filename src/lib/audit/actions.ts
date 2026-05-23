@@ -311,6 +311,50 @@ export type AuditAction =
   | 'CASE_FHIR_DRIFT_DETECTED'
   | 'CASE_ROUTER_RECONCILE_PROPOSED'
   | 'CASE_FHIR_DRIFT_RESOLVED'
+  // ---- Sprint 0.17: FHIR Phase D₃ — Case → Condition write-back ----
+  //
+  // FHIR_WRITEBACK_PROPOSED fires from the accept endpoint when a
+  // mutating action lands on a writeback-enabled org (decision 10).
+  // Written INSIDE the case-mutation tx so a throw rolls the
+  // proposal row + the case mutation + this audit row back together.
+  // Metadata: { proposalId, caseManagementId, operation, triggerKind,
+  // personaVersion }. PHI-free.
+  //
+  // FHIR_WRITEBACK_APPROVED fires when the clinician confirms the
+  // inline "Write to EHR?" dialog (`POST /api/cases/[id]/writeback/
+  // approve`). Idempotent — a repeat approve on an already-approved
+  // proposal still emits a single APPROVED row from the first call.
+  // Metadata: { proposalId, caseManagementId, personaVersion }.
+  //
+  // FHIR_WRITEBACK_SUCCEEDED fires from the worker after the FHIR
+  // CREATE/PATCH returns 2xx. Metadata: { proposalId, operation,
+  // resultFhirId, resultFhirVersion, personaVersion }. The FHIR
+  // resource id is an EHR-side identifier (not Safe Harbor PHI).
+  //
+  // FHIR_WRITEBACK_FAILED fires from the worker when the FHIR client
+  // returns { ok: false }. Metadata: { proposalId, operation,
+  // failureKind ('TRANSIENT' | 'PERMANENT' | 'CONFLICT'), status,
+  // failureCount, personaVersion }. failureMessage stays on the row,
+  // not the audit log, to avoid leaking sanitized HTTP error bodies
+  // into the auditor query lens.
+  //
+  // FHIR_WRITEBACK_CANCELLED fires when (a) clinician hits Cancel,
+  // (b) admin disables the org toggle (batch-cancel), or (c) the
+  // worker re-checks writebackEnabled at job pickup and finds it
+  // false. Metadata: { proposalId, cancelReason ('clinician' |
+  // 'org_disabled' | 'worker_recheck'), personaVersion }.
+  | 'FHIR_WRITEBACK_PROPOSED'
+  | 'FHIR_WRITEBACK_APPROVED'
+  | 'FHIR_WRITEBACK_SUCCEEDED'
+  | 'FHIR_WRITEBACK_FAILED'
+  | 'FHIR_WRITEBACK_CANCELLED'
+  // Admin-audit cohort — toggle lifecycle on the org-settings page.
+  // ORG_EHR_WRITEBACK_ENABLED + _DISABLED carry the admin user id +
+  // ehrSystem. _DISABLED also carries `cancelledProposalCount`
+  // because the disable action batches all PROPOSED + APPROVED rows
+  // into CANCELLED.
+  | 'ORG_EHR_WRITEBACK_ENABLED'
+  | 'ORG_EHR_WRITEBACK_DISABLED'
   // ---- Unit 12: Patient detail redesign ----
   | 'SNAPSHOT_OVERRIDE_CREATED'
   | 'SNAPSHOT_OVERRIDE_SUPERSEDED'

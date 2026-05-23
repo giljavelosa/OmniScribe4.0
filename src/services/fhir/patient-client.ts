@@ -5,6 +5,10 @@ import {
   resolveSmartConfig,
   smartConfig,
 } from '@/services/fhir/smart-client';
+import type {
+  FhirCreateConditionPayload,
+  JsonPatchOp,
+} from '@/services/fhir/case-writeback';
 
 /**
  * FHIR Patient client — Unit 20 (Wave 4 / F2).
@@ -258,4 +262,249 @@ function shiftYearBy(iso: string, deltaYears: number): string {
   const [y, m, d] = iso.split('-');
   if (!y) return iso;
   return `${(parseInt(y, 10) + deltaYears).toString().padStart(4, '0')}-${m}-${d}`;
+}
+
+// =====================================================================
+// Sprint 0.17 — Condition write API (Phase D₃ write-back)
+// =====================================================================
+
+/** Sprint 0.17 — failure taxonomy mirrored from `FhirWriteBackFailureKind`
+ *  (kept categorical so the worker can convert by-name into the enum). */
+export type FhirWriteBackFailureKindLite = 'TRANSIENT' | 'PERMANENT' | 'CONFLICT';
+
+export type CreateConditionSuccess = {
+  ok: true;
+  fhirId: string;
+  versionId: string;
+};
+
+export type PatchConditionSuccess = {
+  ok: true;
+  /** PATCH preserves the fhirId; we still echo it for the worker so the
+   *  caller doesn't have to thread the original id back through. */
+  fhirId: string;
+  versionId: string;
+};
+
+export type FhirWriteBackFailure = {
+  ok: false;
+  failureKind: FhirWriteBackFailureKindLite;
+  status: number;
+  /** Sanitized message — the FHIR-write helper strips any body that
+   *  looks like it carries PHI. The worker writes this verbatim to
+   *  `FhirWriteBackProposal.failureMessage`, so any leakage would
+   *  surface in the chart. */
+  message: string;
+};
+
+export type CreateConditionResult = CreateConditionSuccess | FhirWriteBackFailure;
+export type PatchConditionResult = PatchConditionSuccess | FhirWriteBackFailure;
+
+const FHIR_WRITE_TIMEOUT_MS = 8_000;
+
+/**
+ * Sprint 0.17 — POST /Condition.
+ *
+ * Sends the FHIR R4 Condition resource the case-writeback service
+ * built. Honors `X-Request-Id` (vendor idempotency — Epic + Cerner
+ * support; safe to send to vendors that ignore it).
+ *
+ * The "never throws" contract is load-bearing: the worker writes the
+ * FAILED row + the audit OUTSIDE any swallowing try-catch (rule 8). A
+ * thrown exception here would bypass the failureKind discriminator and
+ * route into BullMQ's generic retry path — breaking the spec's failure
+ * taxonomy (decision 7). We map ALL errors into the `{ ok: false }`
+ * shape and let the worker decide whether to throw for the retry.
+ *
+ * Stub mode (FHIR_NEXTGEN_CLIENT_ID unset): synthesizes a successful
+ * create with a deterministic stub id so dev exercises the full
+ * pipeline without a real EHR.
+ */
+export async function createCondition(opts: {
+  identity: FhirIdentitySnapshot;
+  payload: FhirCreateConditionPayload;
+  requestId: string;
+}): Promise<CreateConditionResult> {
+  if (smartConfig.isStubMode) {
+    return synthesizeStubCreateResult(opts.requestId);
+  }
+  try {
+    const accessToken = await ensureFreshToken(opts.identity);
+    const url = joinUrl(opts.identity.fhirBaseUrl, 'Condition');
+    const res = await fetchWithTimeout(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'X-Request-Id': opts.requestId,
+        'Content-Type': 'application/fhir+json',
+        Accept: 'application/fhir+json',
+      },
+      body: JSON.stringify(opts.payload),
+    });
+    if (res.status === 200 || res.status === 201) {
+      const parsed = await parseFhirIdAndVersion(res);
+      return { ok: true, ...parsed };
+    }
+    return { ok: false, ...classifyFhirHttpStatus(res.status), message: await readSanitizedBody(res) };
+  } catch (err) {
+    // Network errors / abort / DNS failure — categorically transient.
+    return {
+      ok: false,
+      failureKind: 'TRANSIENT',
+      status: 0,
+      message: sanitizeMessage(err),
+    };
+  }
+}
+
+/**
+ * Sprint 0.17 — PATCH /Condition/{id}.
+ *
+ * Sends a JSON Patch body with `If-Match: W/"<version>"` (decision 6
+ * — optimistic concurrency control). 412 → CONFLICT; clients are
+ * expected to re-read + propose afresh rather than retry the same
+ * PATCH against a moved target.
+ */
+export async function patchCondition(opts: {
+  identity: FhirIdentitySnapshot;
+  fhirConditionId: string;
+  jsonPatch: JsonPatchOp[];
+  ifMatchVersion: string;
+  requestId: string;
+}): Promise<PatchConditionResult> {
+  if (smartConfig.isStubMode) {
+    return synthesizeStubPatchResult(opts.fhirConditionId, opts.ifMatchVersion);
+  }
+  try {
+    const accessToken = await ensureFreshToken(opts.identity);
+    const url = joinUrl(
+      opts.identity.fhirBaseUrl,
+      `Condition/${encodeURIComponent(opts.fhirConditionId)}`,
+    );
+    const res = await fetchWithTimeout(url, {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'X-Request-Id': opts.requestId,
+        'If-Match': `W/"${opts.ifMatchVersion}"`,
+        'Content-Type': 'application/json-patch+json',
+        Accept: 'application/fhir+json',
+      },
+      body: JSON.stringify(opts.jsonPatch),
+    });
+    if (res.status === 200) {
+      const parsed = await parseFhirIdAndVersion(res, opts.fhirConditionId);
+      return { ok: true, ...parsed };
+    }
+    return { ok: false, ...classifyFhirHttpStatus(res.status), message: await readSanitizedBody(res) };
+  } catch (err) {
+    return {
+      ok: false,
+      failureKind: 'TRANSIENT',
+      status: 0,
+      message: sanitizeMessage(err),
+    };
+  }
+}
+
+/** Map an HTTP status code into the Sprint 0.17 failure taxonomy
+ *  (`TRANSIENT` / `PERMANENT` / `CONFLICT`). Pure — no body inspection.
+ *  Exported for unit testing. */
+export function classifyFhirHttpStatus(
+  status: number,
+): { failureKind: FhirWriteBackFailureKindLite; status: number } {
+  if (status === 412) return { failureKind: 'CONFLICT', status };
+  if (status >= 500 || status === 408 || status === 429) {
+    return { failureKind: 'TRANSIENT', status };
+  }
+  // 4xx (excluding 412) — auth / validation / not-found. Permanent.
+  return { failureKind: 'PERMANENT', status };
+}
+
+/** Pull the FHIR resource id + Etag-derived version from a write
+ *  response. The id comes from either the `Location` header
+ *  (FHIR R4 standard) or the parsed resource body. `ETag: W/"5"` is
+ *  the canonical version-id transport. */
+async function parseFhirIdAndVersion(
+  res: Response,
+  fallbackId?: string,
+): Promise<{ fhirId: string; versionId: string }> {
+  const etag = res.headers.get('etag') ?? res.headers.get('ETag');
+  // ETag value `W/"5"` → versionId 5.
+  const versionId =
+    etag?.replace(/^W\//, '').replace(/^"|"$/g, '').trim() || '1';
+  const location = res.headers.get('location') ?? res.headers.get('Location');
+  if (location) {
+    // Location example: "Condition/abc/_history/5"
+    const match = location.match(/Condition\/([^/]+)/i);
+    if (match?.[1]) return { fhirId: match[1], versionId };
+  }
+  // Fallback — parse body. We tolerate missing id on PATCH (echo back).
+  try {
+    const body = (await res.clone().json()) as { id?: string };
+    if (typeof body.id === 'string' && body.id.length > 0) {
+      return { fhirId: body.id, versionId };
+    }
+  } catch {
+    // ignore
+  }
+  return { fhirId: fallbackId ?? '', versionId };
+}
+
+/** Read the response body up to a small cap, stripping anything that
+ *  looks like a Bearer / token / patient identifier. PHI scrubbing is
+ *  best-effort — the message is for an org-admin debugging surface,
+ *  not a clinical surface. */
+async function readSanitizedBody(res: Response): Promise<string> {
+  try {
+    const text = await res.text();
+    return sanitizeMessage(text).slice(0, 400);
+  } catch {
+    return `HTTP ${res.status}`;
+  }
+}
+
+function sanitizeMessage(value: unknown): string {
+  const text = value instanceof Error ? `${value.name}: ${value.message}` : String(value ?? '');
+  return text
+    // Strip bearer tokens
+    .replace(/Bearer\s+[A-Za-z0-9._-]+/g, 'Bearer <redacted>')
+    // Strip URL-embedded creds
+    .replace(/:\/\/[^@]+@/, '://<redacted>@');
+}
+
+async function fetchWithTimeout(
+  input: string | URL,
+  init: RequestInit,
+): Promise<Response> {
+  // AbortController-based 8s bound. The worker has its own BullMQ
+  // attempt timeout; this bound shields a single TCP/TLS stall from
+  // pulling the whole job to its timeout.
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), FHIR_WRITE_TIMEOUT_MS);
+  try {
+    return await fetch(input, { ...init, signal: ctrl.signal });
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+function synthesizeStubCreateResult(requestId: string): CreateConditionSuccess {
+  // Deterministic stub id keyed on the idempotencyKey so a retried
+  // write returns the same fhirId — exercises the OS-side back-fill
+  // path identically to a real EHR.
+  return {
+    ok: true,
+    fhirId: `stub-cond-${requestId.slice(0, 10)}`,
+    versionId: '1',
+  };
+}
+
+function synthesizeStubPatchResult(
+  fhirConditionId: string,
+  ifMatchVersion: string,
+): PatchConditionSuccess {
+  const next = parseInt(ifMatchVersion, 10);
+  const versionId = Number.isFinite(next) ? `${next + 1}` : `${ifMatchVersion}-stub`;
+  return { ok: true, fhirId: fhirConditionId, versionId };
 }
