@@ -145,6 +145,36 @@ describe('VisitHistoryList — By case view', () => {
     expect(screen.getByText('No case')).toBeInTheDocument();
   });
 
+  it('reports total count when nothing is filtered out', () => {
+    render(<VisitHistoryList visits={visits} />);
+    // All 3 visits visible, no filter — straight count.
+    expect(screen.getByText(/3 signed visits\./)).toBeInTheDocument();
+    expect(screen.queryByText(/of 3 signed visits shown/)).toBeNull();
+  });
+
+  it('reports "N of M" when a division filter hides visits', () => {
+    const mixed: VisitHistoryRow[] = [
+      ...visits,
+      { ...baseRow, id: 'note-D', division: 'MEDICAL' },
+    ];
+    render(<VisitHistoryList visits={mixed} />);
+    // With more than PREVIEW_COUNT visits the panel starts collapsed; the
+    // division filter only renders once it's expanded.
+    fireEvent.click(screen.getByRole('button', { name: /Show all/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Medical' }));
+    expect(screen.getByText(/1 of 4 signed visits shown\./)).toBeInTheDocument();
+  });
+
+  it('reports "N of M" while collapsed when more visits exist than the preview shows', () => {
+    const many: VisitHistoryRow[] = Array.from({ length: 5 }, (_, i) => ({
+      ...baseRow,
+      id: `note-${i}`,
+    }));
+    render(<VisitHistoryList visits={many} />);
+    // Default collapsed view shows the most-recent PREVIEW_COUNT (3) of 5.
+    expect(screen.getByText(/3 of 5 signed visits shown\./)).toBeInTheDocument();
+  });
+
   it('leaves the existing "By episode" view as the default (no behavior change for existing users)', () => {
     render(<VisitHistoryList visits={visits} />);
     // Default selected tab is still "By episode" — the additive PR must not

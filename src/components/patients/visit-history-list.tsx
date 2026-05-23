@@ -137,6 +137,17 @@ export function VisitHistoryList({ visits }: { visits: VisitHistoryRow[] }) {
   // shows the most recent.
   const previewVisits = useMemo(() => visits.slice(0, PREVIEW_COUNT), [visits]);
 
+  // What's actually on screen right now — preview slice while collapsed,
+  // division-filtered slice while expanded. Used to reconcile the header
+  // count with the visible list so "N signed visits" never disagrees with
+  // what the clinician can see (the bug that surfaced as "3 visits but only
+  // 2 shown" when a Division filter or collapsed preview was active).
+  const visibleCount = showCollapsedPreview ? previewVisits.length : filtered.length;
+  const visitCountCopy =
+    visibleCount === visits.length
+      ? `${visits.length} signed visit${visits.length === 1 ? '' : 's'}.`
+      : `${visibleCount} of ${visits.length} signed visits shown.`;
+
   return (
     <Card>
       <CardHeader className="space-y-3">
@@ -144,8 +155,7 @@ export function VisitHistoryList({ visits }: { visits: VisitHistoryRow[] }) {
           <div>
             <CardTitle className="text-md">Visit history</CardTitle>
             <CardDescription>
-              {visits.length} signed visit{visits.length === 1 ? '' : 's'}. Tap any row to
-              open the signed note.
+              {visitCountCopy} Tap any row to open the signed note.
             </CardDescription>
           </div>
           {/* Collapsed preview: only the Show all toggle.
