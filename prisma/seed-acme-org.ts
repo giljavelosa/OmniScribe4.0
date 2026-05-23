@@ -266,6 +266,7 @@ export async function seedAcmeOrganization(
       division: Division.MEDICAL,
       departmentId: deptMedical.id,
       diagnosis: 'Type 2 diabetes mellitus',
+      primaryIcd: 'E11.9',
       goalText: 'Maintain A1c <7.5% with lifestyle + pharmacotherapy.',
       bodyPart: undefined as string | undefined,
     },
@@ -280,6 +281,7 @@ export async function seedAcmeOrganization(
       division: Division.REHAB,
       departmentId: deptRehab.id,
       diagnosis: 'Mechanical low back pain',
+      primaryIcd: 'M54.50',
       goalText: 'Reduce Oswestry disability score below 20%.',
       bodyPart: 'Lumbar spine',
     },
@@ -294,6 +296,7 @@ export async function seedAcmeOrganization(
       division: Division.BEHAVIORAL_HEALTH,
       departmentId: deptBh.id,
       diagnosis: 'Major depressive disorder, single episode',
+      primaryIcd: 'F32.9',
       goalText: 'Reduce PHQ-9 below 10 and restore daily functioning.',
       bodyPart: undefined as string | undefined,
     },
@@ -372,6 +375,7 @@ export async function seedAcmeOrganization(
       id: `seed-acme-case-${p.id}`,
       orgId: acmeOrg.id,
       patientId: p.id,
+      primaryIcd: p.primaryIcd,
       primaryIcdLabel: p.diagnosis,
       description: p.bodyPart ?? null,
       openedByOrgUserId: assignedClinician,
@@ -391,6 +395,7 @@ export async function seedAcmeOrganization(
       departmentId: p.departmentId,
       diagnosis: p.diagnosis,
       bodyPart: p.bodyPart,
+      primaryIcd: p.primaryIcd,
     });
 
     await prisma.episodeGoal.upsert({
@@ -429,6 +434,7 @@ export async function seedAcmeAdditionalEpisodes(
     id: 'seed-acme-case-rk-plantar',
     orgId,
     patientId: 'seed-acme-patient',
+    primaryIcd: 'M72.2',
     primaryIcdLabel: 'Plantar fasciitis, right foot',
     description: 'Right foot',
     openedByOrgUserId: clinicianRowByEmail['pt.nguyen@acme.local']!.orgUserId,
@@ -442,6 +448,7 @@ export async function seedAcmeAdditionalEpisodes(
     departmentId: deptByKey.rehab,
     diagnosis: 'Plantar fasciitis, right foot',
     bodyPart: 'Right foot',
+    primaryIcd: 'M72.2',
   });
   await prisma.episodeGoal.upsert({
     where: { id: 'seed-acme-goal-rk-rehab' },
@@ -462,6 +469,7 @@ export async function seedAcmeAdditionalEpisodes(
     id: 'seed-acme-case-rk-bh',
     orgId,
     patientId: 'seed-acme-patient',
+    primaryIcd: 'F43.22',
     primaryIcdLabel: 'Adjustment disorder with anxious mood',
     openedByOrgUserId: clinicianRowByEmail['lcsw.taylor@acme.local']!.orgUserId,
   });
@@ -470,7 +478,10 @@ export async function seedAcmeAdditionalEpisodes(
     id: 'seed-acme-case-rh-medical',
     orgId,
     patientId: 'seed-acme-patient-rehab',
+    primaryIcd: 'I10',
     primaryIcdLabel: 'Essential hypertension; prediabetes',
+    secondaryIcd: 'R73.03',
+    secondaryIcdLabel: 'Prediabetes',
     openedByOrgUserId: clinicianRowByEmail['clinician@acme.local']!.orgUserId,
   });
 
@@ -478,6 +489,7 @@ export async function seedAcmeAdditionalEpisodes(
     id: 'seed-acme-case-es-medical',
     orgId,
     patientId: 'seed-acme-patient-bh',
+    primaryIcd: 'F33.9',
     primaryIcdLabel: 'Major depressive disorder — medical management',
     openedByOrgUserId: clinicianRowByEmail['clinician@acme.local']!.orgUserId,
   });

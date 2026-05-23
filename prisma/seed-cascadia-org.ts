@@ -360,7 +360,10 @@ export async function seedCascadiaOrganization(
     id: 'seed-cascadia-case-marcus-medical',
     orgId: org.id,
     patientId: 'seed-cascadia-patient-marcus',
+    primaryIcd: 'E11.22',
     primaryIcdLabel: 'Type 2 diabetes mellitus with stage 3 chronic kidney disease',
+    secondaryIcd: 'N18.30',
+    secondaryIcdLabel: 'Chronic kidney disease, stage 3 unspecified',
     openedByOrgUserId: mdHarper,
   });
 
@@ -368,6 +371,7 @@ export async function seedCascadiaOrganization(
     id: 'seed-cascadia-case-marcus-knee',
     orgId: org.id,
     patientId: 'seed-cascadia-patient-marcus',
+    primaryIcd: 'Z47.1',
     primaryIcdLabel: 'Right total knee arthroplasty — post-op rehabilitation',
     description: 'Right knee',
     openedByOrgUserId: ptMorales,
@@ -381,6 +385,7 @@ export async function seedCascadiaOrganization(
     departmentId: deptRehab.id,
     diagnosis: 'Right total knee arthroplasty — post-op rehabilitation',
     bodyPart: 'Right knee',
+    primaryIcd: 'Z47.1',
   });
   await prisma.episodeGoal.upsert({
     where: { id: 'seed-cascadia-goal-marcus-knee' },
@@ -401,6 +406,7 @@ export async function seedCascadiaOrganization(
     id: 'seed-cascadia-case-marcus-shoulder',
     orgId: org.id,
     patientId: 'seed-cascadia-patient-marcus',
+    primaryIcd: 'M75.41',
     primaryIcdLabel: 'Right subacromial impingement syndrome',
     description: 'Right shoulder',
     openedByOrgUserId: ptMorales,
@@ -414,6 +420,7 @@ export async function seedCascadiaOrganization(
     departmentId: deptRehab.id,
     diagnosis: 'Right subacromial impingement syndrome',
     bodyPart: 'Right shoulder',
+    primaryIcd: 'M75.41',
   });
   await prisma.episodeGoal.upsert({
     where: { id: 'seed-cascadia-goal-marcus-shoulder' },
@@ -434,6 +441,7 @@ export async function seedCascadiaOrganization(
     id: 'seed-cascadia-case-marcus-bh',
     orgId: org.id,
     patientId: 'seed-cascadia-patient-marcus',
+    primaryIcd: 'F43.21',
     primaryIcdLabel: 'Adjustment disorder with depressed mood — coping with chronic illness',
     openedByOrgUserId: lcswBennett,
   });
@@ -443,7 +451,10 @@ export async function seedCascadiaOrganization(
     id: 'seed-cascadia-case-priya-medical',
     orgId: org.id,
     patientId: 'seed-cascadia-patient-priya',
+    primaryIcd: 'G43.109',
     primaryIcdLabel: 'Chronic migraine with aura; perimenopausal symptoms',
+    secondaryIcd: 'N95.1',
+    secondaryIcdLabel: 'Menopausal and female climacteric states',
     openedByOrgUserId: mdHarper,
   });
 
@@ -451,6 +462,7 @@ export async function seedCascadiaOrganization(
     id: 'seed-cascadia-case-priya-cervical',
     orgId: org.id,
     patientId: 'seed-cascadia-patient-priya',
+    primaryIcd: 'G44.86',
     primaryIcdLabel: 'Cervicogenic headache with upper-cervical hypomobility',
     description: 'Cervical spine',
     openedByOrgUserId: ptMorales,
@@ -464,6 +476,7 @@ export async function seedCascadiaOrganization(
     departmentId: deptRehab.id,
     diagnosis: 'Cervicogenic headache with upper-cervical hypomobility',
     bodyPart: 'Cervical spine',
+    primaryIcd: 'G44.86',
   });
   await prisma.episodeGoal.upsert({
     where: { id: 'seed-cascadia-goal-priya-cervical' },
@@ -484,6 +497,7 @@ export async function seedCascadiaOrganization(
     id: 'seed-cascadia-case-priya-wrist',
     orgId: org.id,
     patientId: 'seed-cascadia-patient-priya',
+    primaryIcd: 'M65.831',
     primaryIcdLabel: 'Right wrist extensor tendinopathy — repetitive strain',
     description: 'Right wrist',
     openedByOrgUserId: otFischer,
@@ -497,6 +511,7 @@ export async function seedCascadiaOrganization(
     departmentId: deptRehab.id,
     diagnosis: 'Right wrist extensor tendinopathy — repetitive strain',
     bodyPart: 'Right wrist',
+    primaryIcd: 'M65.831',
   });
   await prisma.episodeGoal.upsert({
     where: { id: 'seed-cascadia-goal-priya-wrist' },
@@ -513,6 +528,7 @@ export async function seedCascadiaOrganization(
     },
   });
 
+  // Intentionally un-coded — demo of the "Needs coding" badge state
   await upsertCaseManagement(prisma, {
     id: 'seed-cascadia-case-priya-bh',
     orgId: org.id,

@@ -550,6 +550,7 @@ async function main() {
       division: Division.MEDICAL,
       department: deptMedical,
       diagnosis: 'Essential hypertension',
+      primaryIcd: 'I10',
       goalText: 'Reduce average BP to <130/80 over 12 weeks.',
     },
     {
@@ -562,6 +563,7 @@ async function main() {
       division: Division.REHAB,
       department: deptRehab,
       diagnosis: 'Right knee OA s/p arthroscopy',
+      primaryIcd: 'M17.11',
       goalText: 'Restore right-knee flexion to 120° within 8 weeks.',
     },
     {
@@ -574,6 +576,7 @@ async function main() {
       division: Division.BEHAVIORAL_HEALTH,
       department: deptBh,
       diagnosis: 'Generalized anxiety disorder',
+      primaryIcd: 'F41.1',
       goalText: 'Reduce GAD-7 score from 14 to <8 within 12 weeks.',
     },
   ];
@@ -645,11 +648,12 @@ async function main() {
       p.id === 'seed-patient-rehab' ? 'Right knee' : undefined;
     const caseRow = await prisma.caseManagement.upsert({
       where: { id: `seed-case-${p.id}` },
-      update: { primaryIcdLabel: p.diagnosis, description: bodyPart ?? null },
+      update: { primaryIcdLabel: p.diagnosis, primaryIcd: p.primaryIcd, description: bodyPart ?? null },
       create: {
         id: `seed-case-${p.id}`,
         orgId: org.id,
         patientId: patient.id,
+        primaryIcd: p.primaryIcd,
         primaryIcdLabel: p.diagnosis,
         description: bodyPart ?? null,
         status: 'ACTIVE',
@@ -663,7 +667,7 @@ async function main() {
 
     const episode = await prisma.episodeOfCare.upsert({
       where: { id: `seed-episode-${p.id}` },
-      update: { bodyPart, caseManagementId: caseRow.id },
+      update: { bodyPart, caseManagementId: caseRow.id, primaryIcd: p.primaryIcd },
       create: {
         id: `seed-episode-${p.id}`,
         orgId: org.id,
@@ -674,6 +678,7 @@ async function main() {
         division: Division.REHAB,
         diagnosis: p.diagnosis,
         bodyPart,
+        primaryIcd: p.primaryIcd,
         primaryIcdLabel: p.diagnosis,
         status: EpisodeStatus.ACTIVE,
       },
@@ -962,6 +967,7 @@ async function main() {
     id: 'seed-case-jp-shoulder',
     orgId: org.id,
     patientId: 'seed-patient-medical',
+    primaryIcd: 'M75.101',
     primaryIcdLabel: 'Right rotator cuff strain',
     description: 'Right shoulder',
     openedByOrgUserId: clinicianRowByEmail['pt.smith@demo.local']!.orgUserId,
@@ -970,6 +976,7 @@ async function main() {
     id: 'seed-case-jp-knee',
     orgId: org.id,
     patientId: 'seed-patient-medical',
+    primaryIcd: 'M17.12',
     primaryIcdLabel: 'Left knee osteoarthritis',
     description: 'Left knee',
     openedByOrgUserId: clinicianRowByEmail['pt.smith@demo.local']!.orgUserId,
@@ -978,6 +985,7 @@ async function main() {
     id: 'seed-case-jp-bh',
     orgId: org.id,
     patientId: 'seed-patient-medical',
+    primaryIcd: 'F43.22',
     primaryIcdLabel: 'Adjustment disorder with anxious mood',
     openedByOrgUserId: clinicianRowByEmail['lcsw.garcia@demo.local']!.orgUserId,
   });
@@ -991,6 +999,7 @@ async function main() {
     departmentId: deptRehab.id,
     diagnosis: 'Right rotator cuff strain',
     bodyPart: 'Right shoulder',
+    primaryIcd: 'M75.101',
   });
   await prisma.episodeOfCare.update({
     where: { id: jpRehabEpisode.id },
@@ -1009,6 +1018,7 @@ async function main() {
     departmentId: deptRehab.id,
     diagnosis: 'Left knee osteoarthritis',
     bodyPart: 'Left knee',
+    primaryIcd: 'M17.12',
   });
   await prisma.episodeOfCare.update({
     where: { id: jpKneeEpisode.id },
@@ -1232,13 +1242,17 @@ async function main() {
     id: 'seed-case-ma-medical',
     orgId: org.id,
     patientId: 'seed-patient-rehab',
+    primaryIcd: 'I10',
     primaryIcdLabel: 'Essential hypertension; hypothyroidism',
+    secondaryIcd: 'E03.9',
+    secondaryIcdLabel: 'Hypothyroidism, unspecified',
     openedByOrgUserId: clinicianRowByEmail['np.brown@demo.local']!.orgUserId,
   });
   await upsertCaseManagement(prisma, {
     id: 'seed-case-ma-bh',
     orgId: org.id,
     patientId: 'seed-patient-rehab',
+    primaryIcd: 'F43.21',
     primaryIcdLabel: 'Adjustment disorder with depressed mood — post-op social isolation',
     openedByOrgUserId: clinicianRowByEmail['lcsw.garcia@demo.local']!.orgUserId,
   });
@@ -1247,6 +1261,7 @@ async function main() {
     id: 'seed-case-dm-medical',
     orgId: org.id,
     patientId: 'seed-patient-bh',
+    primaryIcd: 'F41.1',
     primaryIcdLabel: 'Generalized anxiety disorder — medical co-management',
     openedByOrgUserId: clinicianOrgUserId,
   });
@@ -1254,6 +1269,7 @@ async function main() {
     id: 'seed-case-dm-cervical',
     orgId: org.id,
     patientId: 'seed-patient-bh',
+    primaryIcd: 'G44.86',
     primaryIcdLabel: 'Cervicogenic tension headaches / upper trap strain',
     description: 'Cervical spine',
     openedByOrgUserId: clinicianRowByEmail['pt.smith@demo.local']!.orgUserId,
@@ -1267,6 +1283,7 @@ async function main() {
     departmentId: deptRehab.id,
     diagnosis: 'Cervicogenic tension headaches / upper trap strain',
     bodyPart: 'Cervical spine',
+    primaryIcd: 'G44.86',
   });
   await prisma.episodeGoal.upsert({
     where: { id: 'seed-goal-dm-rehab' },
@@ -1322,6 +1339,54 @@ async function main() {
     { builder: JAMAL_CARTER_BRIEF, noteId: 'seed-riverbend-visit-jc-md-headline', orgId: riverbendCtx.orgId },
     { builder: LINDA_FOSTER_BRIEF, noteId: 'seed-riverbend-visit-lf-md-headline', orgId: riverbendCtx.orgId },
   ]);
+
+  // Backfill ICD-10-CM codes onto migration-generated CaseManagement rows
+  // (`cm-from-ep-*` and `cm-uncat-*`). These predate the seed helper and are
+  // not created via `upsertCaseManagement`, so they don't pick up the codes
+  // assigned in the helper-driven calls above. Map by exact `primaryIcdLabel`
+  // so the backfill stays idempotent across re-seeds.
+  const labelToIcd: Record<string, string> = {
+    'Essential hypertension': 'I10',
+    'Right knee OA s/p arthroscopy': 'M17.11',
+    'Generalized anxiety disorder': 'F41.1',
+    'Right rotator cuff strain': 'M75.101',
+    'Left knee osteoarthritis': 'M17.12',
+    'Adjustment disorder with anxious mood': 'F43.22',
+    'Essential hypertension; hypothyroidism': 'I10',
+    'Adjustment disorder with depressed mood — post-op social isolation': 'F43.21',
+    'Generalized anxiety disorder — medical co-management': 'F41.1',
+    'Cervicogenic tension headaches / upper trap strain': 'G44.86',
+    'Type 2 diabetes mellitus': 'E11.9',
+    'Mechanical low back pain': 'M54.50',
+    'Major depressive disorder, single episode': 'F32.9',
+    'Plantar fasciitis, right foot': 'M72.2',
+    'Essential hypertension; prediabetes': 'I10',
+    'Major depressive disorder — medical management': 'F33.9',
+    'Type 2 diabetes mellitus with stage 3 chronic kidney disease': 'E11.22',
+    'Right total knee arthroplasty — post-op rehabilitation': 'Z47.1',
+    'Right subacromial impingement syndrome': 'M75.41',
+    'Adjustment disorder with depressed mood — coping with chronic illness': 'F43.21',
+    'Chronic migraine with aura; perimenopausal symptoms': 'G43.109',
+    'Cervicogenic headache with upper-cervical hypomobility': 'G44.86',
+    'Right wrist extensor tendinopathy — repetitive strain': 'M65.831',
+    'HIV-1 infection — well controlled on antiretroviral therapy': 'B20',
+    'Left lateral malleolus fracture s/p ORIF — post-op rehabilitation': 'Z47.89',
+    'Bilateral plantar fasciitis — overuse pattern': 'M72.2',
+    'Major depressive disorder, recurrent — currently in partial remission': 'F33.41',
+    'Heart failure with reduced ejection fraction (HFrEF, EF 35%) — stable': 'I50.22',
+    'Right femoral neck fracture s/p ORIF — post-op rehabilitation': 'Z47.89',
+    'Generalized deconditioning and high fall risk — balance/gait training': 'R26.81',
+    'Mild cognitive impairment — supportive therapy + cognitive training': 'G31.84',
+    'Uncategorized care': 'Z76.89',
+  };
+  // Intentionally NOT in the map (kept un-coded for "Needs coding" badge demo):
+  //   'Generalized anxiety disorder with chronic insomnia'
+  for (const [label, icd] of Object.entries(labelToIcd)) {
+    await prisma.caseManagement.updateMany({
+      where: { primaryIcdLabel: label, primaryIcd: null },
+      data: { primaryIcd: icd },
+    });
+  }
 
   // Sanity: generate a TOTP token against the seeded secret so devs know
   // their authenticator app will accept it.

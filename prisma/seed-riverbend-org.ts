@@ -359,6 +359,7 @@ export async function seedRiverbendOrganization(
     id: 'seed-riverbend-case-jamal-medical',
     orgId: org.id,
     patientId: 'seed-riverbend-patient-jamal',
+    primaryIcd: 'B20',
     primaryIcdLabel: 'HIV-1 infection — well controlled on antiretroviral therapy',
     openedByOrgUserId: doBoucher,
   });
@@ -367,6 +368,7 @@ export async function seedRiverbendOrganization(
     id: 'seed-riverbend-case-jamal-ankle',
     orgId: org.id,
     patientId: 'seed-riverbend-patient-jamal',
+    primaryIcd: 'Z47.89',
     primaryIcdLabel: 'Left lateral malleolus fracture s/p ORIF — post-op rehabilitation',
     description: 'Left ankle',
     openedByOrgUserId: ptOkonkwo,
@@ -380,6 +382,7 @@ export async function seedRiverbendOrganization(
     departmentId: deptRehab.id,
     diagnosis: 'Left lateral malleolus fracture s/p ORIF — post-op rehabilitation',
     bodyPart: 'Left ankle',
+    primaryIcd: 'Z47.89',
   });
   await prisma.episodeGoal.upsert({
     where: { id: 'seed-riverbend-goal-jamal-ankle' },
@@ -400,6 +403,7 @@ export async function seedRiverbendOrganization(
     id: 'seed-riverbend-case-jamal-plantar',
     orgId: org.id,
     patientId: 'seed-riverbend-patient-jamal',
+    primaryIcd: 'M72.2',
     primaryIcdLabel: 'Bilateral plantar fasciitis — overuse pattern',
     description: 'Bilateral feet',
     openedByOrgUserId: ptOkonkwo,
@@ -413,6 +417,7 @@ export async function seedRiverbendOrganization(
     departmentId: deptRehab.id,
     diagnosis: 'Bilateral plantar fasciitis — overuse pattern',
     bodyPart: 'Bilateral feet',
+    primaryIcd: 'M72.2',
   });
   await prisma.episodeGoal.upsert({
     where: { id: 'seed-riverbend-goal-jamal-plantar' },
@@ -433,6 +438,7 @@ export async function seedRiverbendOrganization(
     id: 'seed-riverbend-case-jamal-bh',
     orgId: org.id,
     patientId: 'seed-riverbend-patient-jamal',
+    primaryIcd: 'F33.41',
     primaryIcdLabel: 'Major depressive disorder, recurrent — currently in partial remission',
     openedByOrgUserId: psyDonovan,
   });
@@ -442,6 +448,7 @@ export async function seedRiverbendOrganization(
     id: 'seed-riverbend-case-linda-medical',
     orgId: org.id,
     patientId: 'seed-riverbend-patient-linda',
+    primaryIcd: 'I50.22',
     primaryIcdLabel: 'Heart failure with reduced ejection fraction (HFrEF, EF 35%) — stable',
     openedByOrgUserId: doBoucher,
   });
@@ -450,6 +457,7 @@ export async function seedRiverbendOrganization(
     id: 'seed-riverbend-case-linda-hip',
     orgId: org.id,
     patientId: 'seed-riverbend-patient-linda',
+    primaryIcd: 'Z47.89',
     primaryIcdLabel: 'Right femoral neck fracture s/p ORIF — post-op rehabilitation',
     description: 'Right hip',
     openedByOrgUserId: ptOkonkwo,
@@ -463,6 +471,7 @@ export async function seedRiverbendOrganization(
     departmentId: deptRehab.id,
     diagnosis: 'Right femoral neck fracture s/p ORIF — post-op rehabilitation',
     bodyPart: 'Right hip',
+    primaryIcd: 'Z47.89',
   });
   await prisma.episodeGoal.upsert({
     where: { id: 'seed-riverbend-goal-linda-hip' },
@@ -483,6 +492,7 @@ export async function seedRiverbendOrganization(
     id: 'seed-riverbend-case-linda-balance',
     orgId: org.id,
     patientId: 'seed-riverbend-patient-linda',
+    primaryIcd: 'R26.81',
     primaryIcdLabel: 'Generalized deconditioning and high fall risk — balance/gait training',
     openedByOrgUserId: ptOkonkwo,
   });
@@ -494,6 +504,7 @@ export async function seedRiverbendOrganization(
     clinicianOrgUserId: ptOkonkwo,
     departmentId: deptRehab.id,
     diagnosis: 'Generalized deconditioning and high fall risk — balance/gait training',
+    primaryIcd: 'R26.81',
   });
   await prisma.episodeGoal.upsert({
     where: { id: 'seed-riverbend-goal-linda-balance' },
@@ -514,6 +525,7 @@ export async function seedRiverbendOrganization(
     id: 'seed-riverbend-case-linda-bh',
     orgId: org.id,
     patientId: 'seed-riverbend-patient-linda',
+    primaryIcd: 'G31.84',
     primaryIcdLabel: 'Mild cognitive impairment — supportive therapy + cognitive training',
     openedByOrgUserId: psyDonovan,
   });
