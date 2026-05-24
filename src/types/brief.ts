@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { EncounterIntent } from '@prisma/client';
 
 /**
  * Prior-Context Brief — canonical JSON shape stored in NoteBrief.content.
@@ -219,6 +220,15 @@ export const PriorContextBriefContentSchema = BriefLLMOutputSchema.omit({
   generatorVersion: z.string().min(1),
   openFollowUps: z.array(FollowUpPreviewSchema),
   ehrEnrichment: HydratedBriefEhrEnrichmentSchema.optional(),
+  // Unit 48 PR3 — clinical intent of the source encounter (when the brief
+  // was generated via IntentAwareBriefGenerator). Optional nullable for
+  // back-compat: pre-Unit-48 briefs and generic-path briefs leave this
+  // unset and validate identically to the pre-PR3 schema. Renderers
+  // branch on this field to choose intent-aware section components
+  // (see src/components/brief/intent-aware-brief-card.tsx).
+  // See: src/types/brief-intent-shapes.ts for the spine-specific shapes
+  // that extend BriefLLMOutputSchema with intent-specific fields.
+  intent: z.nativeEnum(EncounterIntent).nullable().optional(),
 });
 export type PriorContextBriefContent = z.infer<typeof PriorContextBriefContentSchema>;
 
