@@ -1,5 +1,6 @@
 import type { LLMService } from '@/services/llm';
 import { getLLMService } from '@/services/llm';
+import { stripJsonFence } from '@/lib/llm/strip-json-fence';
 import { runTool, type AskSource, type Draft } from './tools';
 import { RESEARCH_TOOL_NAMES, runResearchTool } from './research-tools';
 import { DRAFT_TOOL_NAMES } from './draft-tools';
@@ -650,17 +651,8 @@ type ParsedAction =
    *  with a `wrong_mode_fallback` tool-result (fail-closed). */
   | { action: 'answer-from-knowledge'; text: string; topic: string };
 
-/** Strip a markdown ```json … ``` (or bare ```) fence if present.
- *  Defensive — Sonnet sometimes wraps JSON-mode output in a fence
- *  despite the jsonMode flag, which would otherwise burn a full
- *  iteration on a parse failure (see Phase 1A iteration refund). */
-function stripJsonFence(raw: string): string {
-  const m = raw.match(/^\s*```(?:json)?\s*\n([\s\S]*?)\n\s*```\s*$/);
-  return m && m[1] !== undefined ? m[1] : raw;
-}
-
 function parseModelOutput(raw: string): ParsedOutput {
-  const trimmed = stripJsonFence(raw).trim();
+  const trimmed = stripJsonFence(raw);
   let json: unknown;
   try {
     json = JSON.parse(trimmed);

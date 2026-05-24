@@ -24,6 +24,7 @@
 import { z } from 'zod';
 
 import { getLLMService, type LLMService } from '@/services/llm';
+import { stripJsonFence } from '@/lib/llm/strip-json-fence';
 import {
   PERSONA_ANTI_DRIFT_BLOCK,
   PERSONA_VERSION,
@@ -876,10 +877,7 @@ function modelFamily(modelId: string): 'sonnet' | 'haiku' | 'stub' | 'unknown' {
 }
 
 function parseProposal(rawText: string): { ok: true; value: CaseRouterProposal } | { ok: false; error: string } {
-  let trimmed = rawText.trim();
-  // Strip markdown code fence if present.
-  const fence = trimmed.match(/^```(?:json)?\s*\n([\s\S]*?)\n\s*```\s*$/);
-  if (fence?.[1] !== undefined) trimmed = fence[1].trim();
+  const trimmed = stripJsonFence(rawText);
 
   let json: unknown;
   try {

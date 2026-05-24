@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma';
 import { writeAuditLog } from '@/lib/audit/log';
 import { enqueueCaseRouterJob, enqueueCleoStateRefresh } from '@/lib/queue';
 import { getLLMService } from '@/services/llm';
+import { stripJsonFence } from '@/lib/llm/strip-json-fence';
 import { buildMasterPrompt, buildSectionPrompt, type NoteSectionDef } from '@/lib/notes/build-prompt';
 import { projectPatientForPrompt, projectEpisodeForPrompt } from '@/lib/notes/projections';
 import { PERSONA_VERSION } from '@/services/copilot/persona';
@@ -470,17 +471,7 @@ async function regenerateOne(
  * text as content.
  */
 function extractContent(rawText: string, sectionId: string): string {
-  let trimmed = rawText.trim();
-  // Strip markdown code fence if present. Claude and many other LLMs wrap
-  // JSON in ```json … ``` (or ``` … ```) even when asked for raw JSON via
-  // jsonMode. Without unwrapping, JSON.parse fails and the entire fenced
-  // block (including the ```json header and the inner { sectionId, content }
-  // wrapper) ends up rendered to the clinician as raw JSON in /review.
-  const fenceMatch = trimmed.match(/^```(?:json)?\s*\r?\n([\s\S]*?)\r?\n```$/);
-  if (fenceMatch?.[1]) {
-    trimmed = fenceMatch[1].trim();
-  }
-  // Try JSON parse.
+  const trimmed = stripJsonFence(rawText);
   try {
     const parsed = JSON.parse(trimmed) as { content?: string; sectionId?: string };
     if (typeof parsed.content === 'string') return parsed.content;
