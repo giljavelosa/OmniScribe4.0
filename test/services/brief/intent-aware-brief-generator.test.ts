@@ -156,18 +156,46 @@ const validSonnetOutput = {
 // =============================================================================
 
 describe('SUPPORTED_INTENT_PAIRS', () => {
-  it('contains exactly one pair in PR3 (REHAB:REHAB_PROGRESS_NOTE)', () => {
-    expect(SUPPORTED_INTENT_PAIRS.size).toBe(1);
+  it('contains the four MVP pairs after PR4', () => {
+    expect(SUPPORTED_INTENT_PAIRS.size).toBe(4);
     expect(
       SUPPORTED_INTENT_PAIRS.has(`REHAB:${EncounterIntent.REHAB_PROGRESS_NOTE}`),
+    ).toBe(true);
+    expect(
+      SUPPORTED_INTENT_PAIRS.has(`REHAB:${EncounterIntent.REHAB_REEVAL}`),
+    ).toBe(true);
+    expect(
+      SUPPORTED_INTENT_PAIRS.has(
+        `BEHAVIORAL_HEALTH:${EncounterIntent.BH_TREATMENT_PLAN_REVIEW}`,
+      ),
+    ).toBe(true);
+    expect(
+      SUPPORTED_INTENT_PAIRS.has(
+        `MEDICAL:${EncounterIntent.MEDICAL_ANNUAL_WELLNESS}`,
+      ),
     ).toBe(true);
   });
 });
 
 describe('isIntentAwarePairSupported', () => {
-  it('returns true for REHAB + REHAB_PROGRESS_NOTE', () => {
+  it('returns true for all four MVP pairs', () => {
     expect(
       isIntentAwarePairSupported('REHAB', EncounterIntent.REHAB_PROGRESS_NOTE),
+    ).toBe(true);
+    expect(
+      isIntentAwarePairSupported('REHAB', EncounterIntent.REHAB_REEVAL),
+    ).toBe(true);
+    expect(
+      isIntentAwarePairSupported(
+        'BEHAVIORAL_HEALTH',
+        EncounterIntent.BH_TREATMENT_PLAN_REVIEW,
+      ),
+    ).toBe(true);
+    expect(
+      isIntentAwarePairSupported(
+        'MEDICAL',
+        EncounterIntent.MEDICAL_ANNUAL_WELLNESS,
+      ),
     ).toBe(true);
   });
 
@@ -181,7 +209,14 @@ describe('isIntentAwarePairSupported', () => {
 
   it('returns false for intents not yet shipped with spine modules', () => {
     expect(isIntentAwarePairSupported('REHAB', EncounterIntent.REHAB_DAILY_NOTE)).toBe(false);
-    expect(isIntentAwarePairSupported('REHAB', EncounterIntent.REHAB_REEVAL)).toBe(false);
+    expect(isIntentAwarePairSupported('REHAB', EncounterIntent.REHAB_INITIAL_EVAL)).toBe(false);
+    expect(isIntentAwarePairSupported('REHAB', EncounterIntent.REHAB_DISCHARGE)).toBe(false);
+    expect(
+      isIntentAwarePairSupported('BEHAVIORAL_HEALTH', EncounterIntent.BH_SESSION_INDIVIDUAL),
+    ).toBe(false);
+    expect(
+      isIntentAwarePairSupported('MEDICAL', EncounterIntent.MEDICAL_FOLLOW_UP),
+    ).toBe(false);
   });
 
   it('returns false for cross-division pairs', () => {
@@ -210,6 +245,9 @@ describe('IntentAwareBriefGenerator.generate', () => {
     expect(result.model).toBe('sonnet');
     expect(result.attempts).toBe(1);
     expect(result.brief.intent).toBe(EncounterIntent.REHAB_PROGRESS_NOTE);
+    if (result.brief.intent !== EncounterIntent.REHAB_PROGRESS_NOTE) {
+      throw new Error('expected REHAB_PROGRESS_NOTE narrowing');
+    }
     expect(result.brief.goalLedger).toHaveLength(1);
     expect(result.brief.medicalNecessity.remainingLimitations).toContain(
       'Unable to reach overhead',
@@ -221,6 +259,9 @@ describe('IntentAwareBriefGenerator.generate', () => {
     const llm = mockLLM([() => ({ text: fenced })]);
     const g = new IntentAwareBriefGenerator(llm);
     const result = await g.generate(input(), EncounterIntent.REHAB_PROGRESS_NOTE);
+    if (result.brief.intent !== EncounterIntent.REHAB_PROGRESS_NOTE) {
+      throw new Error('expected REHAB_PROGRESS_NOTE narrowing');
+    }
     expect(result.brief.goalLedger).toHaveLength(1);
   });
 
@@ -269,6 +310,9 @@ describe('IntentAwareBriefGenerator.generate', () => {
     expect(result.stub).toBe(true);
     expect(result.brief.intent).toBe(EncounterIntent.REHAB_PROGRESS_NOTE);
     // Stub synthesizer derives goalLedger from topActiveGoals.
+    if (result.brief.intent !== EncounterIntent.REHAB_PROGRESS_NOTE) {
+      throw new Error('expected REHAB_PROGRESS_NOTE narrowing');
+    }
     expect(result.brief.goalLedger).toHaveLength(1);
     expect(result.brief.goalLedger[0]!.goalText).toBe('AROM flex to 150°');
     // Stub synthesizer fills medical-necessity with [stub …] placeholders.
@@ -281,5 +325,68 @@ describe('IntentAwareBriefGenerator.generate', () => {
     await expect(
       g.generate(input(), EncounterIntent.REHAB_DAILY_NOTE),
     ).rejects.toThrow(/unsupported \(division, intent\) pair/);
+  });
+});
+
+// =============================================================================
+// 3. PR4 smoke tests — each new MVP pair generates a valid stub spine
+// end-to-end. Proves the spine module + selectSpine + stampIntent wiring
+// without duplicating all the Sonnet-path coverage above (the pattern is
+// proven by REHAB_PROGRESS_NOTE; PR4 pairs just need wiring sanity).
+// =============================================================================
+
+describe('IntentAwareBriefGenerator — PR4 stub-mode smoke', () => {
+  function bhInput() {
+    return { ...input(), division: 'BEHAVIORAL_HEALTH' as const };
+  }
+  function medInput() {
+    return { ...input(), division: 'MEDICAL' as const };
+  }
+
+  it('REHAB_REEVAL stub mode produces a valid RehabReeval shape', async () => {
+    const llm = mockLLM([() => ({ text: JSON.stringify({ stub: true }), stub: true })]);
+    const g = new IntentAwareBriefGenerator(llm);
+    const result = await g.generate(input(), EncounterIntent.REHAB_REEVAL);
+    expect(result.stub).toBe(true);
+    if (result.brief.intent !== EncounterIntent.REHAB_REEVAL) {
+      throw new Error('expected REHAB_REEVAL narrowing');
+    }
+    expect(result.brief.goalLedger.length).toBeGreaterThanOrEqual(1);
+    expect(result.brief.objectiveMeasureHistory.length).toBeGreaterThanOrEqual(1);
+    expect(Array.isArray(result.brief.revisionOpportunities)).toBe(true);
+  });
+
+  it('BH_TREATMENT_PLAN_REVIEW stub mode produces a valid BhTpr shape', async () => {
+    const llm = mockLLM([() => ({ text: JSON.stringify({ stub: true }), stub: true })]);
+    const g = new IntentAwareBriefGenerator(llm);
+    const result = await g.generate(
+      bhInput(),
+      EncounterIntent.BH_TREATMENT_PLAN_REVIEW,
+    );
+    expect(result.stub).toBe(true);
+    if (result.brief.intent !== EncounterIntent.BH_TREATMENT_PLAN_REVIEW) {
+      throw new Error('expected BH_TREATMENT_PLAN_REVIEW narrowing');
+    }
+    expect(result.brief.goalLedger.length).toBeGreaterThanOrEqual(1);
+    expect(result.brief.riskTrend.length).toBeGreaterThanOrEqual(1);
+    expect(result.brief.riskTrend[0]!.tool).toMatch(/^(PHQ-9|GAD-7|C-SSRS|MOOD-RATING)$/);
+    expect(Array.isArray(result.brief.planRevisions)).toBe(true);
+  });
+
+  it('MEDICAL_ANNUAL_WELLNESS stub mode produces a valid MedicalAwv shape', async () => {
+    const llm = mockLLM([() => ({ text: JSON.stringify({ stub: true }), stub: true })]);
+    const g = new IntentAwareBriefGenerator(llm);
+    const result = await g.generate(
+      medInput(),
+      EncounterIntent.MEDICAL_ANNUAL_WELLNESS,
+    );
+    expect(result.stub).toBe(true);
+    if (result.brief.intent !== EncounterIntent.MEDICAL_ANNUAL_WELLNESS) {
+      throw new Error('expected MEDICAL_ANNUAL_WELLNESS narrowing');
+    }
+    expect(result.brief.careGaps.length).toBeGreaterThanOrEqual(1);
+    expect(result.brief.screeningsDue.length).toBeGreaterThanOrEqual(1);
+    expect(result.brief.immunizationsDue.length).toBeGreaterThanOrEqual(1);
+    expect(Array.isArray(result.brief.priorAwvItems)).toBe(true);
   });
 });

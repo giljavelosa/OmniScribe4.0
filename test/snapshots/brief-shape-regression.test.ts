@@ -203,24 +203,45 @@ describe('PR3 regression gate — worker dispatcher predicate', () => {
     }
   });
 
-  it('PR3 ships exactly one supported pair (REHAB:REHAB_PROGRESS_NOTE)', () => {
+  it('PR3+PR4 ship the four MVP supported pairs', () => {
     expect(
       isIntentAwarePairSupported('REHAB', EncounterIntent.REHAB_PROGRESS_NOTE),
     ).toBe(true);
-  });
-
-  it('PR3 unsupported pairs fall through (PR4 enables them)', () => {
+    // PR4 enables these:
     expect(
       isIntentAwarePairSupported('REHAB', EncounterIntent.REHAB_REEVAL),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       isIntentAwarePairSupported(
         'BEHAVIORAL_HEALTH',
         EncounterIntent.BH_TREATMENT_PLAN_REVIEW,
       ),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       isIntentAwarePairSupported('MEDICAL', EncounterIntent.MEDICAL_ANNUAL_WELLNESS),
+    ).toBe(true);
+  });
+
+  it('intents NOT yet shipped with spine modules still fall through', () => {
+    // These will get their spines in future units; until then, dispatch
+    // routes them to the existing BriefGenerator path.
+    expect(
+      isIntentAwarePairSupported('REHAB', EncounterIntent.REHAB_DAILY_NOTE),
+    ).toBe(false);
+    expect(
+      isIntentAwarePairSupported('REHAB', EncounterIntent.REHAB_INITIAL_EVAL),
+    ).toBe(false);
+    expect(
+      isIntentAwarePairSupported('REHAB', EncounterIntent.REHAB_DISCHARGE),
+    ).toBe(false);
+    expect(
+      isIntentAwarePairSupported(
+        'BEHAVIORAL_HEALTH',
+        EncounterIntent.BH_SESSION_INDIVIDUAL,
+      ),
+    ).toBe(false);
+    expect(
+      isIntentAwarePairSupported('MEDICAL', EncounterIntent.MEDICAL_FOLLOW_UP),
     ).toBe(false);
   });
 

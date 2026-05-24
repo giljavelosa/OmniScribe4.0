@@ -47,23 +47,39 @@ import {
 import {
   REHAB_PROGRESS_SPINE,
 } from '@/lib/notes/brief-spines/rehab-progress-spine';
+import {
+  REHAB_REEVAL_SPINE,
+} from '@/lib/notes/brief-spines/rehab-reeval-spine';
+import {
+  BH_TPR_SPINE,
+} from '@/lib/notes/brief-spines/bh-tpr-spine';
+import {
+  MEDICAL_AWV_SPINE,
+} from '@/lib/notes/brief-spines/medical-awv-spine';
 import type {
+  BhTprBriefShape,
+  MedicalAwvBriefShape,
   RehabProgressBriefShape,
+  RehabReevalBriefShape,
 } from '@/types/brief-intent-shapes';
 import type { BriefLLMOutput } from '@/types/brief';
 
-export const INTENT_AWARE_BRIEF_GENERATOR_VERSION = 'llm-v1-intent-rehab-progress';
+export const INTENT_AWARE_BRIEF_GENERATOR_VERSION = 'llm-v1-intent-mvp';
 export const INTENT_AWARE_BRIEF_GENERATOR_FALLBACK_VERSION =
-  'llm-v1-intent-rehab-progress-fallback-haiku';
+  'llm-v1-intent-mvp-fallback-haiku';
 
 /**
- * The intent-aware path returns one of the spine-specific shapes. v1
- * only ships REHAB_PROGRESS_NOTE; the union grows to include the other
- * three MVP shapes in PR4. Callers narrow on `intent` to access spine-
- * specific fields safely.
+ * The intent-aware path returns one of the spine-specific shapes. PR3
+ * shipped only REHAB_PROGRESS_NOTE; PR4 adds the other three MVP
+ * shapes. Callers narrow on `intent` to access spine-specific fields
+ * safely (discriminated union via the `intent` tag stamped by
+ * `stampIntent`).
  */
 export type IntentAwareBriefOutput =
-  | (RehabProgressBriefShape & { intent: typeof EncounterIntent.REHAB_PROGRESS_NOTE });
+  | (RehabProgressBriefShape & { intent: typeof EncounterIntent.REHAB_PROGRESS_NOTE })
+  | (RehabReevalBriefShape & { intent: typeof EncounterIntent.REHAB_REEVAL })
+  | (BhTprBriefShape & { intent: typeof EncounterIntent.BH_TREATMENT_PLAN_REVIEW })
+  | (MedicalAwvBriefShape & { intent: typeof EncounterIntent.MEDICAL_ANNUAL_WELLNESS });
 
 export type IntentAwareBriefGenerationResult = {
   brief: IntentAwareBriefOutput;
@@ -84,11 +100,10 @@ export type IntentAwareBriefGenerationResult = {
  */
 export const SUPPORTED_INTENT_PAIRS: ReadonlySet<string> = new Set<string>([
   `REHAB:${EncounterIntent.REHAB_PROGRESS_NOTE}`,
-  // PR4 (placeholder for clarity — uncomment in PR4 alongside the
-  // corresponding spine modules):
-  // `REHAB:${EncounterIntent.REHAB_REEVAL}`,
-  // `BEHAVIORAL_HEALTH:${EncounterIntent.BH_TREATMENT_PLAN_REVIEW}`,
-  // `MEDICAL:${EncounterIntent.MEDICAL_ANNUAL_WELLNESS}`,
+  // PR4 — the three remaining MVP pairs.
+  `REHAB:${EncounterIntent.REHAB_REEVAL}`,
+  `BEHAVIORAL_HEALTH:${EncounterIntent.BH_TREATMENT_PLAN_REVIEW}`,
+  `MEDICAL:${EncounterIntent.MEDICAL_ANNUAL_WELLNESS}`,
 ]);
 
 /**
@@ -189,14 +204,27 @@ export class IntentAwareBriefGenerator {
 // Internal helpers.
 // =============================================================================
 
-type SupportedSpine = typeof REHAB_PROGRESS_SPINE; // grows to a union in PR4
+type SupportedSpine =
+  | typeof REHAB_PROGRESS_SPINE
+  | typeof REHAB_REEVAL_SPINE
+  | typeof BH_TPR_SPINE
+  | typeof MEDICAL_AWV_SPINE;
 
 function selectSpine(division: Division, intent: EncounterIntent): SupportedSpine {
-  if (
-    division === 'REHAB' &&
-    intent === EncounterIntent.REHAB_PROGRESS_NOTE
-  ) {
+  if (division === 'REHAB' && intent === EncounterIntent.REHAB_PROGRESS_NOTE) {
     return REHAB_PROGRESS_SPINE;
+  }
+  if (division === 'REHAB' && intent === EncounterIntent.REHAB_REEVAL) {
+    return REHAB_REEVAL_SPINE;
+  }
+  if (
+    division === 'BEHAVIORAL_HEALTH' &&
+    intent === EncounterIntent.BH_TREATMENT_PLAN_REVIEW
+  ) {
+    return BH_TPR_SPINE;
+  }
+  if (division === 'MEDICAL' && intent === EncounterIntent.MEDICAL_ANNUAL_WELLNESS) {
+    return MEDICAL_AWV_SPINE;
   }
   // Defensive — the worker dispatcher should have filtered this out via
   // isIntentAwarePairSupported(). If we get here, the call site has a bug.
@@ -209,11 +237,22 @@ type ParseResult<T> =
   | { ok: true; value: T }
   | { ok: false; error: string };
 
+/**
+ * The spine output union. Each spine schema extends BriefLLMOutputSchema,
+ * so the parsed value always satisfies the base brief shape; the spine-
+ * specific fields ride along based on which schema validated it.
+ */
+type AnySpineOutput =
+  | RehabProgressBriefShape
+  | RehabReevalBriefShape
+  | BhTprBriefShape
+  | MedicalAwvBriefShape;
+
 function parseSpineOutput(
   rawText: string,
   input: BuildBriefPromptInput,
   spine: SupportedSpine,
-): ParseResult<RehabProgressBriefShape> {
+): ParseResult<AnySpineOutput> {
   const stripped = stripJsonFence(rawText);
   let parsedJson: unknown;
   try {
@@ -231,11 +270,20 @@ function parseSpineOutput(
     (parsedJson as { stub?: boolean }).stub === true
   ) {
     const baseStub = synthesizeBaseStub(input);
-    return { ok: true, value: spine.stubSynthesizer(input, baseStub) };
+    // Each spine's stubSynthesizer expects its own narrowed baseStub
+    // shape (Omit<RehabProgressBriefShape, ...> etc.) — the base fields
+    // are identical across spines so the cast is safe.
+    return {
+      ok: true,
+      value: (spine.stubSynthesizer as (
+        i: BuildBriefPromptInput,
+        b: ReturnType<typeof synthesizeBaseStub>,
+      ) => AnySpineOutput)(input, baseStub),
+    };
   }
 
   const result = spine.outputSchema.safeParse(parsedJson);
-  if (result.success) return { ok: true, value: result.data };
+  if (result.success) return { ok: true, value: result.data as AnySpineOutput };
   return { ok: false, error: result.error.message.slice(0, 600) };
 }
 
@@ -245,6 +293,13 @@ function parseSpineOutput(
  * the structure of BriefGenerator's `synthesizeStubBrief` but kept local
  * here so the sibling pattern remains true — we don't reach into the
  * base generator's internals.
+ */
+/**
+ * Returns the base brief shape fields (everything the BriefLLMOutputSchema
+ * declares). Each spine's stubSynthesizer accepts this and augments with
+ * its own intent-specific fields. Typed as the largest narrowed shape
+ * (REHAB_PROGRESS minus its extras) for ergonomics; the runtime shape is
+ * identical for all spines.
  */
 function synthesizeBaseStub(
   input: BuildBriefPromptInput,
@@ -315,15 +370,36 @@ function synthesizeBaseStub(
 /**
  * Tag the parsed brief with its source intent so downstream consumers
  * (renderer, audit) can discriminate without inspecting other fields.
- * v1 only emits REHAB_PROGRESS_NOTE; PR4 unions in the others.
+ * Each branch returns a narrowed IntentAwareBriefOutput variant.
  */
 function stampIntent(
-  brief: RehabProgressBriefShape,
+  brief: AnySpineOutput,
   intent: EncounterIntent,
 ): IntentAwareBriefOutput {
   if (intent === EncounterIntent.REHAB_PROGRESS_NOTE) {
-    return { ...brief, intent: EncounterIntent.REHAB_PROGRESS_NOTE };
+    return {
+      ...(brief as RehabProgressBriefShape),
+      intent: EncounterIntent.REHAB_PROGRESS_NOTE,
+    };
   }
-  // selectSpine already gates this; the throw is unreachable in v1.
+  if (intent === EncounterIntent.REHAB_REEVAL) {
+    return {
+      ...(brief as RehabReevalBriefShape),
+      intent: EncounterIntent.REHAB_REEVAL,
+    };
+  }
+  if (intent === EncounterIntent.BH_TREATMENT_PLAN_REVIEW) {
+    return {
+      ...(brief as BhTprBriefShape),
+      intent: EncounterIntent.BH_TREATMENT_PLAN_REVIEW,
+    };
+  }
+  if (intent === EncounterIntent.MEDICAL_ANNUAL_WELLNESS) {
+    return {
+      ...(brief as MedicalAwvBriefShape),
+      intent: EncounterIntent.MEDICAL_ANNUAL_WELLNESS,
+    };
+  }
+  // selectSpine already gates this; the throw is unreachable.
   throw new Error(`stampIntent: unsupported intent ${intent}`);
 }
