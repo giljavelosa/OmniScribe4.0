@@ -1,5 +1,5 @@
 import type { Job } from 'bullmq';
-import { NoteStatus, Prisma, type FollowUp } from '@prisma/client';
+import { EncounterIntent, IntentSource, NoteStatus, Prisma, type FollowUp } from '@prisma/client';
 
 import { prisma } from '@/lib/prisma';
 import { writeAuditLog } from '@/lib/audit/log';
@@ -7,6 +7,12 @@ import {
   BriefGenerator,
   BRIEF_GENERATOR_FALLBACK_VERSION,
 } from '@/services/brief/BriefGenerator';
+// Unit 48 PR3 — sibling-files pattern (Decision 11). The dispatcher
+// below routes to IntentAwareBriefGenerator for supported (division,
+// intent) pairs; everything else falls through to the unchanged
+// BriefGenerator path below.
+import { isIntentAwarePairSupported } from '@/services/brief/IntentAwareBriefGenerator';
+import { runIntentAwareBrief } from './intent-aware-brief';
 import { FollowupExtractor } from '@/services/brief/FollowupExtractor';
 import { PERSONA_VERSION } from '@/services/copilot/persona';
 import {
@@ -86,6 +92,27 @@ export async function handle(job: Job<NoteBriefJob>) {
   if (!note.finalJson) {
     console.warn(`[note-brief] note ${noteId} has no finalJson — dropping`);
     return { skipped: 'no_final_json' };
+  }
+
+  // Unit 48 PR3 — intent-aware dispatcher (Decision 11 / sibling pattern).
+  // When the encounter has a supported (division, intent) pair, route to
+  // the intent-aware flow and return early. Everything below this block
+  // is byte-for-byte unchanged from PR1's state and runs for:
+  //   - encounters with intent === UNSPECIFIED (pre-Unit-48 + default)
+  //   - encounters whose (division, intent) pair isn't yet supported by
+  //     a spine module (PR3 ships REHAB:REHAB_PROGRESS_NOTE only; PR4
+  //     adds three more pairs)
+  const encounterIntent: EncounterIntent =
+    (note.encounter as { intent?: EncounterIntent } | null)?.intent ?? EncounterIntent.UNSPECIFIED;
+  const encounterIntentSource: IntentSource =
+    (note.encounter as { intentSource?: IntentSource } | null)?.intentSource ?? IntentSource.CLINICIAN;
+  if (isIntentAwarePairSupported(note.division, encounterIntent)) {
+    return runIntentAwareBrief({
+      note,
+      intent: encounterIntent,
+      intentSource: encounterIntentSource,
+      orgId,
+    });
   }
 
   const todayIso = new Date().toISOString();
@@ -172,12 +199,14 @@ export async function handle(job: Job<NoteBriefJob>) {
     briefResult = await generator.generate(briefInput, { orgId, noteId });
   } catch (err) {
     const errorClass = err instanceof Error ? err.name : 'Unknown';
+    const errorMessage =
+      err instanceof Error ? err.message.slice(0, 600) : String(err).slice(0, 600);
     await writeAuditLog({
       orgId,
       action: 'BRIEF_GENERATION_FAILED',
       resourceType: 'Note',
       resourceId: noteId,
-      metadata: { errorClass },
+      metadata: { errorClass, errorMessage },
     });
     throw err;
   }

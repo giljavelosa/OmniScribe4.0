@@ -34,6 +34,7 @@ export function BriefCard({
   content,
   patientName,
   followUpsSlot,
+  spineSlot,
   nowMs,
   className,
 }: {
@@ -45,6 +46,13 @@ export function BriefCard({
   /** Optional override for the open-follow-ups slot (capture screen passes
    *  the interactive variant; prepare passes nothing). */
   followUpsSlot?: React.ReactNode;
+  /** Unit 48 PR3 — optional intent-specific section that renders above
+   *  the goals snapshot. Used by `<IntentAwareBriefCard>` to inject
+   *  `<GoalLedger>` + `<MedicalNecessityScaffold>` (REHAB_PROGRESS_NOTE)
+   *  or future spine components (REEVAL / BH_TPR / AWV). Defaults to
+   *  `null` — when omitted the card renders identically to its pre-PR3
+   *  shape (Decision 11 / snapshot regression test asserts this). */
+  spineSlot?: React.ReactNode;
   /** Caller-supplied "now" (epoch ms) so the footer's "X days ago" stays
    *  pure across re-renders. Required — page-level server components pass
    *  Date.now() once at request time. */
@@ -149,6 +157,12 @@ export function BriefCard({
         <BriefSection label="Open follow-ups" count={content.openFollowUps.length}>
           {followUpsSlot ?? <FollowUpPreviewList followUps={content.openFollowUps} />}
         </BriefSection>
+
+        {/* Unit 48 PR3 — intent-aware spine slot. Renders nothing when
+            spineSlot is null/undefined (pre-PR3 behavior preserved); when
+            <IntentAwareBriefCard> passes children, they render here above
+            the goals snapshot. */}
+        {spineSlot}
 
         <BriefSection
           label="Active goals"
