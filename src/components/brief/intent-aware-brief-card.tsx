@@ -2,13 +2,23 @@ import { EncounterIntent } from '@prisma/client';
 
 import type { PriorContextBriefContent } from '@/types/brief';
 import type {
+  CareGap,
   GoalLedgerEntry,
+  ImmunizationDue,
   MedicalNecessity,
+  ObjectiveMeasureHistoryEntry,
+  PlanRevision,
+  PriorAwvItem,
+  RevisionOpportunity,
+  RiskTrendEntry,
 } from '@/types/brief-intent-shapes';
 
 import { BriefCard } from './brief-card';
 import { GoalLedger } from './spines/goal-ledger';
 import { MedicalNecessityScaffold } from './spines/medical-necessity-scaffold';
+import { ObjectiveMeasureHistorySection } from './spines/objective-measure-history';
+import { RiskTrendSparkline } from './spines/risk-trend-sparkline';
+import { CareGapsList } from './spines/care-gaps-list';
 
 /**
  * Unit 48 PR3 — intent-aware brief card wrapper (sibling pattern,
@@ -56,6 +66,14 @@ export function IntentAwareBriefCard({
     Partial<{
       goalLedger: GoalLedgerEntry[];
       medicalNecessity: MedicalNecessity;
+      objectiveMeasureHistory: ObjectiveMeasureHistoryEntry[];
+      revisionOpportunities: RevisionOpportunity[];
+      riskTrend: RiskTrendEntry[];
+      planRevisions: PlanRevision[];
+      careGaps: CareGap[];
+      screeningsDue: CareGap[];
+      immunizationsDue: ImmunizationDue[];
+      priorAwvItems: PriorAwvItem[];
     }>;
 
   let spineSlot: React.ReactNode = null;
@@ -67,9 +85,40 @@ export function IntentAwareBriefCard({
         <MedicalNecessityScaffold data={extras.medicalNecessity ?? null} />
       </div>
     );
+  } else if (intent === EncounterIntent.REHAB_REEVAL) {
+    spineSlot = (
+      <div className="space-y-5" data-testid="intent-aware-spine" data-intent={intent}>
+        <GoalLedger entries={extras.goalLedger ?? []} />
+        <ObjectiveMeasureHistorySection
+          entries={extras.objectiveMeasureHistory ?? []}
+          revisions={extras.revisionOpportunities ?? []}
+        />
+      </div>
+    );
+  } else if (intent === EncounterIntent.BH_TREATMENT_PLAN_REVIEW) {
+    spineSlot = (
+      <div className="space-y-5" data-testid="intent-aware-spine" data-intent={intent}>
+        <GoalLedger entries={extras.goalLedger ?? []} />
+        <RiskTrendSparkline
+          entries={extras.riskTrend ?? []}
+          revisions={extras.planRevisions ?? []}
+        />
+      </div>
+    );
+  } else if (intent === EncounterIntent.MEDICAL_ANNUAL_WELLNESS) {
+    spineSlot = (
+      <div className="space-y-5" data-testid="intent-aware-spine" data-intent={intent}>
+        <CareGapsList
+          careGaps={extras.careGaps ?? []}
+          screeningsDue={extras.screeningsDue ?? []}
+          immunizationsDue={extras.immunizationsDue ?? []}
+          priorAwvItems={extras.priorAwvItems ?? []}
+        />
+      </div>
+    );
   }
-  // PR4: add REHAB_REEVAL / BH_TREATMENT_PLAN_REVIEW / MEDICAL_ANNUAL_WELLNESS
-  // branches here as their spine components ship.
+  // Other intents: spineSlot stays null → IntentAwareBriefCard renders
+  // identically to a plain BriefCard. Future spines add more branches.
 
   return (
     <BriefCard
