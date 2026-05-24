@@ -50,6 +50,10 @@ const COOLDOWN_MS_BY_KIND: Record<CleoNudgeKind, number> = {
   MEASURE_TREND: 14 * 24 * 60 * 60 * 1000, // 14d
   GOAL_STALLED: 14 * 24 * 60 * 60 * 1000, // 14d
   TOPIC_MENTIONED_UNADDRESSED: 7 * 24 * 60 * 60 * 1000, // 7d
+  // Unit 48 PR5 — encounter-specific nudge. Snapshot-hash includes the
+  // encounterId, so a dismissed row on encounter X is suppressed for
+  // X's lifetime. 30d is a safety upper bound for the audit's benefit.
+  INTENT_PROPOSAL_MISSED: 30 * 24 * 60 * 60 * 1000,
 };
 
 /** Per-kind canonical priority. Kept here (alongside cooldowns) so the
@@ -63,6 +67,10 @@ export const PRIORITY_BY_KIND: Record<CleoNudgeKind, CleoNudgePriority> = {
   MEASURE_TREND: 'MEDIUM',
   GOAL_STALLED: 'MEDIUM',
   TOPIC_MENTIONED_UNADDRESSED: 'LOW',
+  // Unit 48 PR5 — clinician usually has < 15 seconds to act on this
+  // before opening the recording surface. MEDIUM (info chip) keeps it
+  // visible without screaming.
+  INTENT_PROPOSAL_MISSED: 'MEDIUM',
 };
 
 /** Cap rendered nudges per surface — Hick's law (decision 4). */

@@ -56,6 +56,11 @@ export type AuditAction =
   | 'SCHEDULE_CANCELLED'
   | 'SCHEDULE_STARTED'
   | 'ENCOUNTER_CREATED'
+  // Unit 48 PR5 — emitted by the nudge act endpoint when the clinician
+  // applies the proposed visit-type intent from an INTENT_PROPOSAL_MISSED
+  // nudge. Reconstructs the chain: Cleo proposed → clinician initially
+  // dismissed → safety-net nudge fired → clinician applied.
+  | 'ENCOUNTER_INTENT_UPDATED'
   // ---- Unit 03: Capture & Recording ----
   | 'REALTIME_KEY_ISSUED'
   | 'RECORDING_STARTED'

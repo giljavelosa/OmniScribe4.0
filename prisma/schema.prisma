@@ -723,6 +723,13 @@ enum CleoNudgeKind {
   MEASURE_TREND
   GOAL_STALLED
   TOPIC_MENTIONED_UNADDRESSED
+  /// Unit 48 PR5 — safety net for the visit-type intent chip. Fires
+  /// when an Encounter has intent=UNSPECIFIED AND the deterministic
+  /// IntentProposer would propose a SUPPORTED_INTENT_PAIRS pair with
+  /// medium/high confidence (clinician dismissed the chip without
+  /// picking; auto-post fired without the intent layer engaging).
+  /// Appended per anti-regression rule 2.
+  INTENT_PROPOSAL_MISSED
 }
 
 /// Sprint 0.18 — priority chip variant. Drives the `<StatusBadge>`
