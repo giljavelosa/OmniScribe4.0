@@ -169,13 +169,25 @@ Per [`references/encounter-copilot-spec.md`](../../references/encounter-copilot-
 
 ---
 
-## Wave 1 follow-on — Case-Division Rule (unit 49)
+## Wave 1 follow-on — Brief depth / visit-type intent (unit 48)
 
-> **Extension of shipped Wave 1 Unit 06 + Unit 48 (Unit 48 spec drafted; on unit-48 branch awaiting merge).** Not Wave 8 (Miss Cleo persona work) — the rule itself (column + filters + 403s + follow-up gate) ships unflagged; only the new Cleo UX surfaces sit behind `cleo.caseRule.v1`. The polish gate ahead of Wave 7/8 does not apply. Spec'd 2026-05-24 after user surfaced two stacked clinical realities: (a) clinicians of one division (e.g., PT — REHAB) can today accept cases opened by another division (e.g., PCP — MEDICAL) with nothing in the API or UI stopping them, and (b) shared ICDs (F41.1 GAD across MEDICAL+BH; M54.50 Lumbago across MEDICAL+REHAB) need parallel cases per division, not a single multi-division case.
+> **Extension of shipped Wave 1 Unit 06.** Not Wave 8 (Miss Cleo persona work) — does not require persona maturity to ship; the polish gate ahead of Wave 7/8 does not apply. Spec'd 2026-05-23 after clinician feedback that the brief is comprehensive about what *happened* but blind to what's about to *happen* (Initial Eval vs. Daily vs. Progress vs. Re-eval vs. Discharge).
 
 | # | Name | Builds | Depends on | Spec | Status |
 |---|---|---|---|---|---|
-| 49 | **Case-Division Rule + Cleo as biller** | `CaseManagement.division` (stamp at creation, immutable) + `FollowUp.division` (inherits from origin note) + `Note.billerAdvisoryJson`; `assertCanContinueCase` helper + `CASE_DIVISION_BLOCKED` audit; case-router proposes parallel cases per division on shared ICDs (never cross-division attach); Miss Cleo three-moment: pre-visit nominator badge, pre-sign intent-fit chip (rule-20 safe), post-sign biller advisory card (`ADDENDUM` / `OPEN_NEW_NEXT_VISIT` / `MARK_CLEARED`); feature flag `cleo.caseRule.v1` gates UX surfaces only | 02, 06, 07, 48 | [`49-case-division-rule.md`](49-case-division-rule.md) | PR1 in implementation |
+| 48 | **Pre-visit brief — visit-type intent + intent-aware spine** | `EncounterIntent` enum + `Encounter.intent` + `intentSource`; deterministic `IntentProposer` service + `/api/patients/[id]/proposed-intent`; intent chip in `<StartVisitDialog>`; `BriefGenerator` branches per `(division, intent)`; new intent-gated spine components `<GoalLedger>` / `<MedicalNecessityScaffold>` / `<RiskTrendSparkline>` / `<CareGapsList>` for four MVP pairs: `REHAB_PROGRESS_NOTE`, `REHAB_REEVAL`, `BH_TREATMENT_PLAN_REVIEW`, `MEDICAL_ANNUAL_WELLNESS` | 02, 06, 07 | [`48-pre-visit-brief-intent.md`](48-pre-visit-brief-intent.md) · taxonomy [`references/visit-type-taxonomy.md`](../../references/visit-type-taxonomy.md) · audit [`references/brief-chain-state-of-play.md`](../../references/brief-chain-state-of-play.md) | PR1 shipped (foundation: schema + proposer + endpoint); PR2+ pending |
+
+**Sequencing:** Awaiting prioritization relative to Sprint 0 (login/MFA, in flight) and Sprint A (voice-ID, Daily.co real, provider checklist). Unit 48 is **not gated** by the polish doc — it can ship in parallel if a clinician-impact PR is justified (precedent: Unit 42 shipped out of order 2026-05-21 because the cockpit page needed it).
+
+**Scope discipline:** v1 ships intent capture + four MVP intent-aware spines. Out of scope for v1: spines for the other 13 `(division, intent)` pairs, note-generator template defaulting by intent, compliance flags by intent, sign-time-sweep widening, post-sign artifact branching. Each is its own follow-on unit.
+
+## Wave 1 follow-on — Case-Division Rule (unit 49)
+
+> **Extension of shipped Wave 1 Unit 06 + Unit 48 PR1 (foundation now landed on main).** Not Wave 8 (Miss Cleo persona work) — the rule itself (column + filters + 403s + follow-up gate) ships unflagged; only the new Cleo UX surfaces sit behind `cleo.caseRule.v1`. The polish gate ahead of Wave 7/8 does not apply. Spec'd 2026-05-24 after user surfaced two stacked clinical realities: (a) clinicians of one division (e.g., PT — REHAB) can today accept cases opened by another division (e.g., PCP — MEDICAL) with nothing in the API or UI stopping them, and (b) shared ICDs (F41.1 GAD across MEDICAL+BH; M54.50 Lumbago across MEDICAL+REHAB) need parallel cases per division, not a single multi-division case.
+
+| # | Name | Builds | Depends on | Spec | Status |
+|---|---|---|---|---|---|
+| 49 | **Case-Division Rule + Cleo as biller** | `CaseManagement.division` (stamp at creation, immutable) + `FollowUp.division` (inherits from origin note) + `Note.billerAdvisoryJson`; `assertCanContinueCase` helper + `CASE_DIVISION_BLOCKED` audit; case-router proposes parallel cases per division on shared ICDs (never cross-division attach); Miss Cleo three-moment: pre-visit nominator badge, pre-sign intent-fit chip (rule-20 safe), post-sign biller advisory card (`ADDENDUM` / `OPEN_NEW_NEXT_VISIT` / `MARK_CLEARED`); feature flag `cleo.caseRule.v1` gates UX surfaces only | 02, 06, 07, 48 | [`49-case-division-rule.md`](49-case-division-rule.md) | PR1 + PR2 shipped; §F/§G + PR3 pending |
 
 **Sequencing:** Not gated by polish — clinician-impact / compliance-impact justifies parallel ship. Three-PR phasing keeps each merge under ~3% regression individually (PR1 base+parallel+nominator+chip, PR2 follow-up gate, PR3 biller advisory). **Hard order: PR2 before PR3** — Cleo's biller advisor reasons about follow-ups in scope; we don't want her reasoning across divisions before the filter exists.
 
