@@ -56,7 +56,7 @@ export type GoalSnippet = z.infer<typeof GoalSnippetSchema>;
 export const FollowUpPreviewSchema = z.object({
   followUpId: z.string().min(1),
   text: z.string().min(1),
-  status: z.enum(['OPEN', 'MET', 'CARRIED', 'DROPPED', 'CLOSED_BY_DISCHARGE']),
+  status: z.enum(['PROPOSED', 'OPEN', 'MET', 'CARRIED', 'DROPPED', 'CLOSED_BY_DISCHARGE']),
   source: SourcePillSchema,
 });
 export type FollowUpPreview = z.infer<typeof FollowUpPreviewSchema>;

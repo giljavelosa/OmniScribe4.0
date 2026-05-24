@@ -106,6 +106,14 @@ export type AuditAction =
   | 'FOLLOWUP_SWEEP_OPENED'
   | 'FOLLOWUP_SWEEP_SKIPPED'
   | 'FOLLOWUP_SWEEP_RESOLVED'
+  // ---- Sprint pre-sign-followup-suggest: Cleo proposes follow-ups pre-sign ----
+  // PROPOSED → triaged by clinician → OPEN (accepted) | DROPPED (rejected).
+  // Sign-time hook auto-DROPs unreviewed PROPOSED rows.
+  | 'FOLLOWUP_PROPOSAL_PROPOSED'
+  | 'FOLLOWUP_PROPOSAL_ACCEPTED'
+  | 'FOLLOWUP_PROPOSAL_DROPPED'
+  | 'FOLLOWUP_PROPOSALS_SUPERSEDED'
+  | 'FOLLOWUP_PROPOSALS_AUTO_DROPPED_AT_SIGN'
   // ---- Unit 07: Encounter Copilot Watch v0 ----
   | 'COPILOT_CARD_RENDERED'
   | 'COPILOT_CARD_DISMISSED'

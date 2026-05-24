@@ -388,7 +388,7 @@ The build is governed by these rules from day one. Violating them causes product
 17. **Any non-dev environment processing PHI MUST set `SONIOX_BAA_ON_FILE=true`** AND have a current Soniox BAA on file.
 18. **NEVER run two BullMQ worker fleets** against the same Redis simultaneously.
 19. **After any Redis recovery event**, force a fresh ECS deployment.
-20. **Copilot reads only `Note.status ∈ {SIGNED, TRANSFERRED}`, clinician-confirmed `FollowUp` rows, and verified `FhirCachedResource`.** Never drafts. Never inferences beyond source.
+20. **Copilot reads only `Note.status ∈ {SIGNED, TRANSFERRED}`, clinician-confirmed `FollowUp` rows, and verified `FhirCachedResource`.** Never drafts. Never inferences beyond source. **Narrow carve-out (Sprint pre-sign-followup-suggest, 2026-05-24):** Cleo's pre-sign FollowupExtractor (`PresignFollowupSuggester`) MAY read DRAFT Plan content for the purpose of producing `FollowUp` rows in `status=PROPOSED`. Outputs are non-binding: PROPOSED rows never reach OPEN automatically; sign-time hook auto-DROPs any still-PROPOSED row; every transition is audited. The carve-out applies ONLY to this one extractor channel — generic Copilot tools, lookups, and Ask/Beacon agents still see SIGNED-and-confirmed surfaces only.
 21. **Three-lens evaluation** — every feature passes Clinician + Medicare Compliance Officer + Insurance Auditor before merge.
 22. **No native `confirm()` or `alert()`** in clinical surfaces — use `<AlertDialog>`.
 23. **No hardcoded status colors** in clinical surfaces — use `<StatusBadge>` / `<StatusBanner>`.
