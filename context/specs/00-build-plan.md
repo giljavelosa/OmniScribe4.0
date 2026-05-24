@@ -169,6 +169,20 @@ Per [`references/encounter-copilot-spec.md`](../../references/encounter-copilot-
 
 ---
 
+## Wave 1 follow-on — Brief depth / visit-type intent (unit 48)
+
+> **Extension of shipped Wave 1 Unit 06.** Not Wave 8 (Miss Cleo persona work) — does not require persona maturity to ship; the polish gate ahead of Wave 7/8 does not apply. Spec'd 2026-05-23 after clinician feedback that the brief is comprehensive about what *happened* but blind to what's about to *happen* (Initial Eval vs. Daily vs. Progress vs. Re-eval vs. Discharge).
+
+| # | Name | Builds | Depends on | Spec | Status |
+|---|---|---|---|---|---|
+| 48 | **Pre-visit brief — visit-type intent + intent-aware spine** | `EncounterIntent` enum + `Encounter.intent` + `intentSource`; deterministic `IntentProposer` service + `/api/patients/[id]/proposed-intent`; intent chip in `<StartVisitDialog>`; `BriefGenerator` branches per `(division, intent)`; new intent-gated spine components `<GoalLedger>` / `<MedicalNecessityScaffold>` / `<RiskTrendSparkline>` / `<CareGapsList>` for four MVP pairs: `REHAB_PROGRESS_NOTE`, `REHAB_REEVAL`, `BH_TREATMENT_PLAN_REVIEW`, `MEDICAL_ANNUAL_WELLNESS` | 02, 06, 07 | [`48-pre-visit-brief-intent.md`](48-pre-visit-brief-intent.md) · taxonomy [`references/visit-type-taxonomy.md`](../../references/visit-type-taxonomy.md) · audit [`references/brief-chain-state-of-play.md`](../../references/brief-chain-state-of-play.md) | spec drafted ⏸ |
+
+**Sequencing:** Awaiting prioritization relative to Sprint 0 (login/MFA, in flight) and Sprint A (voice-ID, Daily.co real, provider checklist). Unit 48 is **not gated** by the polish doc — it can ship in parallel if a clinician-impact PR is justified (precedent: Unit 42 shipped out of order 2026-05-21 because the cockpit page needed it).
+
+**Scope discipline:** v1 ships intent capture + four MVP intent-aware spines. Out of scope for v1: spines for the other 13 `(division, intent)` pairs, note-generator template defaulting by intent, compliance flags by intent, sign-time-sweep widening, post-sign artifact branching. Each is its own follow-on unit.
+
+---
+
 ## Polish — Waves 0–6 (gate before Wave 7 & 8)
 
 Units 01–37 shipped capability; stubs and deferred polish remain. **Do not start Wave 7 Unit 41 or Wave 8 Unit 42+ until the polish gate opens.**

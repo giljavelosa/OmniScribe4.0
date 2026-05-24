@@ -599,6 +599,48 @@ enum EncounterStatus {
   CANCELLED
 }
 
+/// Unit 48 — clinical intent of an encounter (distinct from Schedule.visitType
+/// which is modality only). Miss Cleo proposes at start; clinician confirms or
+/// overrides; the value is recorded at Encounter create time and shapes the
+/// brief spine, the suggested-data list (future), and the note-generator
+/// template default (future). Append-only per rule 2.
+/// See: references/visit-type-taxonomy.md
+enum EncounterIntent {
+  UNSPECIFIED
+  // REHAB (PT/OT/SLP) per CMS Pub. 100-02 Ch. 15 §220
+  REHAB_INITIAL_EVAL
+  REHAB_DAILY_NOTE
+  REHAB_PROGRESS_NOTE
+  REHAB_REEVAL
+  REHAB_DISCHARGE
+  // BEHAVIORAL_HEALTH
+  BH_INITIAL_ASSESSMENT
+  BH_SESSION_INDIVIDUAL
+  BH_SESSION_FAMILY
+  BH_SESSION_GROUP
+  BH_TREATMENT_PLAN_REVIEW
+  BH_CRISIS_REASSESSMENT
+  BH_DISCHARGE
+  // MEDICAL — 2021 E/M guidelines + AWV + TCM
+  MEDICAL_NEW_PATIENT
+  MEDICAL_FOLLOW_UP
+  MEDICAL_ANNUAL_WELLNESS
+  MEDICAL_CHRONIC_CARE
+  MEDICAL_ACUTE_VISIT
+  MEDICAL_DISCHARGE_TCM
+  MEDICAL_TELEHEALTH_CHECKIN
+}
+
+/// Unit 48 — provenance of Encounter.intent. Append-only per rule 2.
+enum IntentSource {
+  /// Clinician picked or confirmed at start-visit time.
+  CLINICIAN
+  /// Cleo proposed and the clinician took the default without override.
+  COPILOT_PROPOSAL_CONFIRMED
+  /// Inherited from the schedule (notes / template).
+  SCHEDULE
+}
+
 enum CaseManagementStatus {
   ACTIVE
   CLOSED
@@ -1185,6 +1227,16 @@ model Encounter {
   status             EncounterStatus @default(PLANNED)
   startedAt          DateTime?
   endedAt            DateTime?
+
+  /// Unit 48 — clinical intent of THIS encounter (IE / Daily / Progress /
+  /// Re-eval / Discharge for REHAB; equivalents for BH + MEDICAL). Set at
+  /// create time; shapes downstream brief spine + (future) compliance
+  /// flags + template default. Defaults to UNSPECIFIED so pre-Unit-48
+  /// encounters and any caller that omits the field behave as before.
+  intent             EncounterIntent @default(UNSPECIFIED)
+  /// Unit 48 — provenance for `intent`: CLINICIAN (picked or overrode),
+  /// COPILOT_PROPOSAL_CONFIRMED (took Cleo's default), SCHEDULE (inherited).
+  intentSource       IntentSource    @default(CLINICIAN)
 
   notes Note[]
 
