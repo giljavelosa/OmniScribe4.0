@@ -23,6 +23,10 @@ import type { FinalJsonShape } from '@/lib/notes/build-artifact-prompt';
  * Stub-mode awareness: returns { items: [] } when bedrock is stubbed —
  * keeps the worker exercising end-to-end without faking content.
  */
+export const FOLLOWUP_EXTRACTOR_VERSION = 'followup-extractor-v1';
+
+export type FollowupExtractMeter = { orgId: string; noteId?: string; surface: string };
+
 export class FollowupExtractor {
   constructor(private readonly llm: LLMService = getLLMService()) {}
 
@@ -30,16 +34,36 @@ export class FollowupExtractor {
     noteId: string,
     signedAtIso: string,
     finalJson: FinalJsonShape,
+    meter?: FollowupExtractMeter,
   ): Promise<FollowupExtraction> {
     const planSection = finalJson.sections.find((s) => /plan/i.test(s.label));
     if (!planSection || planSection.content.trim().length === 0) {
       return { items: [] };
     }
+    return this.extractFromPlanContent(noteId, signedAtIso, planSection.content, meter);
+  }
+
+  /**
+   * Sprint pre-sign-followup-suggest — generic entry point used by both the
+   * post-sign worker (which sources the Plan from `finalJson.sections`) and
+   * the pre-sign Cleo path (which sources it from `draftJson[planSectionId]`).
+   * The extractor itself is a pure function of (planContent, noteId, asOfIso);
+   * the caller owns where the content came from.
+   */
+  async extractFromPlanContent(
+    noteId: string,
+    asOfIso: string,
+    planContent: string,
+    meter?: FollowupExtractMeter,
+  ): Promise<FollowupExtraction> {
+    if (planContent.trim().length === 0) {
+      return { items: [] };
+    }
 
     const user = buildFollowupExtractorUserMessage({
       noteId,
-      signedAtIso,
-      planSectionContent: planSection.content,
+      signedAtIso: asOfIso,
+      planSectionContent: planContent,
     });
 
     const result = await this.llm.generate(FOLLOWUP_EXTRACTOR_SYSTEM_PROMPT, user, {
@@ -48,6 +72,7 @@ export class FollowupExtractor {
       jsonMode: true,
       model: 'haiku',
       maxTokens: 800,
+      ...(meter ? { meter } : {}),
     });
 
     return parseExtraction(result.text);

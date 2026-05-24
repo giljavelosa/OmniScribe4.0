@@ -21,7 +21,7 @@ import {
 export type NextVisitFollowUp = {
   id: string;
   text: string;
-  status: 'OPEN' | 'MET' | 'CARRIED' | 'DROPPED' | 'CLOSED_BY_DISCHARGE';
+  status: 'PROPOSED' | 'OPEN' | 'MET' | 'CARRIED' | 'DROPPED' | 'CLOSED_BY_DISCHARGE';
   createdAt: string;
 };
 

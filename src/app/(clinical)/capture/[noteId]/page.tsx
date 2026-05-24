@@ -95,15 +95,19 @@ export default async function CapturePage({ params }: { params: Promise<{ noteId
   });
 
   const briefContent = (brief?.content ?? null) as PriorContextBriefContent | null;
-  const initialOpenFollowUps = openFollowUps.map((fu) => ({
-    id: fu.id,
-    text: fu.text,
-    status: fu.status,
-    source: {
-      noteId: fu.originNoteId,
-      date: (fu.originNote?.signedAt ?? fu.createdAt).toISOString().slice(0, 10),
-    },
-  }));
+  const initialOpenFollowUps = openFollowUps
+    // PROPOSED rows are pre-sign on the in-progress note; capture surfaces
+    // confirmed prior-visit FollowUps only. Defensive filter.
+    .filter((fu): fu is typeof fu & { status: Exclude<typeof fu.status, 'PROPOSED'> } => fu.status !== 'PROPOSED')
+    .map((fu) => ({
+      id: fu.id,
+      text: fu.text,
+      status: fu.status,
+      source: {
+        noteId: fu.originNoteId,
+        date: (fu.originNote?.signedAt ?? fu.createdAt).toISOString().slice(0, 10),
+      },
+    }));
 
   const siteName = note.encounter?.siteId
     ? (await prisma.site.findFirst({
