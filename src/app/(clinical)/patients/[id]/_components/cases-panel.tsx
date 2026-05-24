@@ -161,6 +161,7 @@ export function CasesPanel({
                   // secondary list is collapsed.
                   defaultExpanded={!hero && idx === 0}
                   canEdit={canEdit}
+                  onContinueCase={onContinueCase}
                 />
               ))}
             </>
@@ -239,6 +240,7 @@ function CaseCard({
   defaultExpanded,
   canEdit,
   chrome = 'card',
+  onContinueCase,
 }: {
   patientId: string;
   caseRow: CasePanelData;
@@ -251,6 +253,14 @@ function CaseCard({
    * inside a host card (e.g. the hero) without double-borders.
    */
   chrome?: 'card' | 'bare';
+  /**
+   * Optional handler that, when supplied alongside an ACTIVE non-bare card,
+   * surfaces a "Start visit on this case" affordance so the clinician can
+   * pre-bind a new visit to this case (skipping the post-visit router
+   * proposal). Suppressed on `chrome === 'bare'` because the host hero
+   * card already owns its own continue button.
+   */
+  onContinueCase?: (caseId: string) => void;
 }) {
   const [expanded, setExpanded] = useState(defaultExpanded);
 
@@ -258,44 +268,61 @@ function CaseCard({
     ? `${caseRow.primaryIcd} · ${caseRow.primaryIcdLabel}`
     : caseRow.primaryIcdLabel;
 
+  const showStartVisit =
+    chrome === 'card' && canEdit && !!onContinueCase && caseRow.status === 'ACTIVE';
+
   return (
     <div className={chrome === 'card' ? 'rounded-md border border-border p-3 space-y-2' : 'space-y-2'}>
-      <button
-        type="button"
-        onClick={() => setExpanded((x) => !x)}
-        className="flex w-full items-start gap-2 text-left"
-      >
-        {expanded ? (
-          <ChevronDown className="size-4 mt-0.5 shrink-0" aria-hidden />
-        ) : (
-          <ChevronRight className="size-4 mt-0.5 shrink-0" aria-hidden />
-        )}
-        <div className="flex-1 min-w-0 space-y-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-medium text-sm">{icdHeadline}</span>
-            <StatusBadge variant={caseRow.status === 'ACTIVE' ? 'success' : 'neutral'} noIcon>
-              {caseRow.status}
-            </StatusBadge>
-            {!caseRow.primaryIcd && (
-              <StatusBadge variant="warning" noIcon>
-                Needs coding
+      <div className="flex items-start gap-2">
+        <button
+          type="button"
+          onClick={() => setExpanded((x) => !x)}
+          className="flex flex-1 min-w-0 items-start gap-2 text-left"
+        >
+          {expanded ? (
+            <ChevronDown className="size-4 mt-0.5 shrink-0" aria-hidden />
+          ) : (
+            <ChevronRight className="size-4 mt-0.5 shrink-0" aria-hidden />
+          )}
+          <div className="flex-1 min-w-0 space-y-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-medium text-sm">{icdHeadline}</span>
+              <StatusBadge variant={caseRow.status === 'ACTIVE' ? 'success' : 'neutral'} noIcon>
+                {caseRow.status}
               </StatusBadge>
-            )}
-            {caseRow.writebackStatus && (
-              <WritebackStatusChip
-                status={caseRow.writebackStatus}
-                failureKind={caseRow.writebackFailureKind ?? null}
-              />
+              {!caseRow.primaryIcd && (
+                <StatusBadge variant="warning" noIcon>
+                  Needs coding
+                </StatusBadge>
+              )}
+              {caseRow.writebackStatus && (
+                <WritebackStatusChip
+                  status={caseRow.writebackStatus}
+                  failureKind={caseRow.writebackFailureKind ?? null}
+                />
+              )}
+            </div>
+            {caseRow.secondaryIcd && (
+              <p className="text-xs text-muted-foreground">
+                Sec: {caseRow.secondaryIcd}
+                {caseRow.secondaryIcdLabel ? ` · ${caseRow.secondaryIcdLabel}` : ''}
+              </p>
             )}
           </div>
-          {caseRow.secondaryIcd && (
-            <p className="text-xs text-muted-foreground">
-              Sec: {caseRow.secondaryIcd}
-              {caseRow.secondaryIcdLabel ? ` · ${caseRow.secondaryIcdLabel}` : ''}
-            </p>
-          )}
-        </div>
-      </button>
+        </button>
+        {showStartVisit && (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="gap-1.5 shrink-0"
+            onClick={() => onContinueCase!(caseRow.id)}
+          >
+            <Mic className="size-3.5" aria-hidden />
+            Start visit on this case
+          </Button>
+        )}
+      </div>
 
       {expanded && (
         <div className="space-y-3 pl-6 border-l border-border ml-1">
