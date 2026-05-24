@@ -268,3 +268,129 @@ describe('CaseRoutingPanel — Sprint 0.16 reconcile rendering', () => {
     expect(screen.queryByText(/Change manually/i)).not.toBeInTheDocument();
   });
 });
+
+// =============================================================================
+// Synthetic fallback proposal — Miss Cleo's LLM was unavailable at routing
+// time and the service returned a placeholder proposal. The panel must
+// suppress the standard ProposalCard (whose primary "Accept" choice would
+// persist the placeholder label verbatim) and divert to the manual picker.
+// =============================================================================
+
+function fallbackRun(
+  overrides: Partial<CaseRouterRunDTO> = {},
+): CaseRouterRunDTO {
+  return {
+    id: 'run_fallback',
+    confidence: 'LOW',
+    reasoning: 'Auto-route unavailable — pick manually.',
+    modelVersion: 'fallback',
+    createdAt: new Date().toISOString(),
+    acceptedAction: null,
+    acceptedAt: null,
+    proposalJson: {
+      action: 'open-new',
+      newCase: {
+        primaryIcd: null,
+        primaryIcdLabel: 'Routing in progress',
+      },
+      confidence: 'low',
+      reasoning: 'Auto-route unavailable — pick manually.',
+      alternatives: [],
+    },
+    ...overrides,
+  };
+}
+
+describe('CaseRoutingPanel — synthetic fallback proposal', () => {
+  it('renders the manual picker (not the ProposalCard) when the proposal is the placeholder fallback', () => {
+    render(
+      <CaseRoutingPanel
+        noteId="note_fb"
+        initial={fallbackRun()}
+        initialActiveCases={[]}
+        initialCurrentCaseId="case_pending"
+      />,
+    );
+
+    // The trap-door "Open a new case · Needs coding Routing in progress"
+    // ProposalCard option MUST NOT render — the bug we're fixing.
+    expect(
+      screen.queryByText(/Open a new case · Needs coding Routing in progress/i),
+    ).not.toBeInTheDocument();
+    // No "Confirm and continue review" button (that's ProposalCard's CTA).
+    expect(
+      screen.queryByRole('button', { name: /Confirm and continue review/i }),
+    ).not.toBeInTheDocument();
+
+    // The callout explicitly names Miss Cleo + tells the clinician to
+    // pick or open with a real ICD.
+    expect(
+      screen.getByText(/couldn't auto-route this visit/i),
+    ).toBeInTheDocument();
+  });
+
+  it('shows the open-new ICD form with empty inputs and a disabled "Open new case" button', () => {
+    render(
+      <CaseRoutingPanel
+        noteId="note_fb"
+        initial={fallbackRun()}
+        initialActiveCases={[]}
+        initialCurrentCaseId="case_pending"
+      />,
+    );
+
+    expect(screen.getByLabelText(/ICD-10/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Diagnosis/i)).toBeInTheDocument();
+    const openNewBtn = screen.getByRole('button', { name: /Open new case/i });
+    expect(openNewBtn).toBeDisabled();
+  });
+
+  it('also offers attach-to-existing when the patient has other open cases', () => {
+    render(
+      <CaseRoutingPanel
+        noteId="note_fb"
+        initial={fallbackRun()}
+        initialActiveCases={[
+          {
+            id: 'case_other',
+            primaryIcd: 'M25.51',
+            primaryIcdLabel: 'Right shoulder pain',
+            secondaryIcd: null,
+            secondaryIcdLabel: null,
+            lastUpdatedAt: '2026-05-22T00:00:00.000Z',
+          },
+        ]}
+        initialCurrentCaseId="case_pending"
+      />,
+    );
+
+    // The attach section renders with the other case as a radio option.
+    expect(screen.getByText(/Attach this visit to an open case/i)).toBeInTheDocument();
+    expect(screen.getByText(/Right shoulder pain/i)).toBeInTheDocument();
+    // Attach button starts disabled until a case is picked.
+    expect(screen.getByRole('button', { name: /Attach to this case/i })).toBeDisabled();
+    // The open-new form is still also available (separator wording).
+    expect(screen.getByText(/Or open a new case/i)).toBeInTheDocument();
+  });
+
+  it('does NOT dead-end with "no other open cases" when activeCases is empty', () => {
+    render(
+      <CaseRoutingPanel
+        noteId="note_fb"
+        initial={fallbackRun()}
+        initialActiveCases={[]}
+        initialCurrentCaseId="case_pending"
+      />,
+    );
+    // Previous behavior funneled the clinician into a warning telling
+    // them to "accept the recommendation or sign in as the case opener" —
+    // both dead ends now that Accept is blocked. The open-new form is
+    // the always-available escape hatch.
+    expect(
+      screen.queryByText(/No other open cases on this patient/i),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/Open a new case with a primary diagnosis/i),
+    ).toBeInTheDocument();
+  });
+});

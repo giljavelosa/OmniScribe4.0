@@ -25,6 +25,7 @@ import {
   type CaseRouterRunDTO,
   type CaseRouterPanelCase,
 } from './case-routing-panel';
+import { PendingRoutingReminder } from './pending-routing-reminder';
 import {
   deriveProgressStrip,
   isReadyForSign,
@@ -89,6 +90,11 @@ type Props = {
   initialRouterRun: CaseRouterRunDTO | null;
   initialRouterActiveCases: CaseRouterPanelCase[];
   initialCurrentCaseManagementId: string | null;
+  /** Optional — drives the PendingRoutingReminder banner. When the encounter's
+   *  case is still `PENDING_ROUTER` at review-page render time, we surface a
+   *  soft nudge under the routing panel so the clinician doesn't forget to
+   *  accept Miss Cleo's proposal before sign-time. */
+  initialCurrentCaseManagementStatus?: string | null;
 };
 
 /**
@@ -108,6 +114,7 @@ export function ReviewClient({
   initialRouterRun,
   initialRouterActiveCases,
   initialCurrentCaseManagementId,
+  initialCurrentCaseManagementStatus = null,
 }: Props) {
   const router = useRouter();
   const [snap, setSnap] = useState<ReviewSnapshot>(initial);
@@ -192,6 +199,13 @@ export function ReviewClient({
           initialActiveCases={initialRouterActiveCases}
           initialCurrentCaseId={initialCurrentCaseManagementId}
         />
+      )}
+
+      {/* Sprint 0.13 Decision 3 — case linkage must lock at review before
+          sign. Until that's enforced server-side this is a soft nudge so
+          the routing step doesn't get skipped on the way to Sign. */}
+      {!isSigned && initialCurrentCaseManagementStatus === 'PENDING_ROUTER' && (
+        <PendingRoutingReminder />
       )}
 
       {snap.isLateEntry && snap.dateOfService && (

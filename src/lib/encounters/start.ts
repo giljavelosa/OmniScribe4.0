@@ -20,6 +20,7 @@ import {
 import { writeAuditLog } from '@/lib/audit/log';
 import { resolveDivisionForNote } from '@/lib/divisions/resolve';
 import { assertCaseIsOpen, mayLinkEpisodeOnEncounter } from '@/lib/case-management/validate';
+import { ROUTING_PLACEHOLDER_LABEL } from '@/services/copilot/case-router';
 
 type Tx = Prisma.TransactionClient | PrismaClient;
 
@@ -129,7 +130,7 @@ export async function startVisit(args: StartVisitArgs) {
         orgId: args.orgId,
         patientId: args.patientId,
         primaryIcd: null,
-        primaryIcdLabel: 'Routing in progress',
+        primaryIcdLabel: ROUTING_PLACEHOLDER_LABEL,
         status: CaseManagementStatus.PENDING_ROUTER,
         openedByOrgUserId: args.clinicianOrgUserId,
         openedAt: new Date(),

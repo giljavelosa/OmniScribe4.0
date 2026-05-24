@@ -5,9 +5,12 @@ import { BadgeCheck, Sparkles, Pencil, CheckCircle2 } from 'lucide-react';
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { StatusBanner } from '@/components/ui/status-banner';
 import { COPILOT_DISPLAY_NAME } from '@/services/copilot/persona';
+import { ROUTING_PLACEHOLDER_LABEL } from '@/services/copilot/case-router';
 import { CaseFhirDriftBanner } from '@/app/(clinical)/patients/[id]/_components/case-fhir-drift-banner';
 import { WriteBackConfirmDialog } from '@/components/fhir/writeback-confirm-dialog';
 
@@ -156,6 +159,24 @@ type Props = {
 const POLL_INTERVAL_MS = 5_000;
 const POLL_TIMEOUT_MS = 60_000;
 
+/**
+ * True when the proposal is the synthetic fallback that the case-router
+ * service returns when Miss Cleo's LLM is unavailable — `open-new` with a
+ * null `primaryIcd` and the literal `ROUTING_PLACEHOLDER_LABEL`. We
+ * detect this in the panel so the "Accept" choice (which would persist
+ * the placeholder verbatim as a real ACTIVE case's label) never renders.
+ * The accept endpoint also blocks this path with HTTP 400; this is the
+ * UX-side suppression so the clinician sees the manual picker directly.
+ */
+function isSyntheticFallback(proposal: ProposalDTO): boolean {
+  return (
+    proposal.action === 'open-new' &&
+    !!proposal.newCase &&
+    proposal.newCase.primaryIcd === null &&
+    proposal.newCase.primaryIcdLabel === ROUTING_PLACEHOLDER_LABEL
+  );
+}
+
 export function CaseRoutingPanel({ noteId, initial, initialActiveCases, initialCurrentCaseId }: Props) {
   const [run, setRun] = useState<CaseRouterRunDTO | null>(initial);
   const [activeCases, setActiveCases] = useState<CaseRouterPanelCase[]>(initialActiveCases);
@@ -239,6 +260,7 @@ export function CaseRoutingPanel({ noteId, initial, initialActiveCases, initialC
           noteId={noteId}
           activeCases={activeCases}
           onResolved={refetch}
+          reason="no-run"
         />
       );
     }
@@ -255,6 +277,22 @@ export function CaseRoutingPanel({ noteId, initial, initialActiveCases, initialC
         run={run}
         reconcileProposal={run.proposalJson.reconcileProposal}
         onResolved={onAcceptResolved}
+      />
+    );
+  }
+
+  // When the proposal is the synthetic fallback (Miss Cleo's LLM was
+  // unavailable at routing time), skip the proposal card entirely — its
+  // primary "Accept" choice would just persist the placeholder verbatim.
+  // The manual fallback surface gives the clinician a typed-ICD form +
+  // an attach-to-existing picker; both paths produce real coded cases.
+  if (isSyntheticFallback(run.proposalJson)) {
+    return (
+      <ManualFallbackPanel
+        noteId={noteId}
+        activeCases={activeCases}
+        onResolved={refetch}
+        reason="fallback"
       />
     );
   }
@@ -302,15 +340,26 @@ function ManualFallbackPanel({
   noteId,
   activeCases,
   onResolved,
+  reason,
 }: {
   noteId: string;
   activeCases: CaseRouterPanelCase[];
   onResolved: () => void;
+  /**
+   * `'no-run'`   — polled for the routing run, never appeared (worker stuck).
+   * `'fallback'` — the run exists but is the synthetic LOW-confidence
+   *                placeholder Miss Cleo emits when her LLM is unavailable.
+   * Drives the banner copy so the clinician knows which failure mode they're
+   * looking at; the manual picker UI is identical either way.
+   */
+  reason: 'no-run' | 'fallback';
 }) {
   return (
     <PanelChrome>
       <StatusBanner variant="warning">
-        Auto-route unavailable — pick a case manually.
+        {reason === 'fallback'
+          ? `${COPILOT_DISPLAY_NAME} couldn't auto-route this visit. Pick a case or open a new one with a primary ICD.`
+          : 'Auto-route unavailable — pick a case manually.'}
       </StatusBanner>
       <ManualPicker noteId={noteId} activeCases={activeCases} onResolved={onResolved} />
     </PanelChrome>
@@ -841,18 +890,23 @@ function ManualPicker({
   onResolved: () => void;
 }) {
   const [pickedId, setPickedId] = useState<string>('');
+  const [newIcd, setNewIcd] = useState<string>('');
+  const [newLabel, setNewLabel] = useState<string>('');
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
-  function submit() {
-    if (!pickedId) {
-      setError('Pick a case to attach this visit to.');
-      return;
-    }
+  async function submitDecision(
+    decision:
+      | { kind: 'attach'; caseManagementId: string }
+      | { kind: 'open-new'; primaryIcd: string; primaryIcdLabel: string },
+  ) {
     setError(null);
     startTransition(async () => {
       const res = await fetch(`/api/notes/${noteId}/case-router`).catch(() => null);
-      if (!res?.ok) return; // we still proceed; this is just a refresh of the run id
+      if (!res?.ok) {
+        setError('Routing run not found.');
+        return;
+      }
       const body = await res.json();
       const runId = body?.data?.run?.id;
       if (!runId) {
@@ -862,72 +916,137 @@ function ManualPicker({
       const accept = await fetch(`/api/notes/${noteId}/case-router/accept`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          caseRouterRunId: runId,
-          decision: { kind: 'attach', caseManagementId: pickedId },
-        }),
+        body: JSON.stringify({ caseRouterRunId: runId, decision }),
       });
       if (!accept.ok) {
         const errBody = await accept.json().catch(() => null);
-        setError(errBody?.error?.message ?? 'Could not attach this visit.');
+        setError(errBody?.error?.message ?? 'Could not save this routing decision.');
         return;
       }
       onResolved();
     });
   }
 
-  if (activeCases.length === 0) {
-    return (
-      <StatusBanner variant="warning">
-        No other open cases on this patient — accept the recommendation or sign in
-        as the case opener and create one.
-      </StatusBanner>
-    );
+  function attachClick() {
+    if (!pickedId) {
+      setError('Pick a case to attach this visit to.');
+      return;
+    }
+    void submitDecision({ kind: 'attach', caseManagementId: pickedId });
   }
 
+  function openNewClick() {
+    const icd = newIcd.trim();
+    const label = newLabel.trim();
+    if (!icd) {
+      setError('Enter a primary ICD-10 code.');
+      return;
+    }
+    if (!label) {
+      setError('Enter a diagnosis label.');
+      return;
+    }
+    // Mirror the server-side guard in /case-router/accept so the placeholder
+    // string can't sneak through via the manual form either.
+    if (label === ROUTING_PLACEHOLDER_LABEL) {
+      setError('Enter a real diagnosis label.');
+      return;
+    }
+    void submitDecision({ kind: 'open-new', primaryIcd: icd, primaryIcdLabel: label });
+  }
+
+  const hasOtherCases = activeCases.length > 0;
+  const openNewDisabled = pending || !newIcd.trim() || !newLabel.trim();
+
   return (
-    <div className="space-y-2 border-t pt-3">
-      <p className="text-sm font-medium">Pick a case to attach this visit to</p>
-      <fieldset className="space-y-2">
-        <legend className="sr-only">Patient&apos;s open cases</legend>
-        {activeCases.map((c) => (
-          <label
-            key={c.id}
-            className={`flex cursor-pointer items-start gap-3 rounded-md border p-3 ${
-              pickedId === c.id ? 'border-primary/60 bg-primary/5' : 'border-border hover:bg-muted/30'
-            } ${pending ? 'pointer-events-none opacity-60' : ''}`}
-          >
-            <input
-              type="radio"
-              name="manual-case"
-              checked={pickedId === c.id}
-              onChange={() => setPickedId(c.id)}
+    <div className="space-y-3 border-t pt-3">
+      {hasOtherCases && (
+        <div className="space-y-2">
+          <p className="text-sm font-medium">Attach this visit to an open case</p>
+          <fieldset className="space-y-2">
+            <legend className="sr-only">Patient&apos;s open cases</legend>
+            {activeCases.map((c) => (
+              <label
+                key={c.id}
+                className={`flex cursor-pointer items-start gap-3 rounded-md border p-3 ${
+                  pickedId === c.id
+                    ? 'border-primary/60 bg-primary/5'
+                    : 'border-border hover:bg-muted/30'
+                } ${pending ? 'pointer-events-none opacity-60' : ''}`}
+              >
+                <input
+                  type="radio"
+                  name="manual-case"
+                  checked={pickedId === c.id}
+                  onChange={() => setPickedId(c.id)}
+                  disabled={pending}
+                  className="mt-1"
+                />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium">
+                    {c.primaryIcd ? (
+                      <span className="font-mono text-xs mr-2">{c.primaryIcd}</span>
+                    ) : (
+                      <span className="text-xs text-muted-foreground mr-2">Needs coding</span>
+                    )}
+                    {c.primaryIcdLabel}
+                  </p>
+                  {c.secondaryIcd && (
+                    <p className="text-xs text-muted-foreground">
+                      Sec: {c.secondaryIcd}
+                      {c.secondaryIcdLabel ? ` · ${c.secondaryIcdLabel}` : ''}
+                    </p>
+                  )}
+                </div>
+              </label>
+            ))}
+          </fieldset>
+          <Button onClick={attachClick} size="sm" disabled={pending || !pickedId}>
+            {pending ? 'Saving…' : 'Attach to this case'}
+          </Button>
+        </div>
+      )}
+
+      <div className={hasOtherCases ? 'space-y-2 border-t pt-3' : 'space-y-2'}>
+        <p className="text-sm font-medium">
+          {hasOtherCases ? 'Or open a new case' : 'Open a new case with a primary diagnosis'}
+        </p>
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-[8rem_1fr]">
+          <div className="space-y-1">
+            <Label htmlFor="manual-icd" className="text-xs">
+              ICD-10
+            </Label>
+            <Input
+              id="manual-icd"
+              value={newIcd}
+              onChange={(e) => setNewIcd(e.target.value)}
+              placeholder="M25.51"
+              maxLength={16}
               disabled={pending}
-              className="mt-1"
+              autoComplete="off"
             />
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium">
-                {c.primaryIcd ? (
-                  <span className="font-mono text-xs mr-2">{c.primaryIcd}</span>
-                ) : (
-                  <span className="text-xs text-muted-foreground mr-2">Needs coding</span>
-                )}
-                {c.primaryIcdLabel}
-              </p>
-              {c.secondaryIcd && (
-                <p className="text-xs text-muted-foreground">
-                  Sec: {c.secondaryIcd}
-                  {c.secondaryIcdLabel ? ` · ${c.secondaryIcdLabel}` : ''}
-                </p>
-              )}
-            </div>
-          </label>
-        ))}
-      </fieldset>
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="manual-label" className="text-xs">
+              Diagnosis
+            </Label>
+            <Input
+              id="manual-label"
+              value={newLabel}
+              onChange={(e) => setNewLabel(e.target.value)}
+              placeholder="Right shoulder pain"
+              maxLength={280}
+              disabled={pending}
+              autoComplete="off"
+            />
+          </div>
+        </div>
+        <Button onClick={openNewClick} size="sm" disabled={openNewDisabled}>
+          {pending ? 'Saving…' : 'Open new case'}
+        </Button>
+      </div>
+
       {error && <StatusBanner variant="danger">{error}</StatusBanner>}
-      <Button onClick={submit} size="sm" disabled={pending || !pickedId}>
-        {pending ? 'Saving…' : 'Attach to this case'}
-      </Button>
     </div>
   );
 }

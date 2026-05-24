@@ -114,7 +114,7 @@ export default async function PatientDetailPage({
           select: {
             caseManagementId: true,
             caseManagement: {
-              select: { id: true, primaryIcd: true, primaryIcdLabel: true },
+              select: { id: true, primaryIcd: true, primaryIcdLabel: true, status: true },
             },
             episode: {
               select: { id: true, diagnosis: true, division: true, status: true },
@@ -184,6 +184,7 @@ export default async function PatientDetailPage({
   const visits = recentVisits.map((n) => {
     const ou = n.clinicianOrgUserId ? clinicianById.get(n.clinicianOrgUserId) ?? null : null;
     const ep = n.encounter?.episode ?? null;
+    const cm = n.encounter?.caseManagement ?? null;
     return {
       id: n.id,
       signedAt: n.signedAt?.toISOString() ?? null,
@@ -204,6 +205,10 @@ export default async function PatientDetailPage({
       episodeDiagnosis: ep?.diagnosis ?? null,
       episodeDivision: ep?.division ?? null,
       episodeStatus: ep?.status ?? null,
+      caseManagementId: cm?.id ?? null,
+      caseManagementPrimaryIcd: cm?.primaryIcd ?? null,
+      caseManagementPrimaryIcdLabel: cm?.primaryIcdLabel ?? null,
+      caseManagementStatus: cm?.status ?? null,
     };
   });
 

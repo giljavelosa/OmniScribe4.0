@@ -8,7 +8,10 @@ import { writeAuditLog } from '@/lib/audit/log';
 import { assertOrgScoped } from '@/lib/phi-access';
 import { enqueueCleoStateRefresh } from '@/lib/queue';
 import { PERSONA_VERSION } from '@/services/copilot/persona';
-import type { CaseRouterProposal } from '@/services/copilot/case-router';
+import {
+  ROUTING_PLACEHOLDER_LABEL,
+  type CaseRouterProposal,
+} from '@/services/copilot/case-router';
 import {
   proposeWriteBack,
   type BuildPayloadInput,
@@ -182,6 +185,31 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     );
   }
   const eff = resolved.value;
+
+  // Refuse to persist the synthetic fallback proposal as-is. When Miss
+  // Cleo's LLM is unavailable, the router service returns an `open-new`
+  // proposal with `primaryIcd: null` and the literal placeholder label.
+  // Without this guard, hitting Accept promotes the PENDING_ROUTER case
+  // to ACTIVE with a junk label and no ICD — appearing as a perpetually
+  // "Routing in progress" case in the chart. The clinician must instead
+  // send `kind: 'open-new'` with a typed ICD + label (or pick `attach`).
+  if (
+    eff.kind === 'open-new' &&
+    eff.primaryIcd === null &&
+    eff.primaryIcdLabel === ROUTING_PLACEHOLDER_LABEL
+  ) {
+    return NextResponse.json(
+      {
+        error: {
+          code: 'manual_coding_required',
+          message:
+            'Miss Cleo could not auto-code this visit. Enter a primary ICD code and diagnosis before opening the case.',
+        },
+      },
+      { status: 400 },
+    );
+  }
+
   const isOverride = body.decision.kind !== 'accept' || actionDiffersFromProposal(eff, proposal);
 
   const currentCaseId = note.encounter.caseManagementId;

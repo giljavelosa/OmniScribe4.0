@@ -30,6 +30,15 @@ import {
   buildPersonaSystemBlock,
 } from './persona';
 
+/**
+ * Label written on a PENDING_ROUTER placeholder case (start-visit), and on
+ * the synthetic fallback proposal returned when Miss Cleo's LLM is
+ * unavailable. The accept endpoint refuses to persist this label as a
+ * real ACTIVE case's primary diagnosis — see the manual_coding_required
+ * guard in src/app/api/notes/[id]/case-router/accept/route.ts.
+ */
+export const ROUTING_PLACEHOLDER_LABEL = 'Routing in progress';
+
 // =============================================================================
 // Output schema — Zod-validated proposal shape.
 // =============================================================================
@@ -1008,7 +1017,7 @@ function synthesizeStubProposal(input: CaseRouterInput): CaseRouterProposal {
     action: 'open-new',
     newCase: {
       primaryIcd: null,
-      primaryIcdLabel: 'Routing in progress',
+      primaryIcdLabel: ROUTING_PLACEHOLDER_LABEL,
     },
     confidence: 'low',
     reasoning: 'Auto-route unavailable in stub mode — pick manually.',
@@ -1031,7 +1040,7 @@ function synthesizeLowConfidenceFallback(
       action: 'open-new',
       newCase: {
         primaryIcd: null,
-        primaryIcdLabel: 'Routing in progress',
+        primaryIcdLabel: ROUTING_PLACEHOLDER_LABEL,
       },
       confidence: 'low',
       reasoning: 'Auto-route unavailable — pick manually.',

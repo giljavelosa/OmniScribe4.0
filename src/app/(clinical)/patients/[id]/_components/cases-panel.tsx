@@ -8,7 +8,7 @@ import type {
   FhirWriteBackStatus,
   FhirWriteBackFailureKind,
 } from '@prisma/client';
-import { ChevronDown, ChevronRight, Mic, Plus } from 'lucide-react';
+import { ChevronDown, ChevronRight, Mic, Pencil, Plus } from 'lucide-react';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -19,8 +19,10 @@ import {
   isViewerActiveCase,
   sortCasesByViewerRecency,
 } from '@/lib/case-management/sort';
+import { ROUTING_PLACEHOLDER_LABEL } from '@/services/copilot/case-router';
 import { EpisodesPanel } from './episodes-panel';
 import { NewCaseDialog } from './new-case-dialog';
+import { EditCaseDialog } from './edit-case-dialog';
 
 type EpisodeData = {
   id: string;
@@ -253,49 +255,103 @@ function CaseCard({
   chrome?: 'card' | 'bare';
 }) {
   const [expanded, setExpanded] = useState(defaultExpanded);
+  const [editOpen, setEditOpen] = useState(false);
 
+  // Junk case detection: a case that was promoted to ACTIVE while still
+  // carrying the synthetic fallback proposal's placeholder label (Miss
+  // Cleo's LLM was unavailable when the visit landed). The accept-endpoint
+  // guard now prevents new ones from being created, but historical rows
+  // need a visible warning so the clinician knows to edit the ICD in.
+  const isUncodedJunk =
+    !caseRow.primaryIcd && caseRow.primaryIcdLabel === ROUTING_PLACEHOLDER_LABEL;
   const icdHeadline = caseRow.primaryIcd
     ? `${caseRow.primaryIcd} · ${caseRow.primaryIcdLabel}`
-    : caseRow.primaryIcdLabel;
+    : isUncodedJunk
+      ? 'Uncoded — needs ICD'
+      : caseRow.primaryIcdLabel;
+  // PATCH endpoint accepts the call for any status, but editing diagnoses on
+  // a CLOSED/CANCELLED case rewrites historical record without recourse —
+  // match how restyle is locked on signed notes (rule of thumb: terminal
+  // states are read-only from the UI).
+  const isEditable = canEdit && caseRow.status === 'ACTIVE';
 
   return (
     <div className={chrome === 'card' ? 'rounded-md border border-border p-3 space-y-2' : 'space-y-2'}>
-      <button
-        type="button"
-        onClick={() => setExpanded((x) => !x)}
-        className="flex w-full items-start gap-2 text-left"
-      >
-        {expanded ? (
-          <ChevronDown className="size-4 mt-0.5 shrink-0" aria-hidden />
-        ) : (
-          <ChevronRight className="size-4 mt-0.5 shrink-0" aria-hidden />
-        )}
-        <div className="flex-1 min-w-0 space-y-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-medium text-sm">{icdHeadline}</span>
-            <StatusBadge variant={caseRow.status === 'ACTIVE' ? 'success' : 'neutral'} noIcon>
-              {caseRow.status}
-            </StatusBadge>
-            {!caseRow.primaryIcd && (
-              <StatusBadge variant="warning" noIcon>
-                Needs coding
+      <div className="flex items-start gap-2">
+        <button
+          type="button"
+          onClick={() => setExpanded((x) => !x)}
+          className="flex flex-1 items-start gap-2 text-left min-w-0"
+        >
+          {expanded ? (
+            <ChevronDown className="size-4 mt-0.5 shrink-0" aria-hidden />
+          ) : (
+            <ChevronRight className="size-4 mt-0.5 shrink-0" aria-hidden />
+          )}
+          <div className="flex-1 min-w-0 space-y-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-medium text-sm">{icdHeadline}</span>
+              <StatusBadge variant={caseRow.status === 'ACTIVE' ? 'success' : 'neutral'} noIcon>
+                {caseRow.status}
               </StatusBadge>
-            )}
-            {caseRow.writebackStatus && (
-              <WritebackStatusChip
-                status={caseRow.writebackStatus}
-                failureKind={caseRow.writebackFailureKind ?? null}
-              />
+              {!caseRow.primaryIcd && (
+                <StatusBadge variant="warning" noIcon>
+                  Needs coding
+                </StatusBadge>
+              )}
+              {caseRow.writebackStatus && (
+                <WritebackStatusChip
+                  status={caseRow.writebackStatus}
+                  failureKind={caseRow.writebackFailureKind ?? null}
+                />
+              )}
+            </div>
+            {caseRow.secondaryIcd && (
+              <p className="text-xs text-muted-foreground">
+                Sec: {caseRow.secondaryIcd}
+                {caseRow.secondaryIcdLabel ? ` · ${caseRow.secondaryIcdLabel}` : ''}
+              </p>
             )}
           </div>
-          {caseRow.secondaryIcd && (
-            <p className="text-xs text-muted-foreground">
-              Sec: {caseRow.secondaryIcd}
-              {caseRow.secondaryIcdLabel ? ` · ${caseRow.secondaryIcdLabel}` : ''}
-            </p>
-          )}
-        </div>
-      </button>
+        </button>
+        {isEditable && (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className="h-7 px-2 shrink-0"
+            // stopPropagation so clicking Edit doesn't also toggle expand/collapse.
+            onClick={(e) => {
+              e.stopPropagation();
+              setEditOpen(true);
+            }}
+            aria-label={`Edit case ${caseRow.primaryIcdLabel}`}
+          >
+            <Pencil className="size-3.5 mr-1" aria-hidden />
+            Edit
+          </Button>
+        )}
+      </div>
+
+      {isEditable && (
+        <EditCaseDialog
+          open={editOpen}
+          onOpenChange={setEditOpen}
+          caseRow={{
+            id: caseRow.id,
+            primaryIcd: caseRow.primaryIcd,
+            primaryIcdLabel: caseRow.primaryIcdLabel,
+            secondaryIcd: caseRow.secondaryIcd,
+            secondaryIcdLabel: caseRow.secondaryIcdLabel,
+          }}
+          onSaved={() => {
+            // Same refresh pattern NewCaseDialog uses — the patient page is
+            // server-rendered, so a reload is the cheapest way to pick up
+            // the new label across CasesPanel + the header chips.
+            window.location.reload();
+          }}
+        />
+      )}
 
       {expanded && (
         <div className="space-y-3 pl-6 border-l border-border ml-1">
