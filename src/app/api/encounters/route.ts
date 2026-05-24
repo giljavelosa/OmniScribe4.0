@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
+import { EncounterIntent, IntentSource } from '@prisma/client';
 
 import { prisma } from '@/lib/prisma';
 import { requireFeatureAccess } from '@/lib/authz/server';
@@ -13,6 +14,7 @@ import {
   evaluateDateOfService,
   LATE_ENTRY_MAX_DAYS,
 } from '@/lib/encounters/late-entry';
+import { isIntentValidForDivision } from '@/services/copilot/intent-proposer';
 
 export const runtime = 'nodejs';
 
@@ -50,6 +52,26 @@ const bodySchema = z.object({
    * downstream code can assume the value is already validated.
    */
   dateOfService: z.string().datetime().optional(),
+  /**
+   * Unit 48 PR2 — clinical intent of the encounter (Initial Eval / Daily /
+   * Progress / Re-eval / Discharge for REHAB; BH + MEDICAL equivalents).
+   * Optional: legacy callers and any path where the dialog wasn't fed a
+   * proposedIntent omit it, and the server applies `UNSPECIFIED` +
+   * `CLINICIAN` defaults. When present, the server validates the intent's
+   * division prefix matches the clinician's `viewerDivision` (cross-
+   * division values are rejected as `intent_division_mismatch`).
+   */
+  intent: z.nativeEnum(EncounterIntent).optional(),
+  /**
+   * Unit 48 PR2 — provenance of `intent`. Only `CLINICIAN` and
+   * `COPILOT_PROPOSAL_CONFIRMED` are accepted from the client; `SCHEDULE`
+   * is reserved for server-internal use (a future schedule-template flow
+   * will stamp it directly). Defaults to `CLINICIAN` when intent is
+   * supplied without a source.
+   */
+  intentSource: z
+    .enum([IntentSource.CLINICIAN, IntentSource.COPILOT_PROPOSAL_CONFIRMED])
+    .optional(),
 });
 
 export async function POST(req: Request) {
@@ -153,6 +175,30 @@ export async function POST(req: Request) {
     };
   }
 
+  // Unit 48 PR2 — intent division guard. Cleo proposes; clinician decides
+  // (Decision 2: no API-layer enforcement beyond division match). When
+  // intent is supplied, it MUST start with the clinician's division prefix
+  // (REHAB_* / BH_* / MEDICAL_*). MULTI-division clinicians can pick any
+  // intent. UNSPECIFIED is valid for any division. Beyond that, intent is
+  // recorded as-stated.
+  const intent = data.intent ?? EncounterIntent.UNSPECIFIED;
+  const intentSource = data.intentSource ?? IntentSource.CLINICIAN;
+  if (
+    data.intent &&
+    authorizationUser.division &&
+    !isIntentValidForDivision(data.intent, authorizationUser.division)
+  ) {
+    return NextResponse.json(
+      {
+        error: {
+          code: 'intent_division_mismatch',
+          message: `Intent ${data.intent} is not valid for division ${authorizationUser.division}.`,
+        },
+      },
+      { status: 400 },
+    );
+  }
+
   // Sprint 0.13 — caseManagementId is optional. When provided (override path,
   // chart hero shortcut, etc.) we still validate it; when omitted, startVisit
   // auto-creates a PENDING_ROUTER case in the same tx.
@@ -199,6 +245,8 @@ export async function POST(req: Request) {
         dateOfService: lateEntry.dateOfService,
         isLateEntry: lateEntry.isLateEntry,
         lateEntryDaysGap: lateEntry.lateEntryDaysGap,
+        intent,
+        intentSource,
       }),
     );
   } catch (err) {

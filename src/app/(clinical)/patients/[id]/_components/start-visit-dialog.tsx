@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, useTransition } from 'react';
 import { CalendarDays, PlusCircle } from 'lucide-react';
-import type { Division } from '@prisma/client';
+import { EncounterIntent, type Division } from '@prisma/client';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -26,6 +26,7 @@ import { StatusBadge } from '@/components/ui/status-badge';
 import { StatusBanner } from '@/components/ui/status-banner';
 import { sortCasesByViewerRecency } from '@/lib/case-management/sort';
 import { NewCaseDialog } from './new-case-dialog';
+import { IntentChip, deriveIntentSource } from './intent-chip';
 
 /** Hard-coded backdating window (spec § Goals — 30 days, org-configurable later). */
 const LATE_ENTRY_MAX_DAYS = 30;
@@ -78,6 +79,22 @@ export type StartVisitSubmitArgs = {
   /** ISO 8601 (full datetime, midnight local). Omit for normal same-day visits.
    * The route still validates the 30-day floor + today ceiling. */
   dateOfService?: string;
+  /** Unit 48 PR2 — clinical intent for this encounter (Initial Eval /
+   *  Daily / Progress / etc.). Omitted when the dialog wasn't fed a
+   *  `proposedIntent` prop (legacy callers). Server defaults to
+   *  UNSPECIFIED + CLINICIAN when omitted. */
+  intent?: EncounterIntent;
+  intentSource?: 'CLINICIAN' | 'COPILOT_PROPOSAL_CONFIRMED';
+};
+
+/** Unit 48 PR2 — proposal payload from
+ *  `GET /api/patients/[id]/proposed-intent`. Drives the IntentChip
+ *  rendered inside the dialog. */
+export type ProposedIntent = {
+  intent: EncounterIntent;
+  division: Division;
+  reason: string;
+  confidence: 'high' | 'medium' | 'low';
 };
 
 type Props = {
@@ -124,6 +141,17 @@ type Props = {
    * proposes the destination at review time.
    */
   forceCaseId?: string;
+  /** Unit 48 PR2 — Cleo's proposed visit-type intent + reason. Optional
+   *  for back-compat: legacy callers that haven't been wired to fetch
+   *  `GET /api/patients/[id]/proposed-intent` yet pass nothing, no chip
+   *  renders, and the server applies `intent = UNSPECIFIED` defaults
+   *  (current behavior preserved). When supplied:
+   *    - PickerShell renders the chip; clinician confirms or overrides
+   *    - AutoPostShell omits the chip but includes intent + intentSource
+   *      in the silent POST
+   *    - `confidence === 'low'` forces PickerShell to render so the
+   *      clinician must explicitly pick (Decision 7) */
+  proposedIntent?: ProposedIntent;
 };
 
 /** Sentinel — rehab visit without linking an episode of care. */
@@ -157,10 +185,15 @@ export function StartVisitDialog(props: Props) {
     props.viewerDivision === 'REHAB' &&
     rehabEpisodes.length >= 2;
 
+  // Unit 48 PR2 — force PickerShell when Cleo's proposal is low-confidence
+  // (Decision 7). The clinician must explicitly pick rather than have the
+  // dialog silently auto-post with an uncertain intent.
+  const lowConfidenceIntent = props.proposedIntent?.confidence === 'low';
   if (
     props.forceDatePicker ||
     needsRehabEpisodePicker ||
-    needsSitePicker
+    needsSitePicker ||
+    lowConfidenceIntent
   ) {
     return <PickerShell key={String(props.open)} {...props} />;
   }
@@ -176,6 +209,7 @@ function AutoPostShell({
   onStarted,
   submit,
   forceCaseId,
+  proposedIntent,
 }: Props) {
   const [error, setError] = useState<string | null>(null);
   const submitter = submit ?? defaultEncountersSubmit;
@@ -188,12 +222,25 @@ function AutoPostShell({
     // case-router worker proposes the destination at review time. The
     // override paths (chart hero "Continue this case" + the routing
     // panel's "Change manually") set forceCaseId to bind explicitly.
+    //
+    // Unit 48 PR2 — when proposedIntent is supplied with medium/high
+    // confidence, include it (+ COPILOT_PROPOSAL_CONFIRMED source) in
+    // the silent auto-post. Low confidence forces PickerShell upstream
+    // so we never reach this branch with an uncertain intent.
+    const includeIntent =
+      proposedIntent && proposedIntent.intent !== EncounterIntent.UNSPECIFIED;
     submitter({
       patientId,
       caseManagementId: forceCaseId ?? null,
       episodeOfCareId: null,
       source: forceCaseId ? 'picker' : 'auto-none',
       ...(sitesGovernedHere && defaultSiteId ? { siteId: defaultSiteId } : {}),
+      ...(includeIntent
+        ? {
+            intent: proposedIntent!.intent,
+            intentSource: 'COPILOT_PROPOSAL_CONFIRMED' as const,
+          }
+        : {}),
     })
       .then((res) => {
         onOpenChange(false);
@@ -225,6 +272,7 @@ function PickerShell({
   submit,
   forceDatePicker,
   forceCaseId,
+  proposedIntent,
 }: Props) {
   const [newCaseOpen, setNewCaseOpen] = useState(false);
   const siteListLen = sites?.length ?? 0;
@@ -254,6 +302,14 @@ function PickerShell({
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const submitter = submit ?? defaultEncountersSubmit;
+  // Unit 48 PR2 — intent state. Initialized from Cleo's proposal when
+  // supplied; falls back to UNSPECIFIED (no chip rendered) for legacy
+  // callers. Tracked separately from proposedIntent so the
+  // intentSource derivation knows whether the value still equals the
+  // proposal.
+  const [intent, setIntent] = useState<EncounterIntent>(
+    proposedIntent?.intent ?? EncounterIntent.UNSPECIFIED,
+  );
 
   const { todayIso, floorIso, todayLabel } = useMemo(() => {
     const today = startOfLocalDay(new Date());
@@ -291,6 +347,12 @@ function PickerShell({
     setError(null);
     startTransition(async () => {
       try {
+        // Unit 48 PR2 — include intent + intentSource when the dialog was
+        // fed a proposedIntent prop AND the clinician's selection isn't
+        // UNSPECIFIED. Legacy callers (no proposedIntent) submit nothing
+        // for intent; server applies defaults.
+        const includeIntent =
+          !!proposedIntent && intent !== EncounterIntent.UNSPECIFIED;
         const res = await submitter({
           patientId,
           // Sprint 0.13 — caseId is empty in the default agent-routed path
@@ -307,6 +369,12 @@ function PickerShell({
               : 'picker',
           ...(sitesGovernedHere && siteId ? { siteId } : {}),
           dateOfService: dateOfServiceIso,
+          ...(includeIntent
+            ? {
+                intent,
+                intentSource: deriveIntentSource(intent, proposedIntent!.intent),
+              }
+            : {}),
         });
         onOpenChange(false);
         onStarted(res);
@@ -337,6 +405,21 @@ function PickerShell({
         </SheetHeader>
 
         <div className="space-y-3 px-4">
+          {/* Unit 48 PR2 — Miss Cleo's visit-type intent chip. Renders only
+              when the caller supplied a proposedIntent prop AND the
+              clinician has a known division to filter the override
+              dropdown by. Legacy callers (no proposedIntent) skip this
+              block entirely — the dialog renders exactly as before. */}
+          {proposedIntent && viewerDivision && (
+            <IntentChip
+              proposedIntent={proposedIntent}
+              value={intent}
+              onChange={setIntent}
+              division={viewerDivision}
+              disabled={pending}
+            />
+          )}
+
           {showCasePicker && (
             <fieldset className="space-y-2">
               <legend className="sr-only">Active cases for this patient</legend>
@@ -367,8 +450,8 @@ function PickerShell({
           )}
 
           {activeCases.length === 0 && !showCasePicker && (
-            <StatusBanner variant="warning">
-              No cases on file — open a new case before starting a visit.
+            <StatusBanner variant="info">
+              No cases on file — Miss Cleo will route this visit when you sign the note.
             </StatusBanner>
           )}
 
@@ -481,8 +564,7 @@ function PickerShell({
             onClick={submitChoice}
             disabled={
               pending ||
-              !caseId ||
-              caseId === NEW_CASE ||
+              (showCasePicker && (!caseId || caseId === NEW_CASE)) ||
               (showRehabEpisodePicker && !episodeChoice) ||
               (sitesGovernedHere && !siteId) ||
               dateInvalid
@@ -760,6 +842,10 @@ async function defaultEncountersSubmit(
       ...(args.siteId ? { siteId: args.siteId } : {}),
       ...(args.episodeOfCareId ? { episodeOfCareId: args.episodeOfCareId } : {}),
       ...(args.dateOfService ? { dateOfService: args.dateOfService } : {}),
+      // Unit 48 PR2 — forward intent + intentSource when supplied. Omitted
+      // by legacy callers; server defaults to UNSPECIFIED + CLINICIAN.
+      ...(args.intent ? { intent: args.intent } : {}),
+      ...(args.intentSource ? { intentSource: args.intentSource } : {}),
       pickerSource: args.source,
     }),
   });
