@@ -15,6 +15,7 @@ import {
   type StartVisitSubmitArgs,
 } from '@/app/(clinical)/patients/[id]/_components/start-visit-dialog';
 import type { Division, ScheduleStatus, VisitType } from '@prisma/client';
+import { useProposedIntent } from '@/hooks/use-proposed-intent';
 
 export type SchedulingCardData = {
   scheduleId: string;
@@ -49,6 +50,13 @@ export function SchedulingCard({ visit }: { visit: SchedulingCardData }) {
   const [pending, startTransition] = useTransition();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Unit 48 PR2 — Miss Cleo's visit-type proposal. Schedule-driven path
+  // passes scheduleId so the proposer can read schedule.notes for
+  // family/group/acute heuristics (taxonomy §4.2 + §5.2).
+  const proposedIntent = useProposedIntent(visit.patientId, {
+    episodeId: visit.scheduleEpisodeOfCareId ?? null,
+    scheduleId: visit.scheduleId,
+  });
 
   // Records which destination the user picked (prepare vs capture) so the
   // post-action navigation and the picker flow can both honor it. Held in a
@@ -207,6 +215,7 @@ export function SchedulingCard({ visit }: { visit: SchedulingCardData }) {
         onOpenChange={setPickerOpen}
         onStarted={onPickerStarted}
         submit={scheduleStartSubmit}
+        proposedIntent={proposedIntent}
       />
     </Card>
   );

@@ -17,6 +17,7 @@ import {
   type StartVisitDialogSite,
 } from './start-visit-dialog';
 import type { Division } from '@prisma/client';
+import { useProposedIntent } from '@/hooks/use-proposed-intent';
 
 type Props = {
   patientId: string;
@@ -61,6 +62,10 @@ export function StartVisitButton({
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [forceDatePicker, setForceDatePicker] = useState(false);
+  // Unit 48 PR2 — Miss Cleo's deterministic visit-type proposal. Fetches
+  // on mount so the chip renders immediately when the dialog opens.
+  // Stays undefined on error → dialog gracefully omits the chip (Decision 7).
+  const proposedIntent = useProposedIntent(patientId);
 
   function onStarted({ noteId }: { encounterId: string; noteId: string }) {
     // /prepare/[noteId] is the unit-03 prepare surface; the encounter id is
@@ -116,6 +121,7 @@ export function StartVisitButton({
         onOpenChange={setOpen}
         onStarted={onStarted}
         forceDatePicker={forceDatePicker}
+        proposedIntent={proposedIntent}
       />
     </>
   );

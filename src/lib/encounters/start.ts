@@ -12,7 +12,9 @@ import {
   type PrismaClient,
   CaseManagementStatus,
   Division,
+  EncounterIntent,
   EncounterStatus,
+  IntentSource,
   ScheduleStatus,
   NoteStatus,
 } from '@prisma/client';
@@ -76,6 +78,21 @@ export type StartVisitArgs = {
   dateOfService?: Date | null;
   isLateEntry?: boolean;
   lateEntryDaysGap?: number | null;
+  /**
+   * Unit 48 PR2 — clinical intent for this encounter. Optional: callers
+   * that haven't been wired to capture intent omit it and the encounter
+   * is created with `intent = UNSPECIFIED` + `intentSource = CLINICIAN`
+   * via column defaults. When supplied, both fields are persisted on
+   * the new Encounter row + included in the ENCOUNTER_CREATED audit
+   * metadata so auditors can reconstruct the chain (Cleo proposed X →
+   * clinician confirmed/overrode to Y → encounter created with Y).
+   *
+   * Division validation MUST happen upstream (the API route uses
+   * `isIntentValidForDivision`); this function trusts its inputs and
+   * persists what it's given.
+   */
+  intent?: EncounterIntent;
+  intentSource?: IntentSource;
 };
 
 export async function startVisit(args: StartVisitArgs) {
@@ -180,6 +197,13 @@ export async function startVisit(args: StartVisitArgs) {
     encounterEpisodeId = null;
   }
 
+  // Unit 48 PR2 — resolve intent + intentSource with column defaults as
+  // the safety net. Older callers (pre-PR2) omit these fields entirely;
+  // the encounter row gets UNSPECIFIED + CLINICIAN from the DB-side
+  // defaults defined in the migration, which is correct semantics.
+  const encounterIntent = args.intent ?? EncounterIntent.UNSPECIFIED;
+  const encounterIntentSource = args.intentSource ?? IntentSource.CLINICIAN;
+
   const encounter = await args.tx.encounter.create({
     data: {
       orgId: args.orgId,
@@ -193,6 +217,8 @@ export async function startVisit(args: StartVisitArgs) {
       episodeOfCareId: encounterEpisodeId,
       status: EncounterStatus.IN_PROGRESS,
       startedAt: new Date(),
+      intent: encounterIntent,
+      intentSource: encounterIntentSource,
     },
   });
 
@@ -249,6 +275,12 @@ export async function startVisit(args: StartVisitArgs) {
           ? 'picker'
           : resolvedSource,
       isLateEntry,
+      // Unit 48 PR2 — auditor lens for the visit-type chip: was intent
+      // captured at create time, and was it Cleo's proposal or a
+      // clinician override? Stamped on every encounter creation;
+      // UNSPECIFIED + CLINICIAN for legacy callers that don't send intent.
+      intent: encounterIntent,
+      intentSource: encounterIntentSource,
     },
     tx: args.tx,
   });
