@@ -163,6 +163,7 @@ export function CasesPanel({
                   // secondary list is collapsed.
                   defaultExpanded={!hero && idx === 0}
                   canEdit={canEdit}
+                  onContinueCase={onContinueCase}
                 />
               ))}
             </>
@@ -241,6 +242,7 @@ function CaseCard({
   defaultExpanded,
   canEdit,
   chrome = 'card',
+  onContinueCase,
 }: {
   patientId: string;
   caseRow: CasePanelData;
@@ -253,6 +255,14 @@ function CaseCard({
    * inside a host card (e.g. the hero) without double-borders.
    */
   chrome?: 'card' | 'bare';
+  /**
+   * Optional handler that, when supplied alongside an ACTIVE non-bare card,
+   * surfaces a "Start visit on this case" affordance so the clinician can
+   * pre-bind a new visit to this case (skipping the post-visit router
+   * proposal). Suppressed on `chrome === 'bare'` because the host hero
+   * card already owns its own continue button.
+   */
+  onContinueCase?: (caseId: string) => void;
 }) {
   const [expanded, setExpanded] = useState(defaultExpanded);
   const [editOpen, setEditOpen] = useState(false);
@@ -275,13 +285,16 @@ function CaseCard({
   // states are read-only from the UI).
   const isEditable = canEdit && caseRow.status === 'ACTIVE';
 
+  const showStartVisit =
+    chrome === 'card' && canEdit && !!onContinueCase && caseRow.status === 'ACTIVE';
+
   return (
     <div className={chrome === 'card' ? 'rounded-md border border-border p-3 space-y-2' : 'space-y-2'}>
       <div className="flex items-start gap-2">
         <button
           type="button"
           onClick={() => setExpanded((x) => !x)}
-          className="flex flex-1 items-start gap-2 text-left min-w-0"
+          className="flex flex-1 min-w-0 items-start gap-2 text-left"
         >
           {expanded ? (
             <ChevronDown className="size-4 mt-0.5 shrink-0" aria-hidden />
@@ -314,17 +327,25 @@ function CaseCard({
             )}
           </div>
         </button>
+        {showStartVisit && (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="gap-1.5 shrink-0"
+            onClick={() => onContinueCase!(caseRow.id)}
+          >
+            <Mic className="size-3.5" aria-hidden />
+            Start visit on this case
+          </Button>
+        )}
         {isEditable && (
           <Button
             type="button"
             size="sm"
             variant="ghost"
             className="h-7 px-2 shrink-0"
-            // stopPropagation so clicking Edit doesn't also toggle expand/collapse.
-            onClick={(e) => {
-              e.stopPropagation();
-              setEditOpen(true);
-            }}
+            onClick={() => setEditOpen(true)}
             aria-label={`Edit case ${caseRow.primaryIcdLabel}`}
           >
             <Pencil className="size-3.5 mr-1" aria-hidden />
@@ -345,9 +366,6 @@ function CaseCard({
             secondaryIcdLabel: caseRow.secondaryIcdLabel,
           }}
           onSaved={() => {
-            // Same refresh pattern NewCaseDialog uses — the patient page is
-            // server-rendered, so a reload is the cheapest way to pick up
-            // the new label across CasesPanel + the header chips.
             window.location.reload();
           }}
         />

@@ -1,21 +1,12 @@
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import userEvent from '@testing-library/user-event';
+import { describe, expect, it, vi } from 'vitest';
+import { Profession } from '@prisma/client';
 
 import {
   CasesPanel,
   type CasePanelData,
 } from '@/app/(clinical)/patients/[id]/_components/cases-panel';
-
-/**
- * Step 2 of the case-routing-junk hardening: the patient-page cases panel
- * must visibly call out "junk" cases — rows that were promoted to ACTIVE
- * while still carrying the synthetic fallback proposal's placeholder
- * label (Miss Cleo's LLM was unavailable at routing time, the accept
- * endpoint pre-guard allowed the promotion). The accept-endpoint guard
- * now prevents new ones, but historical rows + cases created before the
- * guard landed need to render with "Uncoded — needs ICD" instead of the
- * raw placeholder so clinicians know to fix them.
- */
 
 const baseCase: CasePanelData = {
   id: 'case-1',
@@ -33,6 +24,12 @@ const baseCase: CasePanelData = {
   rehabEpisodes: [],
 };
 
+/**
+ * Step 2 of the case-routing-junk hardening: rows promoted to ACTIVE
+ * while still carrying the synthetic fallback placeholder must render
+ * as "Uncoded — needs ICD" so clinicians know to fix them. The accept-
+ * endpoint guard prevents new ones; this protects historical rows.
+ */
 describe('CasesPanel — uncoded junk case rendering', () => {
   it('shows the standard "ICD · label" headline for a coded case', () => {
     render(
@@ -63,20 +60,12 @@ describe('CasesPanel — uncoded junk case rendering', () => {
         canEdit={false}
       />,
     );
-    // The headline must NOT echo the raw placeholder — that looks like
-    // routing is still in flight (it isn't; this case is ACTIVE).
     expect(screen.queryByText('Routing in progress')).not.toBeInTheDocument();
     expect(screen.getByText('Uncoded — needs ICD')).toBeInTheDocument();
-    // The pre-existing "Needs coding" warning badge still fires
-    // (gated only on primaryIcd === null).
     expect(screen.getByText('Needs coding')).toBeInTheDocument();
   });
 
   it('does NOT relabel a null-ICD case that has a real clinician-typed label', () => {
-    // A real "I know the diagnosis but not the code yet" case — the
-    // clinician opened the case manually with a free-text label.
-    // We should leave their label alone; only the synthetic fallback's
-    // exact placeholder string triggers the relabel.
     const partial: CasePanelData = {
       ...baseCase,
       id: 'case-partial',
@@ -93,7 +82,154 @@ describe('CasesPanel — uncoded junk case rendering', () => {
     );
     expect(screen.getByText('Possible rotator cuff injury')).toBeInTheDocument();
     expect(screen.queryByText('Uncoded — needs ICD')).not.toBeInTheDocument();
-    // "Needs coding" still appears because primaryIcd is null.
     expect(screen.getByText('Needs coding')).toBeInTheDocument();
+  });
+});
+
+function makeCase(overrides: Partial<CasePanelData> & { id: string }): CasePanelData {
+  return {
+    id: overrides.id,
+    primaryIcd: overrides.primaryIcd ?? 'M75.101',
+    primaryIcdLabel: overrides.primaryIcdLabel ?? 'Rotator cuff',
+    secondaryIcd: overrides.secondaryIcd ?? null,
+    secondaryIcdLabel: overrides.secondaryIcdLabel ?? null,
+    description: overrides.description ?? null,
+    status: overrides.status ?? 'ACTIVE',
+    viewerLastActivityAt: overrides.viewerLastActivityAt ?? null,
+    viewerDivisionLastActivityAt: overrides.viewerDivisionLastActivityAt ?? null,
+    lastActivityAt: overrides.lastActivityAt ?? null,
+    medicalVisitCount: overrides.medicalVisitCount ?? 0,
+    bhVisitCount: overrides.bhVisitCount ?? 0,
+    rehabEpisodes: overrides.rehabEpisodes ?? [],
+    writebackStatus: overrides.writebackStatus ?? null,
+    writebackFailureKind: overrides.writebackFailureKind ?? null,
+  };
+}
+
+const hero = makeCase({
+  id: 'case_hero',
+  primaryIcd: 'M75.101',
+  primaryIcdLabel: 'Rotator cuff',
+  viewerLastActivityAt: '2026-05-20T00:00:00Z',
+});
+const secondary = makeCase({
+  id: 'case_hip',
+  primaryIcd: 'M25.551',
+  primaryIcdLabel: 'Right hip pain',
+});
+const closedSecondary = makeCase({
+  id: 'case_closed',
+  primaryIcd: 'S82.001A',
+  primaryIcdLabel: 'Old ankle fx',
+  status: 'CLOSED',
+});
+
+describe('CasesPanel — "Start visit on this case" affordance', () => {
+  it('renders the button on the non-hero ACTIVE card when onContinueCase is provided', () => {
+    render(
+      <CasesPanel
+        patientId="pat_1"
+        cases={[hero, secondary]}
+        viewingProfession={Profession.PT}
+        canEdit
+        onContinueCase={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: /continue this case in a new visit/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /start visit on this case/i })).toBeInTheDocument();
+  });
+
+  it('fires onContinueCase with the SECONDARY case id when clicked (not the hero id)', async () => {
+    const user = userEvent.setup();
+    const onContinue = vi.fn();
+
+    render(
+      <CasesPanel
+        patientId="pat_1"
+        cases={[hero, secondary]}
+        viewingProfession={Profession.PT}
+        canEdit
+        onContinueCase={onContinue}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: /start visit on this case/i }));
+
+    expect(onContinue).toHaveBeenCalledOnce();
+    expect(onContinue).toHaveBeenCalledWith(secondary.id);
+  });
+
+  it('does NOT render on CLOSED non-hero cards', () => {
+    render(
+      <CasesPanel
+        patientId="pat_1"
+        cases={[hero, closedSecondary]}
+        viewingProfession={Profession.PT}
+        canEdit
+        onContinueCase={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole('button', { name: /start visit on this case/i })).not.toBeInTheDocument();
+  });
+
+  it('does NOT render when canEdit is false', () => {
+    render(
+      <CasesPanel
+        patientId="pat_1"
+        cases={[hero, secondary]}
+        viewingProfession={Profession.PT}
+        canEdit={false}
+        onContinueCase={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole('button', { name: /start visit on this case/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /continue this case in a new visit/i })).not.toBeInTheDocument();
+  });
+
+  it('does NOT render when onContinueCase is omitted', () => {
+    render(
+      <CasesPanel
+        patientId="pat_1"
+        cases={[hero, secondary]}
+        viewingProfession={Profession.PT}
+        canEdit
+      />,
+    );
+
+    expect(screen.queryByRole('button', { name: /start visit on this case/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /continue this case in a new visit/i })).not.toBeInTheDocument();
+  });
+
+  it('renders on the lone card when only one active case exists (no hero)', () => {
+    render(
+      <CasesPanel
+        patientId="pat_1"
+        cases={[secondary]}
+        viewingProfession={Profession.PT}
+        canEdit
+        onContinueCase={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: /start visit on this case/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /continue this case in a new visit/i })).not.toBeInTheDocument();
+  });
+
+  it('does NOT double-render inside the hero card (chrome="bare" suppresses it)', () => {
+    render(
+      <CasesPanel
+        patientId="pat_1"
+        cases={[hero, secondary]}
+        viewingProfession={Profession.PT}
+        canEdit
+        onContinueCase={vi.fn()}
+      />,
+    );
+
+    expect(screen.getAllByRole('button', { name: /start visit on this case/i })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: /continue this case in a new visit/i })).toHaveLength(1);
   });
 });
