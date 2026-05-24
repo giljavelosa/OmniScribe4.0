@@ -309,6 +309,44 @@ describe('POST /api/notes/[id]/case-router/accept', () => {
     );
   });
 
+  it('rejects accept on a synthetic fallback proposal (null ICD + placeholder label) with 400 manual_coding_required', async () => {
+    authedAsClinician();
+    noteFindFirst.mockResolvedValueOnce({
+      id: 'note_fb',
+      orgId: 'org_1',
+      patientId: 'pat_fb',
+      status: 'DRAFT',
+      clinicianOrgUserId: 'ou_1',
+      encounterId: 'enc_fb',
+      encounter: { id: 'enc_fb', caseManagementId: 'case_pending_fb' },
+    });
+    caseRouterRunFindFirst.mockResolvedValueOnce({
+      id: 'run_fb',
+      orgId: 'org_1',
+      noteId: 'note_fb',
+      acceptedAction: null,
+      proposalJson: {
+        action: 'open-new',
+        newCase: { primaryIcd: null, primaryIcdLabel: 'Routing in progress' },
+        confidence: 'low',
+        reasoning: 'Auto-route unavailable — pick manually.',
+        alternatives: [],
+      },
+    });
+
+    const res = await POST(
+      buildRequest({ caseRouterRunId: 'run_fb', decision: { kind: 'accept' } }),
+      { params: Promise.resolve({ id: 'note_fb' }) },
+    );
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error.code).toBe('manual_coding_required');
+    // Guard fires BEFORE the transaction — no case mutation, no audit row.
+    expect(txMock).not.toHaveBeenCalled();
+    expect(writeAuditLog).not.toHaveBeenCalled();
+  });
+
   it('returns 404 when the case-router run does not exist', async () => {
     authedAsClinician();
     noteFindFirst.mockResolvedValueOnce({
