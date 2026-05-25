@@ -5,10 +5,12 @@ import { prisma } from '@/lib/prisma';
 import { requireFeatureAccess } from '@/lib/authz/server';
 import { canActAtSite, getClinicianSiteIds } from '@/lib/authz/site-scope';
 import { checkClinicianSeat, seatRequiredResponse } from '@/lib/authz/seat';
+import { writeAuditLog } from '@/lib/audit/log';
 import { startVisit } from '@/lib/encounters/start';
 import { DivisionResolutionError } from '@/lib/divisions/resolve';
 import { CaseResolutionError } from '@/lib/case-management/resolve';
 import { assertCaseIsOpen } from '@/lib/case-management/validate';
+import { CaseDivisionDeniedError } from '@/lib/case-access';
 import {
   evaluateDateOfService,
   LATE_ENTRY_MAX_DAYS,
@@ -220,6 +222,28 @@ export async function POST(req: Request) {
           },
         },
         { status: 422 },
+      );
+    }
+    if (err instanceof CaseDivisionDeniedError) {
+      // Unit 49 — clinician attempted to attach a visit to a case in a
+      // different division. Audit the blocked attempt (rule 8 — not
+      // wrapped in swallowing try-catch) and return 403.
+      await writeAuditLog({
+        userId: user.id,
+        orgId: authorizationUser.orgId,
+        action: 'CASE_DIVISION_BLOCKED',
+        resourceType: 'CaseManagement',
+        resourceId: err.caseId,
+        metadata: {
+          caseId: err.caseId,
+          clinicianDivision: err.clinicianDivision,
+          caseDivision: err.caseDivision,
+          route: 'encounters-start',
+        },
+      });
+      return NextResponse.json(
+        { error: { code: 'forbidden', message: 'Case belongs to a different division.' } },
+        { status: 403 },
       );
     }
     throw err;

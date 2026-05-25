@@ -6,6 +6,7 @@ import { prisma } from '@/lib/prisma';
 import { requireFeatureAccess } from '@/lib/authz/server';
 import { writeAuditLog } from '@/lib/audit/log';
 import { assertOrgScoped } from '@/lib/phi-access';
+import { assertCanContinueCase, CaseDivisionDeniedError } from '@/lib/case-access';
 import { enqueueCleoStateRefresh } from '@/lib/queue';
 import { PERSONA_VERSION } from '@/services/copilot/persona';
 import type { CaseRouterProposal } from '@/services/copilot/case-router';
@@ -197,11 +198,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       // Look up current case so we can detect "promote-pending" vs "rebind".
       const currentCase = await tx.caseManagement.findUnique({
         where: { id: currentCaseId },
-        select: { id: true, status: true },
+        select: { id: true, status: true, division: true },
       });
       if (!currentCase) {
         throw new Error('current_case_missing');
       }
+      // Unit 49 — division gate. The clinician must be allowed to write to
+      // the case they're routing FROM; throwing inside the tx rolls back.
+      assertCanContinueCase(currentCase, authorizationUser);
 
       let appliedId: string;
 
@@ -212,7 +216,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             orgId: authorizationUser.orgId,
             patientId: note.patientId,
           },
-          select: { id: true, status: true, secondaryIcd: true, secondaryIcdLabel: true },
+          select: {
+            id: true,
+            status: true,
+            secondaryIcd: true,
+            secondaryIcdLabel: true,
+            division: true,
+          },
         });
         if (!targetCase) {
           throw new TargetCaseError('case_not_found');
@@ -220,6 +230,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         if (targetCase.status === CaseManagementStatus.CANCELLED) {
           throw new TargetCaseError('case_cancelled');
         }
+        // Unit 49 — division gate on the case being attached.
+        assertCanContinueCase(targetCase, authorizationUser);
 
         // Rebind the encounter only if the target differs from the
         // current case (otherwise no-op). Then delete the source case
@@ -285,9 +297,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             orgId: authorizationUser.orgId,
             patientId: note.patientId,
           },
-          select: { id: true, status: true },
+          select: { id: true, status: true, division: true },
         });
         if (!driftedCase) throw new TargetCaseError('case_not_found');
+        // Unit 49 — division gate on the drifted case being reconciled.
+        assertCanContinueCase(driftedCase, authorizationUser);
 
         const resolution = eff.resolution;
         switch (resolution.kind) {
@@ -380,6 +394,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
                   patientId: note.patientId,
                   primaryIcd: resolution.primaryIcd,
                   primaryIcdLabel: resolution.primaryIcdLabel,
+                  // Unit 49 — stamp at creation from the opening clinician.
+                  division: authorizationUser.division,
                   status: CaseManagementStatus.ACTIVE,
                   openedByOrgUserId: authorizationUser.orgUserId,
                 },
@@ -469,6 +485,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               patientId: note.patientId,
               primaryIcd: eff.primaryIcd,
               primaryIcdLabel: eff.primaryIcdLabel,
+              // Unit 49 — stamp at creation from the opening clinician.
+              division: authorizationUser.division,
               status: CaseManagementStatus.ACTIVE,
               openedByOrgUserId: authorizationUser.orgUserId,
               mirrorsFhirConditionId: eff.fhirConditionId,
@@ -510,6 +528,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               primaryIcdLabel: eff.primaryIcdLabel,
               secondaryIcd: eff.secondaryIcd ?? null,
               secondaryIcdLabel: eff.secondaryIcdLabel ?? null,
+              // Unit 49 — stamp at creation from the opening clinician.
+              division: authorizationUser.division,
               status: CaseManagementStatus.ACTIVE,
               openedByOrgUserId: authorizationUser.orgUserId,
             },
@@ -619,6 +639,28 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
     if (err instanceof ReconcileAlreadyResolvedError) {
       return NextResponse.json({ error: { code: err.code } }, { status: 409 });
+    }
+    if (err instanceof CaseDivisionDeniedError) {
+      // Unit 49 — audit the blocked attempt (rule 8 — not in a swallowing
+      // try-catch). The tx already rolled back; this is a post-rollback
+      // audit recording the denied write attempt.
+      await writeAuditLog({
+        userId: user.id,
+        orgId: authorizationUser.orgId,
+        action: 'CASE_DIVISION_BLOCKED',
+        resourceType: 'CaseManagement',
+        resourceId: err.caseId,
+        metadata: {
+          caseId: err.caseId,
+          clinicianDivision: err.clinicianDivision,
+          caseDivision: err.caseDivision,
+          route: 'case-router-accept',
+        },
+      });
+      return NextResponse.json(
+        { error: { code: 'forbidden', message: 'Case belongs to a different division.' } },
+        { status: 403 },
+      );
     }
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {
       return NextResponse.json({ error: { code: 'not_found' } }, { status: 404 });

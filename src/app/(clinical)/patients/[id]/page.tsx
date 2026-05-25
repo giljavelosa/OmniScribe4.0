@@ -33,6 +33,14 @@ export default async function PatientDetailPage({
   const session = await auth();
   if (!session?.user?.orgId) return null;
 
+  // Unit 49 §E — viewer-division filter for the cases panel. Off-division
+  // cases (e.g. a PT viewing the MEDICAL case opened by the patient's
+  // PCP) are silently hidden from the chart. MULTI cases are visible to
+  // everyone (escape hatch).
+  const viewerDivisionForFilter = divisionForProfession(
+    session.user.professionType ?? null,
+  );
+
   const patient = await prisma.patient.findFirst({
     where: { id, orgId: session.user.orgId, isDeleted: false },
     include: {
@@ -42,7 +50,12 @@ export default async function PatientDetailPage({
       // of record for each visit is set on the Encounter (StartVisit dialog).
       site: { select: { id: true, name: true } },
       caseManagements: {
-        where: { status: { in: ['ACTIVE', 'CLOSED'] } },
+        where: {
+          status: { in: ['ACTIVE', 'CLOSED'] },
+          ...(viewerDivisionForFilter
+            ? { division: { in: [viewerDivisionForFilter, 'MULTI'] } }
+            : {}),
+        },
         include: {
           episodes: {
             where: { status: { in: ['ACTIVE', 'RECERT_DUE', 'DISCHARGED'] } },

@@ -103,6 +103,8 @@ describeMaybe('runTool lookupPatientGoals (Phase 1A fan-out)', () => {
           orgId: ORG_ID,
           patientId: PATIENT_WITH_EPISODES,
           primaryIcdLabel: diagnosis,
+          // Unit 49: REHAB matches the rest of this fixture's episode division.
+          division: 'REHAB',
           status: 'ACTIVE',
         },
       });

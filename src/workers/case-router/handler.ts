@@ -1,5 +1,5 @@
 import type { Job } from 'bullmq';
-import { CaseManagementStatus, NoteStatus, Prisma, RouterConfidence } from '@prisma/client';
+import { CaseManagementStatus, Division, NoteStatus, Prisma, RouterConfidence } from '@prisma/client';
 
 import { prisma } from '@/lib/prisma';
 import { writeAuditLog } from '@/lib/audit/log';
@@ -522,6 +522,19 @@ async function loadCasesForRouter(
       // can recognize "this looks like a closed-out arc" but never proposes
       // routing into a non-bindable case (the API gate refuses).
       status: { in: [CaseManagementStatus.ACTIVE, CaseManagementStatus.CLOSED] },
+      // Unit 49 §D — division scope. The router only sees cases in the
+      // clinician's division (or MULTI). For shared ICDs across divisions
+      // (e.g. F41.1 in BH + MEDICAL, M54.50 in REHAB + MEDICAL) this means
+      // the router never proposes cross-division attach; if there's no
+      // same-division candidate it falls through to `open-new` (a parallel
+      // case in the clinician's division, per spec decision D-U49-4).
+      ...(args.viewerDivision
+        ? {
+            division: {
+              in: [args.viewerDivision as Division, Division.MULTI],
+            },
+          }
+        : {}),
     },
     select: {
       id: true,

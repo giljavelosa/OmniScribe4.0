@@ -50,6 +50,9 @@ export async function POST(req: Request) {
       secondaryIcd: data.secondaryIcd ?? null,
       secondaryIcdLabel: data.secondaryIcdLabel?.trim() ?? null,
       description: data.description?.trim() ?? null,
+      // Unit 49 — stamp at creation from the opening clinician's division.
+      // Immutable thereafter (no UPDATE path exposed for division).
+      division: authorizationUser.division,
       status: CaseManagementStatus.ACTIVE,
       openedByOrgUserId: authorizationUser.orgUserId,
     },
