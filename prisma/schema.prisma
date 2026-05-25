@@ -1032,6 +1032,12 @@ model CaseManagement {
   secondaryIcdLabel String?
   /// Migrated from legacy EpisodeOfCare.bodyPart when present.
   description       String?
+  /// Unit 49 — division stamp set at case creation, immutable thereafter.
+  /// Set from `openedByOrgUserId → OrgUser.division` on insert (or department
+  /// division / `MULTI` as fallbacks during backfill). Only same-division
+  /// clinicians (or `MULTI`) may write to this case; enforced via
+  /// `assertCanContinueCase` (`src/lib/case-access.ts`).
+  division          Division
   status            CaseManagementStatus @default(ACTIVE)
   openedByOrgUserId String?
   openedAt          DateTime             @default(now())
@@ -1050,6 +1056,7 @@ model CaseManagement {
   fhirWriteBackProposals FhirWriteBackProposal[]
 
   @@index([orgId, patientId, status])
+  @@index([orgId, patientId, division, status])
   @@index([orgId, primaryIcd])
 }
 

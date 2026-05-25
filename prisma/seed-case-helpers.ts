@@ -10,12 +10,34 @@ type UpsertCaseArgs = {
   secondaryIcdLabel?: string | null;
   description?: string | null;
   openedByOrgUserId?: string | null;
+  /** Unit 49: case division stamp. If omitted, derived from
+   *  `openedByOrgUserId → OrgUser.division`. Falls back to `MULTI`
+   *  if no opener is set. Mirrors the migration's backfill logic. */
+  division?: Division;
 };
 
 export async function upsertCaseManagement(
   prisma: PrismaClient,
   args: UpsertCaseArgs,
 ) {
+  let division: Division;
+  if (args.division) {
+    division = args.division;
+  } else if (args.openedByOrgUserId) {
+    const opener = await prisma.orgUser.findUnique({
+      where: { id: args.openedByOrgUserId },
+      select: { division: true },
+    });
+    if (!opener) {
+      throw new Error(
+        `upsertCaseManagement: unknown openedByOrgUserId ${args.openedByOrgUserId} (cannot derive division)`,
+      );
+    }
+    division = opener.division;
+  } else {
+    division = Division.MULTI;
+  }
+
   return prisma.caseManagement.upsert({
     where: { id: args.id },
     update: {
@@ -34,6 +56,7 @@ export async function upsertCaseManagement(
       secondaryIcd: args.secondaryIcd ?? null,
       secondaryIcdLabel: args.secondaryIcdLabel ?? null,
       description: args.description ?? null,
+      division,
       status: 'ACTIVE',
       openedByOrgUserId: args.openedByOrgUserId ?? null,
     },

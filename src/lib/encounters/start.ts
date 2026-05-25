@@ -20,6 +20,7 @@ import {
 import { writeAuditLog } from '@/lib/audit/log';
 import { resolveDivisionForNote } from '@/lib/divisions/resolve';
 import { assertCaseIsOpen, mayLinkEpisodeOnEncounter } from '@/lib/case-management/validate';
+import { assertCanContinueCase } from '@/lib/case-access';
 
 type Tx = Prisma.TransactionClient | PrismaClient;
 
@@ -95,7 +96,7 @@ export async function startVisit(args: StartVisitArgs) {
             patientId: args.patientId,
             orgId: args.orgId,
           },
-          select: { id: true, status: true },
+          select: { id: true, status: true, division: true },
         })
       : Promise.resolve(null),
     args.episodeOfCareId && args.caseManagementId
@@ -122,6 +123,10 @@ export async function startVisit(args: StartVisitArgs) {
   if (args.caseManagementId) {
     if (!caseRow) throw new Error('startVisit: caseManagement missing');
     assertCaseIsOpen(caseRow.status);
+    // Unit 49 — only same-division (or MULTI) clinicians may attach a
+    // visit to an existing case. Thrown CaseDivisionDeniedError surfaces
+    // in the caller's catch (encounters/route.ts).
+    assertCanContinueCase(caseRow, { division: clinician.division });
     caseManagementIdForEncounter = caseRow.id;
   } else {
     const pending = await args.tx.caseManagement.create({
@@ -130,6 +135,10 @@ export async function startVisit(args: StartVisitArgs) {
         patientId: args.patientId,
         primaryIcd: null,
         primaryIcdLabel: 'Routing in progress',
+        // Unit 49 — stamp the new PENDING_ROUTER case with the opening
+        // clinician's division. The case-router worker then proposes only
+        // same-division candidates (Unit 49 §D).
+        division: clinician.division,
         status: CaseManagementStatus.PENDING_ROUTER,
         openedByOrgUserId: args.clinicianOrgUserId,
         openedAt: new Date(),
