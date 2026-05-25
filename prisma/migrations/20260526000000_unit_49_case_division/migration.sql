@@ -32,6 +32,9 @@
 ALTER TABLE "CaseManagement" ADD COLUMN "division" "Division";
 
 -- Step 2: backfill from opener → department → MULTI.
+-- Encounter has no createdAt column; for the dept-fallback we take any
+-- encounter on the case (LIMIT 1, no ordering) — we only need the
+-- department.division, not chronological order.
 UPDATE "CaseManagement" c
 SET    "division" = COALESCE(
          (SELECT u."division"
@@ -41,7 +44,6 @@ SET    "division" = COALESCE(
             FROM "Encounter" e
             JOIN "Department" d ON d."id" = e."departmentId"
            WHERE e."caseManagementId" = c."id"
-           ORDER BY e."createdAt" ASC
            LIMIT 1),
          'MULTI'::"Division"
        );
