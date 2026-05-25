@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { prisma } from '@/lib/prisma';
 import { assertOrgScoped } from '@/lib/phi-access';
 import { getLLMService, type LLMService } from '@/services/llm';
+import { stripJsonFence } from '@/lib/llm/strip-json-fence';
 import type { Draft, DraftKind } from './tools';
 
 /**
@@ -162,7 +163,7 @@ function contextSummary(ctx: Awaited<ReturnType<typeof loadPatientContext>>): st
 
 function parseModelDraftJson(raw: string): Record<string, unknown> | null {
   try {
-    const v = JSON.parse(raw.trim());
+    const v = JSON.parse(stripJsonFence(raw));
     return v && typeof v === 'object' ? (v as Record<string, unknown>) : null;
   } catch {
     return null;

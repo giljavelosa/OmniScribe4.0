@@ -1,4 +1,5 @@
 import { getLLMService, type LLMService } from '@/services/llm';
+import { stripJsonFence } from '@/lib/llm/strip-json-fence';
 import {
   FLAG_ANALYZER_SYSTEM_PROMPT,
   FlagAnalyzerOutputSchema,
@@ -43,15 +44,7 @@ export class FlagAnalyzer {
 }
 
 function parseAnalyzerOutput(rawText: string, sectionLabel?: string): FlagAnalyzerOutput {
-  // Strip ```json … ``` (or bare ``` … ```) fences. Sonnet 4.5 wraps in
-  // fences habitually even with jsonMode + an explicit "no markdown fences"
-  // instruction; without this strip, every fenced response silently
-  // becomes { flags: [] } and the entire feature returns no flags.
-  const stripped = rawText
-    .trim()
-    .replace(/^```(?:json)?\s*\n?/i, '')
-    .replace(/\n?```\s*$/i, '')
-    .trim();
+  const stripped = stripJsonFence(rawText);
   let parsed: unknown;
   try {
     parsed = JSON.parse(stripped);
