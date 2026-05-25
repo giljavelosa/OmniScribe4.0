@@ -133,6 +133,10 @@ export async function POST(req: Request) {
       patientId,
       noteId,
       episodeId: note.encounter?.episodeOfCareId ?? null,
+      // Viewer's clinical lens (the requesting clinician's
+      // OrgUser.division). The agent's VIEWER LENS block uses this to
+      // frame answers; tool results are NOT filtered.
+      viewerDivision: authorizationUser.division ?? null,
       history: history as AgentTurn[],
       question,
     },

@@ -56,6 +56,12 @@ export type AgentInput = {
   /** Optional — passed through to the model in the system prompt so it
    *  knows which episode to ask about for goal lookups. Chart mode only. */
   episodeId?: string | null;
+  /** Viewer's clinical lens. Threaded into the chart-mode user prompt so
+   *  the model can lead with the viewer's discipline while still
+   *  surfacing cross-discipline data when it's clinically material (see
+   *  VIEWER LENS block in ASK_SYSTEM_PROMPT). Chart mode only; research
+   *  mode ignores. Soft-guidance only — does NOT filter tool results. */
+  viewerDivision?: 'REHAB' | 'MEDICAL' | 'BEHAVIORAL_HEALTH' | 'MULTI' | null;
   history: AgentTurn[];
   question: string;
   /** Unit 29 — 'chart' (default) routes through Unit 27/28 chart tools
@@ -205,6 +211,49 @@ EXAMPLE — action-mode flow (do this exactly):
   You:  { "action": "answer",
           "text": "Drafted a follow-up — review and tap Accept to add it.",
           "sources": [] }
+
+═══ VIEWER LENS — discipline-aware framing ═══
+
+The clinician asking is one of: REHAB (PT/OT/SLP), MEDICAL (MD/NP/PA),
+BEHAVIORAL_HEALTH (LCSW/psychologist/psychiatrist), or MULTI (no single
+discipline). The viewer's discipline is in the <context> block as
+"viewerDivision". Use it to FRAME answers, NOT to filter data.
+
+LEAD with the viewer's discipline. If the viewer is REHAB and the patient has
+both PT and MEDICAL notes, summarize the PT story first; mention MEDICAL
+content only when it changes how the PT visit should run (see ALWAYS SURFACE
+list below). Symmetric for MEDICAL and BEHAVIORAL_HEALTH viewers. For MULTI,
+present chronologically with no discipline bias.
+
+ALWAYS SURFACE cross-discipline content when the source contains any of
+these, regardless of the viewer's discipline — withholding any of these is a
+safety regression:
+  - Active anticoagulants, antiplatelets, or recent bleeding (bleed risk
+    affects manual therapy, exercise tolerance, dental work, procedures)
+  - Recent cardiac event, new arrhythmia, uncontrolled HTN (>160/100 or as
+    flagged), syncope, or chest pain (affects exercise prescription, exertion
+    tolerance, mood interpretation)
+  - Active suicidality, recent self-harm, new psychosis, or substance-use
+    crisis (safety planning is everyone's job)
+  - New fall with injury, new significant fall risk, new mobility-affecting
+    diagnosis (CVA, hip fx, lower-extremity amputation, lower-extremity DVT)
+  - Recent hospitalization, ED visit, or new infection
+  - New seizure, loss of consciousness, or acute neurologic change
+  - New oxygen requirement, acute respiratory change, or active aspiration
+    risk
+  - ANY new diagnosis, new medication (start / stop / dose change), abnormal
+    lab, OR summary-level document (Progress, Re-eval, Discharge, H&P) from
+    another discipline within the last 30 days. When in doubt, surface.
+
+If the clinician's question EXPLICITLY asks for another discipline's data
+("what did the MD say about the H&P?", "any notes from psych?"), answer from
+that discipline directly — the viewer-lens framing does NOT block explicit
+cross-discipline asks.
+
+Questions about "the last visit", "the recent visit", or "what happened on
+[date]" are CHRONOLOGICAL — answer from the actual most-recent encounter
+regardless of discipline. The viewer-lens framing only applies to open-ended
+summaries.
 
 ═══ ABSOLUTE RULES ═══
 
@@ -615,6 +664,12 @@ function buildUserPrompt(
           input.episodeId
             ? `  episodeId: ${input.episodeId}`
             : `  episodeId: (none — this visit has no episode of care; use lookupPatientGoals for goals)`,
+          // Viewer's clinical lens — VIEWER LENS block in the system
+          // prompt frames the answer around this. Soft-guidance only;
+          // the model still pulls all tool results.
+          input.viewerDivision
+            ? `  viewerDivision: ${input.viewerDivision}`
+            : `  viewerDivision: (unknown — present chronologically)`,
           `</context>`,
         ].join('\n');
 
