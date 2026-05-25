@@ -90,25 +90,31 @@ export function FlagReviewPanel({ noteId, sections, isSigned }: Props) {
       }
       setAnalyzeMessage('Analyzing — checking for new flags every few seconds…');
       setIsPolling(true);
-      // Bedrock per-section can take 10–30s on a multi-section note, so
-      // poll repeatedly until flags appear OR we hit max attempts. Clears
-      // the banner on each terminal state (results in, max retries hit, or
-      // error). SSE-based completion is the longer-term fix (see line 47).
-      const startCount = flags.length;
+      // Poll the lifecycle state, NOT the flag count. The previous
+      // implementation stopped on "count unchanged" which was a false
+      // negative when analysis took longer than the 36 s budget — the
+      // user saw "no flags surfaced" while the worker was still
+      // computing them, then signed before flags arrived. Now we poll
+      // the `meta.analysisState` field returned by /flags and stop
+      // exactly when the worker has stamped `flagAnalysisCompletedAt`.
       let attempts = 0;
-      const MAX_ATTEMPTS = 12; // ~36s of polling
+      const MAX_ATTEMPTS = 80; // 4 min headroom (typical run << 1 min)
       const POLL_MS = 3000;
       const tick = async () => {
         attempts += 1;
         try {
           const r = await fetch(`/api/notes/${noteId}/flags`);
           if (r.ok) {
-            const json = (await r.json()) as { data: Flag[] };
+            const json = (await r.json()) as {
+              data: Flag[];
+              meta?: { analysisState?: 'idle' | 'pending' | 'completed' };
+            };
             setFlags(json.data);
-            if (json.data.length !== startCount || attempts >= MAX_ATTEMPTS) {
+            if (json.meta?.analysisState === 'completed') {
+              const newOpen = json.data.filter((f) => f.status === 'OPEN').length;
               setAnalyzeMessage(
-                json.data.length === startCount
-                  ? 'Analysis finished — no new flags surfaced.'
+                newOpen === 0
+                  ? 'Analysis finished — no compliance flags surfaced.'
                   : null,
               );
               setIsPolling(false);
@@ -121,7 +127,9 @@ export function FlagReviewPanel({ noteId, sections, isSigned }: Props) {
         if (attempts < MAX_ATTEMPTS) {
           setTimeout(tick, POLL_MS);
         } else {
-          setAnalyzeMessage('Analysis still running. Try again in a moment.');
+          setAnalyzeMessage(
+            'Analysis is taking longer than usual. Try again in a moment.',
+          );
           setIsPolling(false);
         }
       };

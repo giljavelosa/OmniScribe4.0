@@ -100,6 +100,11 @@ const buildPriorNote = (id: string, dateIso: string, content: string) =>
       dateOfService: new Date(dateIso),
       isLateEntry: false,
       lateEntryDaysGap: null,
+      // Flag-analysis lifecycle (regression fix 2026-05-25). Default
+      // posture: never analyzed. The brief projector doesn't read these
+      // fields; they're here purely to satisfy Note's structural type.
+      flagAnalysisStartedAt: null,
+      flagAnalysisCompletedAt: null,
       createdAt: new Date(dateIso),
       updatedAt: new Date(dateIso),
       template: { name: 'PT Progress Note' },

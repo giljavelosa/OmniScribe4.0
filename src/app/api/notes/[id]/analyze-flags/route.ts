@@ -42,6 +42,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 
   const requestId = randomBytes(8).toString('hex');
+  // Stamp the lifecycle anchor BEFORE enqueueing the BullMQ job so the
+  // sign route can refuse with `flag_analysis_pending` from the moment
+  // the request is accepted. The worker stamps `flagAnalysisCompletedAt`
+  // in a `finally` block when it terminates (success / mid-run skip /
+  // error), so the gate is self-clearing.
+  await prisma.note.update({
+    where: { id },
+    data: {
+      flagAnalysisStartedAt: new Date(),
+      flagAnalysisCompletedAt: null,
+    },
+  });
   await enqueueAiGenerationJob({
     noteId: id,
     orgId: authorizationUser.orgId,

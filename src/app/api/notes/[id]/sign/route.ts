@@ -13,6 +13,7 @@ import {
 } from '@/lib/queue';
 import { readSectionStatus } from '@/lib/notes/section-status';
 import { deriveProgressStrip, isReadyForSign } from '@/lib/notes/derive-progress-strip';
+import { isFlagAnalysisPending } from '@/lib/notes/flag-analysis-state';
 import type { NoteSectionDef } from '@/lib/notes/build-prompt';
 import { randomBytes } from 'node:crypto';
 
@@ -80,6 +81,53 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
   if (note.status === NoteStatus.SIGNED || note.status === NoteStatus.TRANSFERRED) {
     return NextResponse.json({ error: { code: 'already_signed' } }, { status: 409 });
+  }
+
+  // Flag-analysis race protection (regression fix 2026-05-25).
+  // Block 1 — pending analysis: refuse if a flag-analysis run is in
+  // flight. Without this, a clinician who clicks "Analyze for flags"
+  // and immediately navigates to /sign can sign before the worker
+  // finishes; flags then surface on an already-SIGNED note (rule 3
+  // violation). The worker stamps `flagAnalysisCompletedAt` in a
+  // finally block, and the helper applies a 10-minute stale-pending
+  // window so a dead worker can't permanently block sign.
+  if (
+    isFlagAnalysisPending({
+      flagAnalysisStartedAt: note.flagAnalysisStartedAt,
+      flagAnalysisCompletedAt: note.flagAnalysisCompletedAt,
+    })
+  ) {
+    return NextResponse.json(
+      {
+        error: {
+          code: 'flag_analysis_pending',
+          message:
+            'AI is still analyzing this note for compliance flags. Wait a few seconds, then try again.',
+        },
+      },
+      { status: 409 },
+    );
+  }
+
+  // Block 2 — open RED flags: per spec ("RED contradicts the transcript
+  // and must be resolved before sign"), refuse if any RED flag is still
+  // OPEN. RESOLVED + DISMISSED flags don't block — the clinician has
+  // already attested to the resolution. BLUE/YELLOW are clinician
+  // judgment calls and are advisory only.
+  const openRedCount = await prisma.reviewFlag.count({
+    where: { noteId, severity: 'RED', status: 'OPEN' },
+  });
+  if (openRedCount > 0) {
+    return NextResponse.json(
+      {
+        error: {
+          code: 'open_red_flags',
+          message: `Resolve ${openRedCount} RED flag${openRedCount === 1 ? '' : 's'} before signing.`,
+        },
+        data: { openRedCount },
+      },
+      { status: 409 },
+    );
   }
 
   // Readiness check

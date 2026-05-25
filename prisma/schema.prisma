@@ -1398,6 +1398,17 @@ model Note {
   isLateEntry      Boolean  @default(false)
   lateEntryDaysGap Int?
 
+  /// Unit 14 lifecycle anchors for the AI compliance flag analyzer.
+  /// `flagAnalysisStartedAt` is stamped by POST /analyze-flags when the
+  /// BullMQ job is enqueued; `flagAnalysisCompletedAt` is stamped by the
+  /// worker in a finally block. The sign route uses
+  /// (started > completed || completed IS NULL) as "analysis pending" and
+  /// refuses 409 `flag_analysis_pending` so a clinician can't sign while
+  /// flags are still being computed (was the source of flags appearing on
+  /// already-signed notes — rule 3 violation).
+  flagAnalysisStartedAt   DateTime?
+  flagAnalysisCompletedAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

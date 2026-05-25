@@ -144,6 +144,25 @@ export function SignClient({
     else if (code === 'auth_required') setError(body?.error?.message ?? 'Authorization required.');
     else if (code === 'not_ready') setError('Required sections still need attention — return to review.');
     else if (code === 'already_signed') setError('This note is already signed.');
+    else if (code === 'flag_analysis_pending') {
+      // Flag analyzer is still running. Tell the user clearly so they
+      // don't guess; the analyzer typically completes in well under a
+      // minute and re-clicking Sign will succeed.
+      setError(
+        body?.error?.message ??
+          'AI is still analyzing this note for compliance flags. Wait a few seconds, then try again.',
+      );
+    }
+    else if (code === 'open_red_flags') {
+      // Hard block: at least one RED flag is unresolved. Send the
+      // clinician back to /review to address them — they cannot be
+      // bypassed at sign time.
+      const count = (body?.data?.openRedCount as number | undefined) ?? null;
+      setError(
+        body?.error?.message ??
+          `Resolve ${count ?? 'all'} RED flag${count === 1 ? '' : 's'} before signing — return to review.`,
+      );
+    }
     else setError(body?.error?.message ?? `Sign failed (${res.status}).`);
   }
 

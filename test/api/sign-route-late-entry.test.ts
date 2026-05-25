@@ -21,6 +21,7 @@ const userFindUnique = vi.fn();
 const followUpFindMany = vi.fn();
 const encounterFindUnique = vi.fn();
 const episodeOfCareUpdate = vi.fn();
+const reviewFlagCount = vi.fn();
 const txMock = vi.fn();
 
 vi.mock('@/lib/prisma', () => ({
@@ -33,6 +34,7 @@ vi.mock('@/lib/prisma', () => ({
     followUp: { findMany: (...a: unknown[]) => followUpFindMany(...a) },
     encounter: { findUnique: (...a: unknown[]) => encounterFindUnique(...a) },
     episodeOfCare: { update: (...a: unknown[]) => episodeOfCareUpdate(...a) },
+    reviewFlag: { count: (...a: unknown[]) => reviewFlagCount(...a) },
     $transaction: (cb: (tx: unknown) => unknown) =>
       txMock(cb) ??
       cb({
@@ -114,6 +116,7 @@ beforeEach(() => {
   );
   noteUpdate.mockResolvedValue({});
   encounterFindUnique.mockResolvedValue({ episodeOfCareId: null });
+  reviewFlagCount.mockResolvedValue(0);
 });
 
 function noteFixture(overrides: Partial<Record<string, unknown>> = {}) {
@@ -129,6 +132,8 @@ function noteFixture(overrides: Partial<Record<string, unknown>> = {}) {
     isLateEntry: false,
     lateEntryDaysGap: null,
     dateOfService: new Date('2026-05-18T00:00:00Z'),
+    flagAnalysisStartedAt: null,
+    flagAnalysisCompletedAt: null,
     ...overrides,
   };
 }
