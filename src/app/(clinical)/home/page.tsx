@@ -44,6 +44,13 @@ export default async function HomePage({
   const clinicianOrgUserId = session.user.orgUserId;
   const { siteId: selectedSiteParam } = await searchParams;
 
+  // Unit 49 §E — viewer-division filter for any case sub-selects below.
+  // The clinician sees only same-division (or MULTI) cases on the home
+  // dashboard's per-patient case roll-up.
+  const viewerDivisionForHome = divisionForProfession(
+    session.user.professionType ?? null,
+  );
+
   const siteScope = await getClinicianSiteIds(clinicianOrgUserId, orgId);
   const mySites =
     siteScope.siteIds.length > 0
@@ -81,7 +88,12 @@ export default async function HomePage({
             lastName: true,
             mrn: true,
             caseManagements: {
-              where: { status: 'ACTIVE' },
+              where: {
+                status: 'ACTIVE',
+                ...(viewerDivisionForHome
+                  ? { division: { in: [viewerDivisionForHome, 'MULTI'] } }
+                  : {}),
+              },
               include: {
                 episodes: {
                   where: { status: { in: ['ACTIVE', 'RECERT_DUE'] } },
