@@ -1171,4 +1171,214 @@ describe('POST /api/notes/[id]/case-router/accept', () => {
     );
     expect(res.status).toBe(409);
   });
+
+  // ============================================================================
+  // Unit 49 — Case-Division Rule (D-U49-1 / D-U49-2)
+  //
+  // The accept route enforces the immutable division gate at three load
+  // points inside the tx (currentCase / targetCase / driftedCase). Mismatch
+  // throws CaseDivisionDeniedError, the tx rolls back, the catch handler
+  // writes a PHI-free CASE_DIVISION_BLOCKED audit (rule 8 — never wrapped
+  // in a swallowing try-catch), and the response is 403.
+  //
+  // Coverage:
+  //   1. currentCase mismatch → 403 + audit (the "I'm not allowed to route
+  //      this case at all" path).
+  //   2. targetCase mismatch on an attach → 403 + audit (the "the case I
+  //      picked to attach to is in another division" path).
+  //   3. MULTI case passes for any clinician (escape hatch, D-U49-3).
+  // ============================================================================
+
+  function authedAsRehabClinician() {
+    requireFeatureAccess.mockResolvedValueOnce({
+      user: { id: 'user_pt' },
+      authorizationUser: {
+        orgId: 'org_1',
+        orgUserId: 'ou_pt',
+        role: 'CLINICIAN',
+        division: 'REHAB',
+      },
+      orgUser: { id: 'ou_pt', orgId: 'org_1' },
+    });
+  }
+
+  it('Unit 49: 403 + CASE_DIVISION_BLOCKED when clinician division ≠ currentCase division', async () => {
+    authedAsRehabClinician();
+    noteFindFirst.mockResolvedValueOnce({
+      id: 'note_div_1',
+      orgId: 'org_1',
+      patientId: 'pat_div_1',
+      status: 'DRAFT',
+      clinicianOrgUserId: 'ou_pt',
+      encounterId: 'enc_div_1',
+      encounter: { id: 'enc_div_1', caseManagementId: 'case_med' },
+    });
+    caseRouterRunFindFirst.mockResolvedValueOnce({
+      id: 'run_div_1',
+      orgId: 'org_1',
+      noteId: 'note_div_1',
+      acceptedAction: null,
+      proposalJson: {
+        action: 'open-new',
+        newCase: { primaryIcd: 'M54.50', primaryIcdLabel: 'Lumbago' },
+        confidence: 'high',
+        reasoning: 'New routing.',
+        alternatives: [],
+      },
+    });
+
+    const tx = {
+      ...writebackOffDefaults(),
+      caseManagement: {
+        // currentCase is MEDICAL — a REHAB clinician must not be allowed
+        // to route writes against it. The assert throws inside the tx;
+        // the tx rolls back; the catch handler audits + returns 403.
+        findUnique: vi.fn().mockResolvedValueOnce({
+          id: 'case_med',
+          status: 'PENDING_ROUTER',
+          division: 'MEDICAL',
+        }),
+      },
+    };
+    txMock.mockImplementationOnce(async (cb: (tx: unknown) => Promise<unknown>) => cb(tx));
+
+    const res = await POST(
+      buildRequest({ caseRouterRunId: 'run_div_1', decision: { kind: 'accept' } }),
+      { params: Promise.resolve({ id: 'note_div_1' }) },
+    );
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error.code).toBe('forbidden');
+    expect(writeAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'CASE_DIVISION_BLOCKED',
+        resourceType: 'CaseManagement',
+        resourceId: 'case_med',
+        metadata: expect.objectContaining({
+          caseId: 'case_med',
+          clinicianDivision: 'REHAB',
+          caseDivision: 'MEDICAL',
+          route: 'case-router-accept',
+        }),
+      }),
+    );
+  });
+
+  it('Unit 49: 403 + CASE_DIVISION_BLOCKED when attach targetCase is in another division', async () => {
+    authedAsRehabClinician();
+    noteFindFirst.mockResolvedValueOnce({
+      id: 'note_div_2',
+      orgId: 'org_1',
+      patientId: 'pat_div_2',
+      status: 'DRAFT',
+      clinicianOrgUserId: 'ou_pt',
+      encounterId: 'enc_div_2',
+      encounter: { id: 'enc_div_2', caseManagementId: 'case_rehab_pending' },
+    });
+    caseRouterRunFindFirst.mockResolvedValueOnce({
+      id: 'run_div_2',
+      orgId: 'org_1',
+      noteId: 'note_div_2',
+      acceptedAction: null,
+      proposalJson: {
+        // Even if the agent somehow proposed cross-division attach (it
+        // can't post §D, but defense-in-depth at the write boundary), the
+        // gate refuses.
+        action: 'attach',
+        caseManagementId: 'case_bh',
+        confidence: 'medium',
+        reasoning: 'Override path.',
+        alternatives: [],
+      },
+    });
+
+    const tx = {
+      ...writebackOffDefaults(),
+      caseManagement: {
+        findUnique: vi.fn().mockResolvedValueOnce({
+          id: 'case_rehab_pending',
+          status: 'PENDING_ROUTER',
+          division: 'REHAB',
+        }),
+        findFirst: vi.fn().mockResolvedValueOnce({
+          id: 'case_bh',
+          status: 'ACTIVE',
+          secondaryIcd: null,
+          secondaryIcdLabel: null,
+          division: 'BEHAVIORAL_HEALTH',
+        }),
+      },
+    };
+    txMock.mockImplementationOnce(async (cb: (tx: unknown) => Promise<unknown>) => cb(tx));
+
+    const res = await POST(
+      buildRequest({ caseRouterRunId: 'run_div_2', decision: { kind: 'accept' } }),
+      { params: Promise.resolve({ id: 'note_div_2' }) },
+    );
+    expect(res.status).toBe(403);
+    expect(writeAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'CASE_DIVISION_BLOCKED',
+        resourceId: 'case_bh',
+        metadata: expect.objectContaining({
+          caseId: 'case_bh',
+          clinicianDivision: 'REHAB',
+          caseDivision: 'BEHAVIORAL_HEALTH',
+          route: 'case-router-accept',
+        }),
+      }),
+    );
+  });
+
+  it('Unit 49: MULTI case passes for any clinician (escape hatch)', async () => {
+    authedAsRehabClinician();
+    noteFindFirst.mockResolvedValueOnce({
+      id: 'note_div_3',
+      orgId: 'org_1',
+      patientId: 'pat_div_3',
+      status: 'DRAFT',
+      clinicianOrgUserId: 'ou_pt',
+      encounterId: 'enc_div_3',
+      encounter: { id: 'enc_div_3', caseManagementId: 'case_multi' },
+    });
+    caseRouterRunFindFirst.mockResolvedValueOnce({
+      id: 'run_div_3',
+      orgId: 'org_1',
+      noteId: 'note_div_3',
+      acceptedAction: null,
+      proposalJson: {
+        action: 'open-new',
+        newCase: { primaryIcd: 'M54.50', primaryIcdLabel: 'Lumbago' },
+        confidence: 'high',
+        reasoning: 'Standard routing.',
+        alternatives: [],
+      },
+    });
+
+    const tx = {
+      ...writebackOffDefaults(),
+      caseManagement: {
+        findUnique: vi.fn().mockResolvedValueOnce({
+          id: 'case_multi',
+          status: 'PENDING_ROUTER',
+          division: 'MULTI',
+        }),
+        update: vi.fn().mockResolvedValueOnce({ id: 'case_multi' }),
+      },
+      encounter: { update: vi.fn() },
+      caseRouterRun: { update: vi.fn().mockResolvedValueOnce({}) },
+    };
+    txMock.mockImplementationOnce(async (cb: (tx: unknown) => Promise<unknown>) => cb(tx));
+
+    const res = await POST(
+      buildRequest({ caseRouterRunId: 'run_div_3', decision: { kind: 'accept' } }),
+      { params: Promise.resolve({ id: 'note_div_3' }) },
+    );
+    expect(res.status).toBe(200);
+    // No CASE_DIVISION_BLOCKED audit was emitted on the MULTI happy path.
+    const blockedCalls = writeAuditLog.mock.calls.filter(
+      (call) => (call[0] as { action: string }).action === 'CASE_DIVISION_BLOCKED',
+    );
+    expect(blockedCalls).toHaveLength(0);
+  });
 });
