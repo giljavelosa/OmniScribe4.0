@@ -183,6 +183,20 @@ Per [`references/encounter-copilot-spec.md`](../../references/encounter-copilot-
 
 ---
 
+## Wave 1 follow-on — Case-Division Rule (unit 49)
+
+> **Extension of shipped Wave 1 Unit 06 + Unit 48.** Not Wave 8 (Miss Cleo persona work) — the rule itself (column + filters + 403s + follow-up gate) ships unflagged; only the new Cleo UX surfaces sit behind `cleo.caseRule.v1`. The polish gate ahead of Wave 7/8 does not apply. Spec'd 2026-05-24 after user surfaced two stacked clinical realities: (a) clinicians of one division (e.g., PT — REHAB) can today accept cases opened by another division (e.g., PCP — MEDICAL) with nothing in the API or UI stopping them, and (b) shared ICDs (F41.1 GAD across MEDICAL+BH; M54.50 Lumbago across MEDICAL+REHAB) need parallel cases per division, not a single multi-division case.
+
+| # | Name | Builds | Depends on | Spec | Status |
+|---|---|---|---|---|---|
+| 49 | **Case-Division Rule + Cleo as biller** | `CaseManagement.division` (stamp at creation, immutable) + `FollowUp.division` (inherits from origin note) + `Note.billerAdvisoryJson`; `assertCanContinueCase` helper + `CASE_DIVISION_BLOCKED` audit; case-router proposes parallel cases per division on shared ICDs (never cross-division attach); Miss Cleo three-moment: pre-visit nominator badge, pre-sign intent-fit chip (rule-20 safe), post-sign biller advisory card (`ADDENDUM` / `OPEN_NEW_NEXT_VISIT` / `MARK_CLEARED`); feature flag `cleo.caseRule.v1` gates UX surfaces only | 02, 06, 07, 48 | [`49-case-division-rule.md`](49-case-division-rule.md) | spec drafted ⏸ |
+
+**Sequencing:** Same posture as Unit 48 — awaiting prioritization relative to Sprint 0 (login/MFA, in flight) and Sprint A (voice-ID, Daily.co real, provider checklist). Not gated by polish — can ship in parallel if a clinician-impact / compliance-impact PR is justified. Three-PR phasing keeps each merge under ~3% regression individually (PR1 base+parallel+nominator+chip, PR2 follow-up gate, PR3 biller advisory). **Hard order: PR2 before PR3** — Cleo's biller advisor reasons about follow-ups in scope; we don't want her reasoning across divisions before the filter exists.
+
+**Scope discipline:** v1 ships the rule + parallel-case routing + three Cleo touchpoints. Out of scope for v1: cross-division case re-routing (forbidden under the rule — answer is "close + open new in target division," manual), admin UI for editing `IcdProfessionEligibility` rows (PR3 seeds only; CRUD UI is a follow-on), multi-division co-managed single-case schema with `permittedDivisions[]` (rejected at design time — dilutes the rule, complicates billing trail), Cleo-authored addendum text (clinician authors all clinical text — Cleo opens the draft only), push/email/SMS biller advisory notifications (in-app only), per-clinician biller-advisor tuning sliders. Each is its own follow-on consideration.
+
+---
+
 ## Polish — Waves 0–6 (gate before Wave 7 & 8)
 
 Units 01–37 shipped capability; stubs and deferred polish remain. **Do not start Wave 7 Unit 41 or Wave 8 Unit 42+ until the polish gate opens.**
