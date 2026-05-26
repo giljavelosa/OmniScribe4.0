@@ -37,7 +37,36 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: { code: 'invalid_state' } }, { status: 409 });
   }
 
-  const form = await req.formData();
+  // Body parse: same defense-in-depth as /complete-stream. If the
+  // proxy buffer (`experimental.proxyClientMaxBodySize`) truncates a
+  // 200 MB-class upload, formData() throws on the broken boundary —
+  // map to 413 so the client gets a useful error.
+  let form: FormData;
+  try {
+    form = await req.formData();
+  } catch (err) {
+    await writeAuditLog({
+      userId: user.id,
+      orgId: orgUser.orgId,
+      action: 'AUDIO_UPLOADED',
+      resourceType: 'Note',
+      resourceId: noteId,
+      metadata: {
+        outcome: 'body_parse_failed',
+        message: err instanceof Error ? err.message : 'unknown',
+      },
+    });
+    return NextResponse.json(
+      {
+        error: {
+          code: 'audio_too_large',
+          message:
+            'Audio file is too large to upload in one request. Try a shorter clip or contact support.',
+        },
+      },
+      { status: 413 },
+    );
+  }
   const audioFile = form.get('audio');
   if (!(audioFile instanceof Blob)) {
     return NextResponse.json({ error: { code: 'bad_request', message: 'audio missing' } }, { status: 400 });

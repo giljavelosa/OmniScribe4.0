@@ -17,6 +17,7 @@ import { LateEntryBanner } from '@/components/notes/late-entry-banner';
 import { SectionAccordion } from './section-accordion';
 import { ReadinessPanel } from './readiness-panel';
 import { FailureRecoveryBanner } from './failure-recovery-banner';
+import { EmptyTranscriptBanner } from './empty-transcript-banner';
 import { FlagReviewPanel } from './flag-review-panel';
 import { NoteStyleToggle } from './note-style-toggle';
 import { TranscriptSheet } from './transcript-sheet';
@@ -67,6 +68,14 @@ type ReviewSnapshot = {
   /** Sign timestamp. Used in the late-entry banner so the "documented" date
    *  matches what NOTE_SIGNED audit records (not just "right now"). */
   signedAt?: string | null;
+  /** Empty-transcript signal stamped by the AI worker when no speech
+   *  was captured. Drives <EmptyTranscriptBanner> visibility — null
+   *  means a normal recording, an object means the draft is filler. */
+  emptyTranscript?: {
+    durationMs: number;
+    byteSize: number;
+    detectedAt: string | null;
+  } | null;
 };
 
 type Props = {
@@ -213,6 +222,15 @@ export function ReviewClient({
           dateOfService={snap.dateOfService}
           lateEntryDaysGap={snap.lateEntryDaysGap ?? 0}
           signedAt={snap.signedAt ?? null}
+        />
+      )}
+
+      {snap.emptyTranscript && (
+        <EmptyTranscriptBanner
+          noteId={noteId}
+          durationMs={snap.emptyTranscript.durationMs}
+          byteSize={snap.emptyTranscript.byteSize}
+          isSigned={isSigned}
         />
       )}
 

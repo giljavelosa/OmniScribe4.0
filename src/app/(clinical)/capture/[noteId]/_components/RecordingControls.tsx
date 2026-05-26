@@ -5,8 +5,18 @@ import { useRouter } from 'next/navigation';
 import { Pause, Play, Mic, ArrowRight, RotateCcw, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { StatusBanner } from '@/components/ui/status-banner';
-import { useCaptureControls, useRecordingState } from '../_hooks/capture-state';
+import {
+  useCaptureControls,
+  useRecordingLimitState,
+  useRecordingState,
+} from '../_hooks/capture-state';
 import { LeaveConfirmDialog } from './LeaveConfirmDialog';
+import {
+  MAX_RECORDING_BYTES,
+  MAX_RECORDING_MS,
+  deriveWarning,
+  formatTimeRemaining,
+} from '@/lib/audio/recording-limits';
 
 type Props = {
   noteId: string;
@@ -16,13 +26,12 @@ type Props = {
   autostart?: boolean;
 };
 
-/** ~32-minute hard cap in complete-stream (32 * 60 * 16000 * 2 bytes).
- *  Surface a warning at 28 minutes so the clinician can finish before hitting it. */
-const MAX_RECORDING_MS = 32 * 60 * 1000;
-const WARN_AT_MS = 28 * 60 * 1000;
 /** Auto-start countdown duration (ms). Long enough for the clinician to abort
  *  if they landed here by accident; short enough that it feels like one-tap. */
 const AUTOSTART_COUNTDOWN_MS = 1500;
+
+const MAX_RECORDING_MIN = Math.floor(MAX_RECORDING_MS / 60_000);
+const MAX_RECORDING_MB = Math.round(MAX_RECORDING_BYTES / (1024 * 1024));
 
 /**
  * RecordingControls — button bar for the capture surface.
@@ -38,6 +47,7 @@ const AUTOSTART_COUNTDOWN_MS = 1500;
  */
 export function RecordingControls({ noteId, autostart = false }: Props) {
   const state = useRecordingState();
+  const { accumulatedBytes } = useRecordingLimitState();
   const { start, pause, resume, finish, reset } = useCaptureControls();
   const router = useRouter();
   const [leaveOpen, setLeaveOpen] = useState(false);
@@ -47,13 +57,15 @@ export function RecordingControls({ noteId, autostart = false }: Props) {
   const autostartFiredRef = useRef(false);
 
   // Track elapsed time independently so we can show a max-duration warning
-  // without depending on RecordingStatus (single-source rule).
+  // without depending on RecordingStatus (single-source rule). Tick every
+  // second so the "less than 1 min remaining" countdown stays current; the
+  // auto-stop guard inside CaptureStateProvider polls on the same cadence.
   useEffect(() => {
     if (state.kind !== 'recording') return;
     const startedAt = state.startedAt;
-    const t = setInterval(() => setElapsedMs(Date.now() - startedAt), 5_000);
+    const t = setInterval(() => setElapsedMs(Date.now() - startedAt), 1_000);
     // Initial tick — intentional immediate state set so the UI doesn't show
-    // 0 for the first 5s after the effect runs.
+    // 0 for the first second after the effect runs.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setElapsedMs(Date.now() - startedAt);
     return () => clearInterval(t);
@@ -98,8 +110,12 @@ export function RecordingControls({ noteId, autostart = false }: Props) {
   const isRecording = state.kind === 'recording' || state.kind === 'reconnecting';
   const isPaused = state.kind === 'paused';
   const isBusy = state.kind === 'requesting-mic' || state.kind === 'finalizing';
-  const showMaxWarning = (isRecording || isPaused) && elapsedMs >= WARN_AT_MS;
-  const nearMax = elapsedMs >= MAX_RECORDING_MS - 60_000; // 1 min before cap
+  const warning =
+    isRecording || isPaused
+      ? deriveWarning({ elapsedMs, accumulatedBytes })
+      : 'none';
+  const showMaxWarning = warning !== 'none';
+  const isCritical = warning === 'time_critical' || warning === 'size_critical';
 
   if (isError) {
     const reason = (state as { reason: string }).reason;
@@ -182,10 +198,8 @@ export function RecordingControls({ noteId, autostart = false }: Props) {
   return (
     <div className="w-full space-y-2">
       {showMaxWarning && (
-        <StatusBanner variant={nearMax ? 'danger' : 'warning'}>
-          {nearMax
-            ? 'Recording limit almost reached — tap Finish & Review now.'
-            : `Recording will stop automatically at 32 minutes. Finish soon.`}
+        <StatusBanner variant={isCritical ? 'danger' : 'warning'}>
+          {warningMessage(warning, elapsedMs, accumulatedBytes)}
         </StatusBanner>
       )}
 
@@ -229,4 +243,26 @@ export function RecordingControls({ noteId, autostart = false }: Props) {
       </div>
     </div>
   );
+}
+
+function warningMessage(
+  level: 'time_warning' | 'time_critical' | 'size_warning' | 'size_critical' | 'none',
+  elapsedMs: number,
+  accumulatedBytes: number,
+): string {
+  if (level === 'time_critical') {
+    return `Recording will auto-stop in ${formatTimeRemaining(elapsedMs)} — tap Finish & Review now.`;
+  }
+  if (level === 'time_warning') {
+    return `Recording will auto-stop at the ${MAX_RECORDING_MIN}-minute limit (${formatTimeRemaining(elapsedMs)} left). Finish soon.`;
+  }
+  if (level === 'size_critical') {
+    const mb = Math.round(accumulatedBytes / (1024 * 1024));
+    return `Recording is approaching the ${MAX_RECORDING_MB} MB upload limit (${mb} MB used) — tap Finish & Review now.`;
+  }
+  if (level === 'size_warning') {
+    const mb = Math.round(accumulatedBytes / (1024 * 1024));
+    return `Recording will auto-stop at ${MAX_RECORDING_MB} MB (${mb} MB used). Finish soon.`;
+  }
+  return '';
 }

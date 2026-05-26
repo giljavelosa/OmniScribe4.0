@@ -67,6 +67,12 @@ export type AuditAction =
   | 'RECORDING_PAUSED'
   | 'RECORDING_RESUMED'
   | 'RECORDING_FINALIZED'
+  // Empty-transcript recovery (regression fix 2026-05-25): clinician
+  // chose to discard a placeholder draft and start the recording over.
+  // Audio segments are soft-deleted (rule 7) and the note transitions
+  // back to PREPARING. Metadata captures the discarded segments so a
+  // reviewer can verify nothing meaningful was lost.
+  | 'RECORDING_RESET'
   | 'AUDIO_UPLOADED'
   | 'TRANSCRIPT_PASTED'
   // ---- Unit 04: Transcription Pipeline ----

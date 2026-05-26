@@ -14,6 +14,7 @@ import {
   mergeSectionIntoDraft,
   recordSectionAttempt,
 } from '@/lib/notes/section-status';
+import { markNoteEmptyTranscript } from '@/lib/notes/empty-transcript';
 import type { TranscriptClean } from '@/services/transcription';
 
 type GenerateNoteJob = {
@@ -222,6 +223,21 @@ export async function handle(job: Job<AiGenerationJob>) {
         lastGeneratedAt: nowIso,
       });
     }
+    // Stamp inferenceLog._meta so /review can detect this exact case
+    // and render <EmptyTranscriptBanner> with a re-record CTA, instead
+    // of leaving the clinician staring at six identical placeholder
+    // paragraphs. Pulled from AudioSegment so the banner copy can be
+    // specific ("we captured 4 s of audio"). Best-effort lookup —
+    // duration falls back to 0 if no segments exist (transcript-only
+    // dev path).
+    const segments = await prisma.audioSegment.findMany({
+      where: { noteId, isDeleted: false },
+      select: { durationMs: true, byteSize: true },
+    });
+    const durationMs = segments.reduce((sum, s) => sum + (s.durationMs ?? 0), 0);
+    const byteSize = segments.reduce((sum, s) => sum + (s.byteSize ?? 0), 0);
+    await markNoteEmptyTranscript(noteId, { durationMs, byteSize });
+
     await prisma.note.update({
       where: { id: noteId },
       data: { status: NoteStatus.DRAFT },
@@ -242,6 +258,8 @@ export async function handle(job: Job<AiGenerationJob>) {
         sectionCount: sections.length,
         failedCount: 0,
         skipped: 'no_transcript',
+        emptyTranscriptDurationMs: durationMs,
+        emptyTranscriptByteSize: byteSize,
         personaVersion: PERSONA_VERSION,
       },
     });

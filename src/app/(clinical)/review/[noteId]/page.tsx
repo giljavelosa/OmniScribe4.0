@@ -5,6 +5,8 @@ import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { writeAuditLog } from '@/lib/audit/log';
 import { readSectionStatus, readInferenceLog } from '@/lib/notes/section-status';
+import { detectEmptyTranscript } from '@/lib/notes/empty-transcript';
+import type { TranscriptClean } from '@/services/transcription';
 import type { NoteSectionDef } from '@/lib/notes/build-prompt';
 import { CopilotShell } from '@/components/copilot/copilot-shell';
 import type { CopilotFollowUp } from '@/components/copilot/cards/open-followups-card';
@@ -74,6 +76,17 @@ export default async function ReviewPage({ params }: { params: Promise<{ noteId:
   for (const r of regenerations) {
     if (r.previousContent !== undefined) sectionHasRegenHistory[r.sectionId] = true;
   }
+  // Empty-transcript signal: the worker stamps inferenceLog._meta when
+  // it short-circuited to placeholder text (rule 1 attestation guard).
+  // detectEmptyTranscript prefers the explicit _meta signal (post-fix)
+  // and falls back to a legacy heuristic (transcript wordCount === 0
+  // AND all sections are placeholder text) so notes generated before
+  // the _meta signal landed still surface <EmptyTranscriptBanner>.
+  const emptyTranscriptMeta = detectEmptyTranscript({
+    inferenceLog: note.inferenceLog,
+    transcriptClean: note.transcriptClean as TranscriptClean | null,
+    draftJson: note.draftJson,
+  });
 
   // Live open follow-ups from PRIOR notes — feeds the "Open follow-ups from
   // last visit" sidebar card. Excludes rows originated by THIS note (those
@@ -200,6 +213,7 @@ export default async function ReviewPage({ params }: { params: Promise<{ noteId:
           lateEntryDaysGap: note.lateEntryDaysGap,
           dateOfService: note.dateOfService.toISOString(),
           signedAt: note.signedAt?.toISOString() ?? null,
+          emptyTranscript: emptyTranscriptMeta,
         }}
         copilotFollowUps={copilotFollowUps}
         nextVisitFollowUps={nextVisitFollowUps}

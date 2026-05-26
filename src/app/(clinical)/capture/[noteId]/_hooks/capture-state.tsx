@@ -31,6 +31,11 @@ import {
 } from 'react';
 
 import { encodeWavBlob } from '@/lib/audio/wav-encoder';
+import {
+  shouldAutoStop,
+  estimateAccumulatedWavBytes,
+  type AutoStopReason,
+} from '@/lib/audio/recording-limits';
 
 export type RecordingState =
   | { kind: 'idle' }
@@ -63,6 +68,13 @@ type CaptureStateValue = {
   transcript: TranscriptSegment[];
   partial: string;
   finalAudioBlob: Blob | null;
+  /** Bytes the worklet has accumulated so far (estimated WAV size).
+   *  Drives the size-cap warning + auto-stop. Reset on `reset()`. */
+  accumulatedBytes: number;
+  /** Set when the runaway-recording guard force-stopped the take.
+   *  Drives the post-finish banner copy + is forwarded as audit
+   *  metadata via /complete-stream. Cleared on `reset()`. */
+  autoStopReason: AutoStopReason | null;
   start: () => Promise<void>;
   pause: () => void;
   resume: () => Promise<void>;
@@ -93,6 +105,11 @@ export function CaptureStateProvider({
   const [partial, setPartial] = useState('');
   const [finalAudioBlob, setFinalAudioBlob] = useState<Blob | null>(null);
   const [isStub, setIsStub] = useState(false);
+  const [accumulatedBytes, setAccumulatedBytes] = useState(0);
+  const [autoStopReason, setAutoStopReason] = useState<AutoStopReason | null>(null);
+  // Synchronous mirrors so finish()'s closure can read the latest
+  // value at call time without re-rendering loops.
+  const autoStopReasonRef = useRef<AutoStopReason | null>(null);
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -264,6 +281,11 @@ export function CaptureStateProvider({
         audioLevelRef.current = rmsLevel;
         if (isPausedRef.current) return;
         audioBuffersRef.current.push(samples);
+        // Track WAV bytes incrementally — 16-bit PCM = 2 bytes per
+        // sample. The `+0` against the React state lags by one tick
+        // but the auto-stop interval reads the buffers directly via
+        // estimateAccumulatedWavBytes, so the cap fires precisely.
+        setAccumulatedBytes((prev) => prev + samples.length * 2);
         const ws = wsRef.current;
         if (ws && ws.readyState === WebSocket.OPEN) ws.send(samples.buffer);
       };
@@ -368,6 +390,12 @@ export function CaptureStateProvider({
         JSON.stringify({ segments: transcript, partial }),
       );
       formData.append('audio', wavBlob, 'capture.wav');
+      // When the runaway-recording guard fired, forward the reason so
+      // RECORDING_FINALIZED audit metadata can record an auto-stop
+      // distinct from a normal clinician-initiated finish.
+      if (autoStopReasonRef.current) {
+        formData.append('autoStopReason', autoStopReasonRef.current);
+      }
 
       const res = await fetch(`/api/notes/${noteId}/complete-stream`, {
         method: 'POST',
@@ -383,6 +411,16 @@ export function CaptureStateProvider({
             'No audio was captured for this recording. Check that your microphone is connected and not muted, then record again.',
           );
         }
+        if (code === 'audio_too_large') {
+          // Triggered when the multipart payload exceeds
+          // experimental.proxyClientMaxBodySize OR the route's own
+          // MAX_AUDIO_BYTES guard. The server message is already
+          // user-friendly; passing it through verbatim.
+          throw new Error(
+            body?.error?.message ??
+              'Recording is too large to upload in one request. Stop the recording sooner.',
+          );
+        }
         throw new Error(
           body?.error?.message ?? `Couldn't finalize the recording (${res.status}).`,
         );
@@ -394,6 +432,42 @@ export function CaptureStateProvider({
       setState({ kind: 'error', reason: e instanceof Error ? e.message : String(e) });
     }
   }, [noteId, partial, state.kind, teardown, transcript]);
+
+  // Runaway-recording guard. While the state machine is in 'recording'
+  // (paused does NOT tick — the elapsed clock is tied to state.startedAt
+  // which has already been adjusted for paused time), poll once per
+  // second and force-finish if either the time cap (90 min) or the
+  // size cap (200 MB) has been reached. The 1 s cadence is cheap (one
+  // arithmetic check) and bounds the worst-case overrun to ~1 s past
+  // the cap, which the server's MAX_AUDIO_BYTES handles trivially.
+  //
+  // Why poll: the worklet onmessage handler sees every chunk but
+  // can't call hooks. Computing in an effect keeps the auto-stop
+  // logic colocated with the rest of the state machine + lets a
+  // future override (e.g. an admin-configured longer cap) thread
+  // through one source of truth.
+  useEffect(() => {
+    if (state.kind !== 'recording') return;
+    const startedAt = state.startedAt;
+    const tick = () => {
+      const elapsedMs = Date.now() - startedAt;
+      const accumulated = estimateAccumulatedWavBytes(audioBuffersRef.current);
+      const reason = shouldAutoStop({
+        elapsedMs,
+        accumulatedBytes: accumulated,
+      });
+      if (!reason) return;
+      // Mark the reason synchronously so the in-flight finish() can
+      // forward it to the server, then trigger the stop. The state
+      // machine's `if (state.kind !== 'recording' && ...)` guard in
+      // finish() ensures double-fire is harmless.
+      autoStopReasonRef.current = reason;
+      setAutoStopReason(reason);
+      void finish();
+    };
+    const interval = setInterval(tick, 1_000);
+    return () => clearInterval(interval);
+  }, [state.kind, state.kind === 'recording' ? (state as { startedAt: number }).startedAt : 0, finish]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const reset = useCallback(() => {
     if (reconnectTimerRef.current) {
@@ -408,6 +482,9 @@ export function CaptureStateProvider({
     accumulatedPausedMsRef.current = 0;
     reconnectAttemptsRef.current = 0;
     lastKeyDataRef.current = null;
+    autoStopReasonRef.current = null;
+    setAutoStopReason(null);
+    setAccumulatedBytes(0);
     setTranscript([]);
     setPartial('');
     setAudioLevel(0);
@@ -417,8 +494,36 @@ export function CaptureStateProvider({
   }, [teardown]);
 
   const value = useMemo<CaptureStateValue>(
-    () => ({ state, audioLevel, transcript, partial, finalAudioBlob, start, pause, resume, finish, reset, isStub }),
-    [state, audioLevel, transcript, partial, finalAudioBlob, start, pause, resume, finish, reset, isStub],
+    () => ({
+      state,
+      audioLevel,
+      transcript,
+      partial,
+      finalAudioBlob,
+      accumulatedBytes,
+      autoStopReason,
+      start,
+      pause,
+      resume,
+      finish,
+      reset,
+      isStub,
+    }),
+    [
+      state,
+      audioLevel,
+      transcript,
+      partial,
+      finalAudioBlob,
+      accumulatedBytes,
+      autoStopReason,
+      start,
+      pause,
+      resume,
+      finish,
+      reset,
+      isStub,
+    ],
   );
 
   return <CaptureStateContext.Provider value={value}>{children}</CaptureStateContext.Provider>;
@@ -448,6 +553,17 @@ export function useCaptureControls() {
 }
 export function useStubBanner() {
   return useCapture().isStub;
+}
+
+/** Live limit state for the warning banner + countdown copy in
+ *  RecordingControls. Subscribed separately so a component that only
+ *  cares about elapsed/size doesn't re-render on transcript ticks. */
+export function useRecordingLimitState() {
+  const c = useCapture();
+  return {
+    accumulatedBytes: c.accumulatedBytes,
+    autoStopReason: c.autoStopReason,
+  };
 }
 
 /**
