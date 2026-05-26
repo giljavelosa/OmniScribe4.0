@@ -63,8 +63,6 @@ function session(
       orgUserId: 'ou_caller',
       role,
       division: 'MEDICAL',
-      mfaEnabled: true,
-      mfaVerified: true,
       platformRole: 'NONE',
       canManagePatients: false,
       ...overrides,

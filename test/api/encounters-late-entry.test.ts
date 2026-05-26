@@ -59,8 +59,6 @@ function session() {
       orgUserId: 'ou_caller',
       role: 'CLINICIAN' as const,
       division: 'MEDICAL' as const,
-      mfaEnabled: true,
-      mfaVerified: true,
       platformRole: 'NONE' as const,
       canManagePatients: false,
     },
