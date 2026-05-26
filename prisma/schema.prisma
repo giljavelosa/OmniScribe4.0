@@ -112,6 +112,18 @@ model Organization {
   subscriptionPlan          SubscriptionPlan @default(STARTER)
   subscriptionOverrideNotes String? // ≤500 chars enforced at the route
 
+  /// 2026-05-25 — public pricing SKU. Drives seat caps, draft bundles, and
+  /// Stripe usage reporting. New orgs land in TRIAL; the Stripe webhook
+  /// flips this to the purchased plan on subscription activation. See
+  /// references/strategic/stripe-pricing-skus.md for the SKU → Stripe
+  /// Product/Price mapping.
+  billingPlan          BillingPlan @default(TRIAL)
+  /// Stripe Subscription id for the active billing plan. Null while in
+  /// TRIAL (no Stripe subscription yet) or for legacy seed orgs. The
+  /// subscription's metered usage line is reported daily by
+  /// `scripts/billing-usage-report.ts`.
+  stripeSubscriptionId String?
+
   /// Unit 34 — Per-org audit retention in days. null = retain forever.
   auditRetentionDays Int?
 
@@ -160,6 +172,42 @@ enum SubscriptionPlan {
   PROFESSIONAL
   ENTERPRISE
   CUSTOM
+}
+
+/// 2026-05-25 — public pricing tiers (the consumer-facing SKUs).
+///
+/// Distinct from `SubscriptionPlan` (the owner-console-facing tier label
+/// that pre-dates the public pricing decision and is still used by the
+/// existing `/owner/orgs/[id]` UI). Both columns coexist intentionally:
+/// `subscriptionPlan` is editable by the platform owner for sales-driven
+/// overrides; `billingPlan` is the SKU the customer is paying for via
+/// Stripe and drives seat caps + draft bundles + Stripe usage reporting.
+///
+/// One-to-one mapping with the Stripe Product objects documented in
+/// `references/strategic/stripe-pricing-skus.md`. Adding a value here
+/// requires creating the corresponding Stripe Product + Price BEFORE
+/// deploying — `src/lib/billing/plan-policy.ts` will throw on a plan
+/// without a registered policy.
+enum BillingPlan {
+  /// Trial — no charge; 14-day free trial cap. New orgs default here.
+  TRIAL
+  /// Solo Starter — $99/mo · 60 drafts · $1.99/draft overage · 1 user.
+  SOLO_STARTER
+  /// Solo Pro — $179/mo · 160 drafts · $1.49/draft overage · 1 user.
+  SOLO_PRO
+  /// Solo Power — $299/mo · 300 drafts · $1.29/draft overage · 1 user.
+  SOLO_POWER
+  /// Solo Unlimited (optional) — $349/mo · unlimited drafts (soft fair-use) · 1 user.
+  SOLO_UNLIMITED
+  /// Duo — $149/seat · exactly 2 users · 120 drafts/seat. Anti-credential-
+  /// sharing wedge: priced just above sharing-savings threshold so two
+  /// clinicians who'd split a Solo Pro convert to legitimate Duo seats.
+  DUO
+  /// Practice — $179/seat · 3+ users · 160 drafts/seat. Volume tiers via
+  /// Stripe price ladder; the BillingPlan stays PRACTICE for all volumes.
+  PRACTICE
+  /// Enterprise — custom contract; seat caps + draft bundles negotiated.
+  ENTERPRISE
 }
 
 /// Unit 32 — Owner console usage rollup cache.
@@ -1237,10 +1285,10 @@ model Encounter {
   /// create time; shapes downstream brief spine + (future) compliance
   /// flags + template default. Defaults to UNSPECIFIED so pre-Unit-48
   /// encounters and any caller that omits the field behave as before.
-  intent             EncounterIntent @default(UNSPECIFIED)
+  intent       EncounterIntent @default(UNSPECIFIED)
   /// Unit 48 — provenance for `intent`: CLINICIAN (picked or overrode),
   /// COPILOT_PROPOSAL_CONFIRMED (took Cleo's default), SCHEDULE (inherited).
-  intentSource       IntentSource    @default(CLINICIAN)
+  intentSource IntentSource    @default(CLINICIAN)
 
   notes Note[]
 
