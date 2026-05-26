@@ -11,6 +11,8 @@ import {
   recordFailedAttempt,
   recordSuccessfulAttempt,
 } from '@/lib/auth/lockout';
+// Sprint 0.20 — login-verification (MFA replacement) removed; the helper
+// module was deleted. Sign-in events no longer issue a verification code.
 
 const credentialsSchema = z.object({
   email: z.email().transform((s) => s.toLowerCase()),
@@ -21,7 +23,7 @@ const credentialsSchema = z.object({
  * NextAuth v5 config — credentials provider + JWT strategy.
  *
  * Strategy: stateless JWT (no session table). The DB-side UserSession table
- * exists for invalidation use cases (password reset, admin MFA reset wipe all
+ * exists for invalidation use cases (password reset wipes all
  * UserSession rows for a user, which the client treats as "force re-auth"
  * since the JWT validity isn't checked against the table by default — UserSession
  * gates flows that need ground-truth, not the session cookie).
@@ -106,8 +108,7 @@ export const authConfig = {
           division: orgUser?.division ?? null,
           profession: orgUser?.profession ?? null,
           professionType: orgUser?.professionType ?? null,
-          mfaEnabled: user.mfaEnabled,
-          mfaVerified: false, // always false at sign-in; toggled by /api/auth/mfa/verify
+          // Sprint 0.20 — MFA + login-verified removed; auth is password-only.
           platformRole: user.platformRole ?? PlatformRole.NONE,
         };
       },
@@ -125,16 +126,12 @@ export const authConfig = {
         token.division = user.division ?? null;
         token.profession = user.profession ?? null;
         token.professionType = user.professionType ?? null;
-        token.mfaEnabled = user.mfaEnabled;
-        token.mfaVerified = user.mfaVerified;
         token.platformRole = user.platformRole;
       }
 
       if (trigger === 'update' && session) {
-        // Client called useSession().update(...). Merge any provided overrides
-        // and re-fetch the fresh OrgUser row so roles + flags reflect DB state.
-        if (typeof session.mfaVerified === 'boolean') token.mfaVerified = session.mfaVerified;
-        if (typeof session.mfaEnabled === 'boolean') token.mfaEnabled = session.mfaEnabled;
+        // Client called useSession().update(...). Re-fetch the fresh OrgUser
+        // row so roles + flags reflect DB state.
 
         // Unit 32 — impersonation begin/end goes through update().
         // `session.impersonation === null` clears the field; an object
@@ -157,7 +154,6 @@ export const authConfig = {
           },
         });
         if (fresh) {
-          token.mfaEnabled = fresh.mfaEnabled;
           token.platformRole = fresh.platformRole;
           const ou = fresh.orgUsers[0] ?? null;
           token.orgId = ou?.orgId ?? null;
@@ -193,8 +189,6 @@ export const authConfig = {
         division: token.division,
         profession: token.profession,
         professionType: token.professionType,
-        mfaEnabled: token.mfaEnabled,
-        mfaVerified: token.mfaVerified,
         platformRole: token.platformRole,
       };
       // Unit 32 — surface the active impersonation context (already

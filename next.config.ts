@@ -11,7 +11,8 @@ const nextConfig: NextConfig = {
   // Tighten the surface for accidental client/server boundary mistakes.
   typedRoutes: true,
   // Audio upload size — multipart body buffer for the impersonation
-  // middleware (src/middleware.ts). Default is 10 MB; without raising
+  // proxy (src/proxy.ts; renamed from `middleware.ts` in Next.js 16).
+  // Default is 10 MB; without raising
   // this, /api/notes/[id]/complete-stream and
   // /api/notes/[id]/upload-audio truncate the multipart body for any
   // recording over ~30 s of 16 kHz / 16-bit PCM, which then 500s on

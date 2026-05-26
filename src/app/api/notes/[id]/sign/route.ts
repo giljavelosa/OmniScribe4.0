@@ -5,7 +5,7 @@ import { Prisma, NoteStatus } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { requireFeatureAccess } from '@/lib/authz/server';
 import { writeAuditLog } from '@/lib/audit/log';
-import { verifyTotpToken } from '@/lib/mfa';
+import bcrypt from 'bcryptjs';
 import {
   enqueueCleoStateRefresh,
   enqueueNoteBriefJob,
@@ -20,8 +20,8 @@ import { randomBytes } from 'node:crypto';
 export const runtime = 'nodejs';
 
 const bodySchema = z.object({
-  /** Legacy / fallback path. Omit if the signing PIN unlock window is active. */
-  mfaToken: z.string().regex(/^\d{6}$/, 'Invalid MFA token').optional(),
+  /** Required when the signing-PIN unlock window is not active. */
+  signPin: z.string().regex(/^\d{4}$/, 'Invalid signing PIN').optional(),
   /** Set true by the client after the sign-time follow-up sweep modal has
    *  been resolved (Unit 06). Default false → sign refuses with 409
    *  open_followups_present + the open list if any are still OPEN. */
@@ -33,12 +33,11 @@ const bodySchema = z.object({
  * (anti-regression rule 3).
  *
  * Transaction body:
- *   1. Re-verify the signing clinician's MFA TOTP. Sensitive action ⇒
- *      D2 says always-required (Unit 01); this endpoint enforces.
+ *   1. Re-verify the signing clinician's PIN (or honor an active unlock window).
  *   2. Update Note.status = SIGNED + finalJson = canonical(draftJson) +
  *      signedAt + signedByUserId. finalJson is FROZEN here; no other
  *      code path writes it (grep enforces).
- *   3. Audit NOTE_SIGNED with PHI-free metadata (mfaReverified flag,
+ *   3. Audit NOTE_SIGNED with PHI-free metadata (pinReverified flag,
  *      sectionCount).
  *
  * After commit (NOT in the tx — these enqueue Redis jobs):
@@ -51,9 +50,8 @@ const bodySchema = z.object({
  * Refuses:
  *   - 409 already_signed if note.status === SIGNED
  *   - 409 not_ready if any required section is not populated/edited
- *   - 401 mfa_required if user has no mfaSecret (shouldn't happen with
- *     D2 always-required, but defense)
- *   - 401 invalid_mfa if the TOTP doesn't verify
+ *   - 401 pin_required if no signing PIN is configured
+ *   - 401 invalid_pin if the PIN doesn't verify
  *   - 403 forbidden if user isn't the assigned clinician (or ORG_ADMIN
  *     for incident response)
  */
@@ -70,7 +68,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const { id: noteId } = await params;
   const note = await prisma.note.findFirst({
     where: { id: noteId, orgId: authorizationUser.orgId },
-    include: { template: true },
+    include: {
+      template: true,
+      // Sprint 0.13 Decision 3 — routing must resolve before sign.
+      // Pulled here so the PENDING_ROUTER preflight (below) doesn't
+      // need a second round-trip.
+      encounter: { select: { caseManagement: { select: { status: true } } } },
+    },
   });
   if (!note) return NextResponse.json({ error: { code: 'not_found' } }, { status: 404 });
   if (
@@ -81,6 +85,23 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
   if (note.status === NoteStatus.SIGNED || note.status === NoteStatus.TRANSFERRED) {
     return NextResponse.json({ error: { code: 'already_signed' } }, { status: 409 });
+  }
+  // Sprint 0.13 Decision 3 — hard sign-block on PENDING_ROUTER cases.
+  // Companion to the existing soft-nudge in review-client.tsx. The Cleo
+  // fallback bug (fixed 2026-05-23) was the chief source of pre-block
+  // PENDING_ROUTER signs; prior stuck rows are recoverable via the
+  // narrow accept-endpoint path below + the admin backfill sweep at
+  // /api/admin/case-management/backfill-stuck-router.
+  if (note.encounter?.caseManagement?.status === 'PENDING_ROUTER') {
+    return NextResponse.json(
+      {
+        error: {
+          code: 'pending_router',
+          message: 'Accept this visit\'s case routing before signing.',
+        },
+      },
+      { status: 409 },
+    );
   }
 
   // Flag-analysis race protection (regression fix 2026-05-25).
@@ -196,25 +217,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
   }
 
-  // Sign-time authorization. Prefer the signing-PIN unlock window if active
-  // (Pattern D — Epic-style), else fall back to per-sign TOTP reverify.
+  // Sign-time authorization. Prefer the signing-PIN unlock window if active.
   const me = await prisma.user.findUnique({
     where: { id: user.id },
     select: {
-      mfaSecret: true,
-      mfaEnabled: true,
       signingPinHash: true,
       signUnlockedUntil: true,
     },
   });
-  if (!me?.mfaSecret || !me.mfaEnabled) {
-    return NextResponse.json({ error: { code: 'mfa_required' } }, { status: 401 });
+  if (!me?.signingPinHash) {
+    return NextResponse.json({ error: { code: 'pin_not_set' } }, { status: 401 });
   }
 
   const unlockedNow =
-    !!me.signingPinHash &&
-    !!me.signUnlockedUntil &&
-    me.signUnlockedUntil.getTime() > Date.now();
+    !!me.signUnlockedUntil && me.signUnlockedUntil.getTime() > Date.now();
 
   if (unlockedNow) {
     await writeAuditLog({
@@ -229,37 +245,34 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       },
     });
   } else {
-    // Fall back to TOTP. Required when: no PIN set yet, OR unlock window expired.
-    if (!parsed.data.mfaToken) {
+    if (!parsed.data.signPin) {
       return NextResponse.json(
         {
           error: {
             code: 'auth_required',
-            message: me.signingPinHash
-              ? 'Sign-unlock expired. Verify your signing PIN or provide a TOTP token.'
-              : 'Provide a TOTP token (or set up a signing PIN to avoid this prompt).',
-            pinAvailable: !!me.signingPinHash,
+            message: 'Sign-unlock expired. Enter your 4-digit signing PIN.',
+            pinAvailable: true,
           },
         },
         { status: 401 },
       );
     }
-    const mfaOk = await verifyTotpToken({ secret: me.mfaSecret, token: parsed.data.mfaToken });
-    if (!mfaOk) {
+    const pinOk = await bcrypt.compare(parsed.data.signPin, me.signingPinHash);
+    if (!pinOk) {
       await writeAuditLog({
         userId: user.id,
         orgId: orgUser.orgId,
-        action: 'MFA_VERIFY_FAILED',
+        action: 'SIGNING_PIN_VERIFY_FAILED',
         resourceType: 'Note',
         resourceId: noteId,
         metadata: { context: 'sign-note' },
       });
-      return NextResponse.json({ error: { code: 'invalid_mfa' } }, { status: 401 });
+      return NextResponse.json({ error: { code: 'invalid_pin' } }, { status: 401 });
     }
     await writeAuditLog({
       userId: user.id,
       orgId: orgUser.orgId,
-      action: 'MFA_VERIFIED',
+      action: 'SIGNING_PIN_VERIFIED',
       resourceType: 'Note',
       resourceId: noteId,
       metadata: { context: 'sign-note' },
@@ -293,7 +306,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     resourceType: 'Note',
     resourceId: noteId,
     metadata: {
-      mfaReverified: true,
+      pinReverified: !unlockedNow,
       sectionCount: sections.length,
       signedAt: now.toISOString(),
       sweepAcknowledged: !!parsed.data.sweepAcknowledged,

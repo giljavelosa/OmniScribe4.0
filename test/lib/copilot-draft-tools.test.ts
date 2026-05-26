@@ -50,7 +50,6 @@ beforeAll(async () => {
       id: USER_ID,
       email: 'unit30@test.local',
       passwordHash: 'x',
-      mfaEnabled: false,
     },
   });
   await prisma.orgUser.upsert({

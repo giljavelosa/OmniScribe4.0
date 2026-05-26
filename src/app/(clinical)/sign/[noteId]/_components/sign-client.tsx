@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { KeyRound, ShieldCheck, Unlock } from 'lucide-react';
+import { KeyRound, Unlock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -33,10 +33,7 @@ type PinState = { hasPin: boolean; unlockedUntil: string | null } | null;
  * Auth mode is chosen by the user's signing-PIN setup:
  *   - unlocked window active (PIN verified in last 30 min)  → just "Sign note"
  *   - PIN set but locked                                    → 4-digit PIN input
- *   - no PIN set                                            → 6-digit TOTP input
- *                                                            with a one-time
- *                                                            "Set up signing PIN"
- *                                                            offer.
+ *   - no PIN set                                            → inline PIN setup (required)
  */
 export function SignClient({
   noteId,
@@ -50,7 +47,7 @@ export function SignClient({
 }: Props) {
   const router = useRouter();
   const [pinState, setPinState] = useState<PinState>(null);
-  const [authValue, setAuthValue] = useState(''); // 6-digit TOTP or 4-digit PIN
+  const [authValue, setAuthValue] = useState(''); // 4-digit signing PIN
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const [sweepOpen, setSweepOpen] = useState(false);
@@ -68,12 +65,12 @@ export function SignClient({
   const isUnlocked = !!pinState?.unlockedUntil;
   const hasPin = !!pinState?.hasPin;
 
-  function postSign(opts: { sweepAcknowledged: boolean; mfaToken?: string }) {
+  function postSign(opts: { sweepAcknowledged: boolean; signPin?: string }) {
     return fetch(`/api/notes/${noteId}/sign`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        mfaToken: opts.mfaToken,
+        signPin: opts.signPin,
         sweepAcknowledged: opts.sweepAcknowledged,
       }),
     });
@@ -112,14 +109,8 @@ export function SignClient({
           const res = await postSign({ sweepAcknowledged: false });
           return handleSignResponse(res);
         }
-        // No PIN set — fall back to TOTP.
-        if (!/^\d{6}$/.test(authValue)) {
-          setError('Enter the 6-digit code from your authenticator.');
-          return;
-        }
-        lastAuthValueRef.current = authValue;
-        const res = await postSign({ sweepAcknowledged: false, mfaToken: authValue });
-        return handleSignResponse(res);
+        setShowPinSetup(true);
+        setError('Set up a signing PIN before you can sign notes.');
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       }
@@ -139,8 +130,11 @@ export function SignClient({
       setSweepOpen(true);
       return;
     }
-    if (code === 'invalid_mfa') setError('Invalid 6-digit code.');
-    else if (code === 'invalid_pin') setError('Wrong PIN.');
+    if (code === 'invalid_pin') setError('Wrong PIN.');
+    else if (code === 'pin_not_set') {
+      setShowPinSetup(true);
+      setError('Set up a signing PIN before you can sign notes.');
+    }
     else if (code === 'auth_required') setError(body?.error?.message ?? 'Authorization required.');
     else if (code === 'not_ready') setError('Required sections still need attention — return to review.');
     else if (code === 'already_signed') setError('This note is already signed.');
@@ -172,7 +166,7 @@ export function SignClient({
     startTransition(async () => {
       const res = await postSign({
         sweepAcknowledged: true,
-        mfaToken: !isUnlocked && !hasPin ? lastAuthValueRef.current : undefined,
+        signPin: !isUnlocked && hasPin ? lastAuthValueRef.current : undefined,
       });
       await handleSignResponse(res);
     });
@@ -233,8 +227,8 @@ export function SignClient({
               </>
             ) : (
               <>
-                <ShieldCheck className="size-4" aria-hidden />
-                Attest + sign — enter authenticator code
+                <KeyRound className="size-4" aria-hidden />
+                Attest + sign — set up signing PIN
               </>
             )}
           </CardTitle>
@@ -274,25 +268,16 @@ export function SignClient({
             </div>
           )}
           {!isUnlocked && !hasPin && (
-            <div className="space-y-2">
-              <Label htmlFor="sign-mfa">6-digit authenticator code</Label>
-              <Input
-                id="sign-mfa"
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                maxLength={6}
-                value={authValue}
-                onChange={(e) => setAuthValue(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                disabled={pending}
-              />
+            <p className="text-sm text-muted-foreground">
+              You need a 4-digit signing PIN before your first signature.{' '}
               <button
                 type="button"
-                className="text-xs underline text-muted-foreground hover:text-foreground"
+                className="underline underline-offset-4 hover:text-foreground"
                 onClick={() => setShowPinSetup(true)}
               >
-                Set up a 4-digit signing PIN so you don&apos;t have to type the authenticator code each time
+                Set up signing PIN
               </button>
-            </div>
+            </p>
           )}
           {isUnlocked && (
             <p className="text-sm text-muted-foreground">
@@ -306,7 +291,7 @@ export function SignClient({
               disabled={
                 pending ||
                 (!isUnlocked && hasPin && authValue.length !== 4) ||
-                (!isUnlocked && !hasPin && authValue.length !== 6)
+                (!isUnlocked && !hasPin)
               }
             >
               {pending ? 'Signing…' : 'Sign note'}
@@ -358,8 +343,7 @@ function PinSetupInline({ onClose }: { onClose: (setNow: boolean) => void }) {
       const res = await fetch('/api/auth/pin/setup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        // No TOTP — server accepts first-time setup based on the session's
-        // mfaVerified flag (user already passed MFA at sign-in).
+        // First-time setup is allowed on a login-verified session.
         body: JSON.stringify({ newPin: pin }),
       });
       if (!res.ok) {
@@ -376,8 +360,7 @@ function PinSetupInline({ onClose }: { onClose: (setNow: boolean) => void }) {
       <CardHeader>
         <CardTitle className="text-md">Set up signing PIN</CardTitle>
         <CardDescription>
-          Pick a 4-digit PIN to use instead of typing your authenticator code every time. The unlock
-          window is 30 minutes per verify. You can change the PIN later from your profile.
+          Pick a 4-digit PIN for signing notes. The unlock window is 30 minutes per verify.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">

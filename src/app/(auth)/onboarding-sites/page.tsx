@@ -31,9 +31,8 @@ export default async function OnboardingSitesPage() {
   if (!session?.user || !session.user.orgId || !session.user.orgUserId) {
     redirect('/login');
   }
-  // D2 enforcement — matches admin/owner/ops layout pattern.
-  if (!session.user.mfaEnabled) redirect('/mfa-setup');
-  if (!session.user.mfaVerified) redirect('/mfa-challenge');
+  // Sprint 0.20 — MFA removed; the post-signin gate at this layer is just
+  // "must be signed in" (already checked above).
 
   const orgUser = await prisma.orgUser.findUnique({
     where: { id: session.user.orgUserId },

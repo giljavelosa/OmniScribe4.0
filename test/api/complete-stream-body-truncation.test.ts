@@ -14,7 +14,7 @@ import { describe, expect, it, beforeEach, vi } from 'vitest';
  *
  * Root cause was Next.js 16's middleware/proxy buffer truncating the
  * multipart body to 10 MB by default (the impersonation middleware in
- * src/middleware.ts forces every /api request through the buffer);
+ * src/proxy.ts forces every /api request through the buffer);
  * once truncated, the multipart boundary line is gone and
  * `req.formData()` throws a generic TypeError → 500.
  *

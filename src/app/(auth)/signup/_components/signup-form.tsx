@@ -29,8 +29,7 @@ const DIVISION_LABEL: Record<Division, string> = {
  * SignupForm — Unit 37 self-serve org creation.
  *
  * POSTs to /api/auth/signup. On 201, signs in via NextAuth credentials
- * provider (which the new user just created) and routes to /mfa-setup
- * per the D2 enforcement chain.
+ * provider (which the new user just created) and routes to /home.
  *
  * Error surface:
  *   - 429 → rate-limit banner with retry timer
@@ -100,9 +99,7 @@ export function SignupForm() {
         }
         return;
       }
-      // Auto sign-in. NextAuth's credentials provider validates the
-      // freshly-created user; on success we route to /mfa-setup per
-      // the D2 enforcement chain.
+      // Auto sign-in, then land at home.
       const signinRes = await signIn('credentials', {
         email,
         password,
@@ -114,9 +111,8 @@ export function SignupForm() {
         window.location.assign('/login');
         return;
       }
-      // New accounts always need MFA setup. Hard-navigate so the server
-      // reads the fresh JWT cookie rather than racing the cookie write.
-      window.location.assign('/mfa-setup');
+      // Sprint 0.20 — password-only auth; land at home after sign-in.
+      window.location.assign('/home');
     });
   }
 

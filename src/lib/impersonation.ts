@@ -12,7 +12,7 @@
  * fires (so the auditor lens can quantify "how often does the gate
  * actually fire?").
  *
- * `src/middleware.ts` runs a thin parallel check at the edge so the
+ * `src/proxy.ts` runs a thin parallel check at the edge so the
  * 403 short-circuits BEFORE any route handler executes — defense in
  * depth against a route that forgets to invoke the helper.
  *

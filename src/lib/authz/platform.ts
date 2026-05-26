@@ -14,9 +14,7 @@ export async function requirePlatformOwner(): Promise<RequirePlatformOwnerResult
   if (session.user.platformRole !== 'PLATFORM_OWNER') {
     return { error: NextResponse.json({ error: { code: 'forbidden' } }, { status: 403 }) };
   }
-  if (!session.user.mfaEnabled) {
-    return { error: NextResponse.json({ error: { code: 'mfa_required' } }, { status: 403 }) };
-  }
+  // Sprint 0.20 — MFA + login-verified gates removed; password-only auth.
   return { user: session.user };
 }
 
@@ -26,9 +24,9 @@ export async function requirePlatformOwner(): Promise<RequirePlatformOwnerResult
  * the strict superset — owner-only surfaces (`/owner/*`) keep using
  * `requirePlatformOwner` unchanged.
  *
- * MFA-required for either role. Returning the role on the result lets
- * callers branch UI affordances (e.g. surface "Begin impersonation"
- * only for OWNER).
+ * Sprint 0.20 — MFA + login-verified gates removed; only role check
+ * remains. Returning the role on the result lets callers branch UI
+ * affordances (e.g. surface "Begin impersonation" only for OWNER).
  */
 export type RequirePlatformStaffOk = {
   user: Session['user'];
@@ -48,9 +46,7 @@ export async function requirePlatformStaff(): Promise<RequirePlatformStaffResult
   if (!STAFF_ROLES.includes(session.user.platformRole)) {
     return { error: NextResponse.json({ error: { code: 'forbidden' } }, { status: 403 }) };
   }
-  if (!session.user.mfaEnabled) {
-    return { error: NextResponse.json({ error: { code: 'mfa_required' } }, { status: 403 }) };
-  }
+  // Sprint 0.20 — MFA + login-verified gates removed; password-only auth.
   return {
     user: session.user,
     role: session.user.platformRole as 'PLATFORM_OWNER' | 'PLATFORM_OPS',
