@@ -41,6 +41,9 @@ export default async function AdminLayout({ children }: { children: ReactNode })
               <Link href="/admin/audit" className="text-muted-foreground hover:text-foreground">
                 Audit
               </Link>
+              <Link href="/admin/ai-queries" className="text-muted-foreground hover:text-foreground">
+                AI queries
+              </Link>
               <Link href="/admin/integrations/fhir" className="text-muted-foreground hover:text-foreground">
                 Integrations
               </Link>

@@ -591,4 +591,13 @@ export type AuditAction =
   // errors, reachedCap, dryRun }. resourceId is the literal string
   // 'sweep' (same convention as the episodes sweep).
   | 'CASE_BACKFILLED_FROM_PENDING_ROUTER'
-  | 'CASE_BACKFILL_SWEEP_RUN';
+  | 'CASE_BACKFILL_SWEEP_RUN'
+  // ---- Tier 2: home AI command-panel telemetry ----
+  // AI_PANEL_QUERY fires once per submission to the home `<AiCommandPanel>`
+  // (mobile or desktop variant). Metadata: { pattern, commandVerb,
+  // queryLength, wordCount, surface }. The CLASSIFIER (src/lib/ai-command/
+  // classify.ts) returns ONLY structural shape labels + a closed enum of
+  // canonical command verbs — the user-typed text is NEVER persisted.
+  // Lets the admin dashboard answer "what are clinicians actually trying
+  // to do with the AI panel?" without parking PHI in the audit log.
+  | 'AI_PANEL_QUERY';

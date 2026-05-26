@@ -55,3 +55,51 @@ test.describe('home AI command panel — stub contract', () => {
     await page.waitForURL(/\/patients\?query=/);
   });
 });
+
+/**
+ * Tier 2 telemetry — every panel submission posts to /api/ai-command/log
+ * BEFORE the redirect happens. We verify the request fires (with the
+ * right body shape) without depending on the audit row landing in the
+ * DB. The Vitest API contract test covers the audit write; this spec
+ * just proves the wiring on the client side is intact.
+ */
+test.describe('AI command panel — Tier 2 telemetry', () => {
+  test.use({ storageState: authStatePath('clinician') });
+
+  test('logs the query shape to /api/ai-command/log on submit', async ({ page }) => {
+    await page.goto('/home');
+
+    // Wait for the log POST. The panel sends it with `keepalive: true`
+    // so it survives the redirect; we listen for it before clicking.
+    const logRequest = page.waitForRequest(
+      (req) =>
+        req.url().includes('/api/ai-command/log') && req.method() === 'POST',
+      { timeout: 5_000 },
+    );
+
+    await page.getByPlaceholder(/find patient, draft note/i).last().fill('drafts');
+    await page.getByRole('button', { name: /^ask$/i }).last().click();
+
+    const req = await logRequest;
+    const body = JSON.parse(req.postData() ?? '{}');
+    expect(body).toEqual({ query: 'drafts', surface: 'home-desktop' });
+  });
+
+  test('logs the suggestion-chip submissions too', async ({ page }) => {
+    await page.goto('/home');
+
+    const logRequest = page.waitForRequest(
+      (req) =>
+        req.url().includes('/api/ai-command/log') && req.method() === 'POST',
+      { timeout: 5_000 },
+    );
+
+    await page.getByRole('button', { name: /^show drafts$/i }).first().click();
+
+    const req = await logRequest;
+    const body = JSON.parse(req.postData() ?? '{}');
+    // The chip's label IS the query — that's the stub behavior.
+    expect(body.query).toBe('Show drafts');
+    expect(['home-desktop', 'home-mobile']).toContain(body.surface);
+  });
+});
