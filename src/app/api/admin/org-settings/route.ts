@@ -14,7 +14,6 @@ const patchSchema = z
     name: z.string().min(1).max(200).optional(),
     division: z.enum(Division).optional(),
     defaultDivision: z.enum(Division).nullable().optional(),
-    forceMfa: z.boolean().optional(),
     complianceProfile: z.enum(ComplianceProfile).optional(),
     /** Sets the org-wide default note style for new clinicians. The
      *  per-clinician `OrgUser.preferredNoteStyle` overrides this. */
@@ -26,7 +25,6 @@ const ORG_FIELDS = [
   'name',
   'division',
   'defaultDivision',
-  'forceMfa',
   'complianceProfile',
 ] as const;
 
@@ -70,7 +68,6 @@ export async function PATCH(req: Request) {
       ...(parsed.data.defaultDivision !== undefined
         ? { defaultDivision: parsed.data.defaultDivision }
         : {}),
-      ...(parsed.data.forceMfa !== undefined ? { forceMfa: parsed.data.forceMfa } : {}),
       ...(parsed.data.complianceProfile !== undefined
         ? { complianceProfile: parsed.data.complianceProfile }
         : {}),

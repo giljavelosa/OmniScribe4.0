@@ -61,7 +61,6 @@ export async function GET(req: Request) {
       id: u.id,
       email: u.email,
       name: u.name,
-      mfaEnabled: u.mfaEnabled,
       platformRole: u.platformRole,
       createdAt: u.createdAt.toISOString(),
       orgs: u.orgUsers.map((ou) => ({

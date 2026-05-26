@@ -7,7 +7,11 @@ import { requirePlatformOwner, requirePlatformStaff } from '@/lib/authz/platform
  *
  * Mocks @/lib/auth's `auth()` function so we can drive the helpers
  * against constructed session shapes. Owner remains strictly stricter
- * than Staff; Staff accepts OWNER or OPS, both MFA-required.
+ * than Staff; Staff accepts OWNER or OPS.
+ *
+ * Sprint 0.20 — MFA + login-verified gates removed; the previous
+ * "rejects without login verification" cases are obsolete and
+ * intentionally not re-added. Authentication is password-only.
  */
 
 const mockAuth = vi.fn();
@@ -15,7 +19,7 @@ vi.mock('@/lib/auth', () => ({
   auth: () => mockAuth(),
 }));
 
-function userWithRole(role: string, mfaEnabled = true) {
+function userWithRole(role: string) {
   return {
     user: {
       id: 'u1',
@@ -25,8 +29,6 @@ function userWithRole(role: string, mfaEnabled = true) {
       role: null,
       division: null,
       profession: null,
-      mfaEnabled,
-      mfaVerified: false,
       platformRole: role,
     },
   };
@@ -45,13 +47,7 @@ describe('requirePlatformOwner', () => {
     expect('error' in r).toBe(true);
   });
 
-  it('rejects PLATFORM_OWNER without MFA enabled', async () => {
-    mockAuth.mockResolvedValueOnce(userWithRole('PLATFORM_OWNER', false));
-    const r = await requirePlatformOwner();
-    expect('error' in r).toBe(true);
-  });
-
-  it('accepts PLATFORM_OWNER with MFA enabled', async () => {
+  it('accepts PLATFORM_OWNER', async () => {
     mockAuth.mockResolvedValueOnce(userWithRole('PLATFORM_OWNER'));
     const r = await requirePlatformOwner();
     expect('error' in r).toBe(false);
@@ -74,7 +70,7 @@ describe('requirePlatformStaff', () => {
     expect('error' in r).toBe(true);
   });
 
-  it('accepts PLATFORM_OPS with MFA + returns role on result', async () => {
+  it('accepts PLATFORM_OPS + returns role on result', async () => {
     mockAuth.mockResolvedValueOnce(userWithRole('PLATFORM_OPS'));
     const r = await requirePlatformStaff();
     expect('error' in r).toBe(false);
@@ -83,18 +79,12 @@ describe('requirePlatformStaff', () => {
     }
   });
 
-  it('accepts PLATFORM_OWNER with MFA + returns role on result', async () => {
+  it('accepts PLATFORM_OWNER + returns role on result', async () => {
     mockAuth.mockResolvedValueOnce(userWithRole('PLATFORM_OWNER'));
     const r = await requirePlatformStaff();
     expect('error' in r).toBe(false);
     if (!('error' in r)) {
       expect(r.role).toBe('PLATFORM_OWNER');
     }
-  });
-
-  it('rejects PLATFORM_OPS without MFA enabled', async () => {
-    mockAuth.mockResolvedValueOnce(userWithRole('PLATFORM_OPS', false));
-    const r = await requirePlatformStaff();
-    expect('error' in r).toBe(true);
   });
 });

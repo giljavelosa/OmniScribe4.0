@@ -3,17 +3,14 @@
  *
  * Behavior:
  *   1. 401 if no session.
- *   2. 403 `mfa_required` if Organization.forceMfa && !user.mfaEnabled
- *      (D2 also enforces this for any sign-in, but a JWT minted before
- *      forceMfa was flipped on for the org still needs to be rejected at
- *      the API surface.)
+ *   2. (Sprint 0.20 — MFA gate removed; authentication is password-only.)
  *   3. Re-loads OrgUser FRESH from DB (avoids stale JWT — role might have
  *      changed since the token was issued).
  *   4. 403 `forbidden` if `!canUseFeature(featureKey, authorizationUser)`.
  *   5. POLISH (post-Unit 32): when a `req` is passed, also enforces the
  *      impersonation read-only gate via `assertNotImpersonating`. This
  *      writes the IMPERSONATION_BLOCKED_MUTATION audit row on block.
- *      The middleware in `src/middleware.ts` blocks structurally at
+ *      The proxy in `src/proxy.ts` blocks structurally at
  *      the edge for ALL /api/* paths regardless; passing `req` here
  *      adds audit fidelity (route-level visibility into which feature
  *      was attempted).
@@ -55,7 +52,7 @@ export async function requireFeatureAccess(
    * IMPERSONATION_BLOCKED_MUTATION audit row when triggered. Optional
    * for backward compatibility: existing callers that don't pass `req`
    * still get the auth + feature check; the middleware in
-   * src/middleware.ts blocks structurally either way. Passing `req`
+   * src/proxy.ts blocks structurally either way. Passing `req`
    * adds the per-route audit fidelity.
    */
   req?: Request,
@@ -68,23 +65,10 @@ export async function requireFeatureAccess(
   // Fresh DB read — JWT may carry stale role/division after admin changes.
   const orgUser = await prisma.orgUser.findUnique({
     where: { id: session.user.orgUserId },
-    include: { organization: true },
   });
   if (!orgUser || !orgUser.isActive) return err('forbidden', 403);
 
-  if (orgUser.organization.forceMfa && !session.user.mfaEnabled) {
-    return err('mfa_required', 403);
-  }
-
-  // Block API access for users who have MFA enabled but haven't completed the
-  // challenge in this session. The UI layout enforces the MFA redirect chain
-  // for HTML routes, but a session cookie minted before challenge completion
-  // could otherwise call any API route directly. Endpoints that legitimately
-  // run before MFA challenge (e.g., /api/auth/mfa/verify itself) use their
-  // own auth path and do not flow through requireFeatureAccess.
-  if (session.user.mfaEnabled && !session.user.mfaVerified) {
-    return err('mfa_not_verified', 403);
-  }
+  // Sprint 0.20 — MFA + login-verified gates removed; auth is password-only.
 
   const authorizationUser: AuthorizationUser = {
     userId: session.user.id,
