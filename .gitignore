@@ -53,4 +53,7 @@ tsconfig.tsbuildinfo
 tmp/
 test-results/
 playwright-report/
+playwright/.cache/
 e2e/.auth/
+e2e/screenshots/
+*.zip
