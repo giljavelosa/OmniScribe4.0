@@ -55,8 +55,6 @@ function session() {
       orgUserId: 'ou_admin',
       role: 'ORG_ADMIN',
       division: 'MULTI',
-      mfaEnabled: true,
-      mfaVerified: true,
       platformRole: 'NONE',
       canManagePatients: false,
     },
