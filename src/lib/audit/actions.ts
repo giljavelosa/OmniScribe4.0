@@ -600,4 +600,41 @@ export type AuditAction =
   // canonical command verbs — the user-typed text is NEVER persisted.
   // Lets the admin dashboard answer "what are clinicians actually trying
   // to do with the AI panel?" without parking PHI in the audit log.
-  | 'AI_PANEL_QUERY';
+  | 'AI_PANEL_QUERY'
+  // ---- Single-concurrent-recording lock (anti-credential-sharing, 2026-05-25) ----
+  //
+  // RECORDING_LOCK_CLAIMED fires on first claim of a user's
+  // ActiveRecordingLock row (i.e. realtime-key issued for a note that
+  // doesn't already have an active lock for this user). Metadata:
+  // { noteId, clientNoncePrefix } where the prefix is 6 chars only —
+  // never the full nonce, so even forensic replay can't reconstruct
+  // the device id without DB access.
+  //
+  // RECORDING_LOCK_REFRESHED fires on every subsequent realtime-key
+  // re-mint from the SAME device (clientNonce matches). Volume can
+  // get high (one row per ~50s while recording); we audit so the
+  // auditor lens can prove "this device held the lock continuously"
+  // for a given recording. Metadata: { noteId, clientNoncePrefix,
+  // ageMs }.
+  //
+  // RECORDING_LOCK_TAKEOVER fires when a NEW device displaces an
+  // existing lock — either because the prior lock was stale (older
+  // than the staleness window) or because the new device sent
+  // takeover=true. Metadata: { newNoteId, previousNoteId,
+  // previousLockAgeMs, displaceReason }. Pairs with the displaced
+  // device's next request, which will see 410 + a graceful "your
+  // recording was taken over" UI.
+  //
+  // RECORDING_LOCK_REJECTED fires when a new device tried to claim
+  // but the existing lock was active (heartbeat fresh) and takeover
+  // was not requested. Metadata: { attemptedNoteId, activeNoteId,
+  // activeLockAgeMs }. The client sees 409 + offers the AlertDialog
+  // takeover prompt.
+  //
+  // RECORDING_LOCK_RELEASED fires from /complete-stream on success.
+  // Metadata: { noteId, lockHeldMs }.
+  | 'RECORDING_LOCK_CLAIMED'
+  | 'RECORDING_LOCK_REFRESHED'
+  | 'RECORDING_LOCK_TAKEOVER'
+  | 'RECORDING_LOCK_REJECTED'
+  | 'RECORDING_LOCK_RELEASED';

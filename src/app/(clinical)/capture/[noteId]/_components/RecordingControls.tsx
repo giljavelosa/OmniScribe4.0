@@ -12,6 +12,16 @@ import {
 } from '../_hooks/capture-state';
 import { LeaveConfirmDialog } from './LeaveConfirmDialog';
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
   MAX_RECORDING_BYTES,
   MAX_RECORDING_MS,
   deriveWarning,
@@ -48,9 +58,11 @@ const MAX_RECORDING_MB = Math.round(MAX_RECORDING_BYTES / (1024 * 1024));
 export function RecordingControls({ noteId, autostart = false }: Props) {
   const state = useRecordingState();
   const { accumulatedBytes } = useRecordingLimitState();
-  const { start, pause, resume, finish, reset } = useCaptureControls();
+  const { start, pause, resume, finish, reset, confirmTakeover } =
+    useCaptureControls();
   const router = useRouter();
   const [leaveOpen, setLeaveOpen] = useState(false);
+  const [takeoverPending, setTakeoverPending] = useState(false);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [autostartMs, setAutostartMs] = useState(AUTOSTART_COUNTDOWN_MS);
   const [autostartActive, setAutostartActive] = useState(autostart);
@@ -116,6 +128,70 @@ export function RecordingControls({ noteId, autostart = false }: Props) {
       : 'none';
   const showMaxWarning = warning !== 'none';
   const isCritical = warning === 'time_critical' || warning === 'size_critical';
+
+  if (state.kind === 'lock-conflict') {
+    // Anti-credential-sharing defense: another device on this account
+    // is currently recording. Surface as a warning banner + an explicit
+    // takeover AlertDialog. Rule 22: no native confirm() in clinical
+    // surfaces — AlertDialog is required.
+    const ageSec = Math.max(1, Math.round(state.activeLockAgeMs / 1000));
+    const ageLabel =
+      ageSec < 60
+        ? `${ageSec} second${ageSec === 1 ? '' : 's'} ago`
+        : `${Math.round(ageSec / 60)} minute${Math.round(ageSec / 60) === 1 ? '' : 's'} ago`;
+
+    return (
+      <div className="space-y-2 w-full">
+        <StatusBanner variant="warning">
+          Another device on this account started a recording {ageLabel} and is
+          still active. Two devices can&apos;t record at once on the same
+          account.
+        </StatusBanner>
+        <div className="flex items-center gap-3">
+          <AlertDialog open={takeoverPending} onOpenChange={setTakeoverPending}>
+            <Button onClick={() => setTakeoverPending(true)} className="gap-2">
+              <Mic className="h-4 w-4" aria-hidden />
+              Take over from this device
+            </Button>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>
+                  Take over the recording on this device?
+                </AlertDialogTitle>
+                <AlertDialogDescription>
+                  The other device&apos;s active recording will be stopped
+                  immediately. Any audio it has captured but not yet uploaded
+                  may be lost. The clinician using that device will see a
+                  &ldquo;recording was taken over&rdquo; message. Only do this
+                  if you know the other recording isn&apos;t a real visit
+                  in progress.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={() => {
+                    setTakeoverPending(false);
+                    void confirmTakeover();
+                  }}
+                >
+                  Take over
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+          <Button variant="outline" onClick={() => setLeaveOpen(true)}>
+            Leave
+          </Button>
+          <LeaveConfirmDialog
+            open={leaveOpen}
+            onOpenChange={setLeaveOpen}
+            onConfirm={() => router.push('/home')}
+          />
+        </div>
+      </div>
+    );
+  }
 
   if (isError) {
     const reason = (state as { reason: string }).reason;

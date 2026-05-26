@@ -46,6 +46,17 @@ export type RecordingState =
   | { kind: 'finalizing' }
   | { kind: 'drafting' }
   | { kind: 'complete' }
+  | {
+      /** Anti-credential-sharing defense — another device on this account
+       *  is currently recording. The clinician must either end that
+       *  recording or explicitly take it over from this device. The
+       *  meta describes the active lock so the UI can show
+       *  "started 47 seconds ago on note X" before the user confirms. */
+      kind: 'lock-conflict';
+      activeNoteId: string;
+      activeClaimedAt: string;
+      activeLockAgeMs: number;
+    }
   | { kind: 'error'; reason: string };
 
 export type TranscriptSegment = {
@@ -80,6 +91,11 @@ type CaptureStateValue = {
   resume: () => Promise<void>;
   finish: () => Promise<void>;
   reset: () => void;
+  /** Anti-credential-sharing defense — when state.kind === 'lock-conflict',
+   *  the UI surfaces an AlertDialog and calls this to displace the other
+   *  device's recording lock. Internally it re-runs start() with
+   *  takeover=true. */
+  confirmTakeover: () => Promise<void>;
   // Set once the WS opens; surfaced to the page so it can banner "Soniox stub mode".
   isStub: boolean;
 };
@@ -116,6 +132,24 @@ export function CaptureStateProvider({
   const workletRef = useRef<AudioWorkletNode | null>(null);
   const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+
+  // Anti-credential-sharing recording lock (2026-05-25). One nonce per
+  // provider mount — stable for the entire recording session including
+  // pauses + reconnects. The server uses this to identify "same device
+  // re-minting the key" vs "a different device on the same account".
+  // Lazily initialized via useState so the random call runs exactly
+  // once per mount AND satisfies React 19's render-purity rule. The
+  // nonce is an opaque random string; never contains PHI.
+  const [clientNonce] = useState<string>(() => {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+    return `device-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+  });
+  // Set when the user explicitly confirms takeover via the AlertDialog.
+  // The next start() consumes + clears it. Kept in a ref so the click
+  // handler doesn't have to be re-bound across renders.
+  const pendingTakeoverRef = useRef(false);
   const isPausedRef = useRef(false);
   const audioBuffersRef = useRef<Int16Array[]>([]);
   const audioLevelRef = useRef(0);
@@ -168,6 +202,52 @@ export function CaptureStateProvider({
 
   useEffect(() => teardown, [teardown]);
 
+  /**
+   * Post the realtime-key request with the lock-claim body. Centralized so
+   * all three call sites (start, resume, reconnect) ship the nonce + takeover
+   * the same way. Returns the parsed `data` on success, or a tagged
+   * lock-conflict object on 409 so the caller can route to the conflict UI.
+   */
+  const requestRealtimeKey = useCallback(
+    async (opts: { takeover?: boolean } = {}): Promise<
+      | { kind: 'ok'; data: SonioxKeyData & { noteStatus: string } }
+      | { kind: 'lock-conflict'; activeNoteId: string; activeClaimedAt: string; activeLockAgeMs: number }
+      | { kind: 'error'; message: string }
+    > => {
+      const res = await fetch(`/api/notes/${noteId}/realtime-key`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clientNonce,
+          takeover: opts.takeover === true,
+        }),
+      });
+      if (res.ok) {
+        const { data } = (await res.json()) as { data: SonioxKeyData & { noteStatus: string } };
+        return { kind: 'ok', data };
+      }
+      if (res.status === 409) {
+        const body = (await res.json().catch(() => null)) as
+          | { error?: { code?: string }; meta?: { activeNoteId?: string; activeClaimedAt?: string; activeLockAgeMs?: number } }
+          | null;
+        if (body?.error?.code === 'recording_locked' && body.meta?.activeNoteId) {
+          return {
+            kind: 'lock-conflict',
+            activeNoteId: body.meta.activeNoteId,
+            activeClaimedAt: body.meta.activeClaimedAt ?? new Date().toISOString(),
+            activeLockAgeMs: body.meta.activeLockAgeMs ?? 0,
+          };
+        }
+      }
+      const body = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
+      return {
+        kind: 'error',
+        message: body?.error?.message ?? `realtime-key returned ${res.status}`,
+      };
+    },
+    [noteId, clientNonce],
+  );
+
   /** Open (or reopen) a WS with the given key data. Shared by start() and
    *  resume()/reconnect(). Attaches the standard event handlers. */
   const openWebSocket = useCallback((keyData: SonioxKeyData) => {
@@ -208,9 +288,23 @@ export function CaptureStateProvider({
 
       reconnectTimerRef.current = setTimeout(async () => {
         try {
-          const keyRes = await fetch(`/api/notes/${noteId}/realtime-key`, { method: 'POST' });
-          if (!keyRes.ok) throw new Error('realtime-key re-mint failed');
-          const { data } = (await keyRes.json()) as { data: SonioxKeyData & { noteStatus: string } };
+          // Reconnect re-uses the same clientNonce; the server sees it as
+          // a refresh and bumps `lastHeartbeatAt`. If the lock has been
+          // displaced (another device took over while we were offline)
+          // the server returns 410-shaped 409; we surface the conflict
+          // instead of silently dropping audio.
+          const result = await requestRealtimeKey();
+          if (result.kind === 'lock-conflict') {
+            setState({
+              kind: 'lock-conflict',
+              activeNoteId: result.activeNoteId,
+              activeClaimedAt: result.activeClaimedAt,
+              activeLockAgeMs: result.activeLockAgeMs,
+            });
+            return;
+          }
+          if (result.kind === 'error') throw new Error(result.message);
+          const data = result.data;
           const freshKey: SonioxKeyData = {
             apiKey: data.apiKey,
             websocketUrl: data.websocketUrl,
@@ -233,22 +327,36 @@ export function CaptureStateProvider({
         }
       }, RECONNECT_DELAY_MS);
     };
-  }, [noteId]);
+  }, [noteId, requestRealtimeKey]);
 
   const start = useCallback(async () => {
-    if (state.kind !== 'idle' && state.kind !== 'error') return;
+    if (
+      state.kind !== 'idle' &&
+      state.kind !== 'error' &&
+      state.kind !== 'lock-conflict'
+    )
+      return;
     setState({ kind: 'requesting-mic' });
 
     try {
       // 1. Mint ephemeral key via the server (server flips Note → RECORDING).
-      const keyRes = await fetch(`/api/notes/${noteId}/realtime-key`, { method: 'POST' });
-      if (!keyRes.ok) {
-        const body = await keyRes.json().catch(() => null);
-        throw new Error(body?.error?.message ?? `realtime-key returned ${keyRes.status}`);
+      // Pass takeover=true exactly once when the user has confirmed the
+      // takeover AlertDialog. The flag is consumed here so a subsequent
+      // organic start() doesn't accidentally displace someone else.
+      const takeover = pendingTakeoverRef.current;
+      pendingTakeoverRef.current = false;
+      const result = await requestRealtimeKey({ takeover });
+      if (result.kind === 'lock-conflict') {
+        setState({
+          kind: 'lock-conflict',
+          activeNoteId: result.activeNoteId,
+          activeClaimedAt: result.activeClaimedAt,
+          activeLockAgeMs: result.activeLockAgeMs,
+        });
+        return;
       }
-      const { data } = (await keyRes.json()) as {
-        data: SonioxKeyData & { noteStatus: string };
-      };
+      if (result.kind === 'error') throw new Error(result.message);
+      const data = result.data;
       const keyData: SonioxKeyData = {
         apiKey: data.apiKey,
         websocketUrl: data.websocketUrl,
@@ -301,7 +409,7 @@ export function CaptureStateProvider({
       teardown();
       setState({ kind: 'error', reason: e instanceof Error ? e.message : String(e) });
     }
-  }, [noteId, state.kind, teardown, openWebSocket]);
+  }, [noteId, state.kind, teardown, openWebSocket, requestRealtimeKey]);
 
   const pause = useCallback(() => {
     if (state.kind !== 'recording') return;
@@ -345,9 +453,20 @@ export function CaptureStateProvider({
       }).catch(() => null);
       void keyRes; // fire-and-forget for audit; we handle the WS separately
 
-      const reKeyRes = await fetch(`/api/notes/${noteId}/realtime-key`, { method: 'POST' });
-      if (reKeyRes.ok) {
-        const { data } = (await reKeyRes.json()) as { data: SonioxKeyData & { noteStatus: string } };
+      const result = await requestRealtimeKey();
+      if (result.kind === 'lock-conflict') {
+        // While paused, another device claimed the lock. Don't silently
+        // resume — flip into the conflict UI so the clinician chooses.
+        setState({
+          kind: 'lock-conflict',
+          activeNoteId: result.activeNoteId,
+          activeClaimedAt: result.activeClaimedAt,
+          activeLockAgeMs: result.activeLockAgeMs,
+        });
+        return;
+      }
+      if (result.kind === 'ok') {
+        const data = result.data;
         const freshKey: SonioxKeyData = {
           apiKey: data.apiKey,
           websocketUrl: data.websocketUrl,
@@ -362,7 +481,7 @@ export function CaptureStateProvider({
     }
 
     setState({ kind: 'recording', startedAt, isStub });
-  }, [noteId, state.kind, isStub, openWebSocket]);
+  }, [noteId, state.kind, isStub, openWebSocket, requestRealtimeKey]);
 
   const finish = useCallback(async () => {
     if (state.kind !== 'recording' && state.kind !== 'paused') return;
@@ -396,6 +515,13 @@ export function CaptureStateProvider({
       if (autoStopReasonRef.current) {
         formData.append('autoStopReason', autoStopReasonRef.current);
       }
+      // Single-concurrent-recording lock — the server validates this
+      // matches the active lock for the user before accepting the
+      // upload. If the lock has been taken over we get 410 + a
+      // friendly "another device took over" error.
+      if (clientNonce) {
+        formData.append('clientNonce', clientNonce);
+      }
 
       const res = await fetch(`/api/notes/${noteId}/complete-stream`, {
         method: 'POST',
@@ -421,6 +547,17 @@ export function CaptureStateProvider({
               'Recording is too large to upload in one request. Stop the recording sooner.',
           );
         }
+        if (code === 'recording_lock_lost') {
+          // Anti-credential-sharing defense: another device on this
+          // account took over while we were finishing. Surface a
+          // clear, calm message — the clinician's audio is safe in
+          // their browser memory; the OTHER device will end with the
+          // active recording.
+          throw new Error(
+            body?.error?.message ??
+              'This recording was taken over on another device. Use that device to finish the visit.',
+          );
+        }
         throw new Error(
           body?.error?.message ?? `Couldn't finalize the recording (${res.status}).`,
         );
@@ -431,7 +568,7 @@ export function CaptureStateProvider({
     } catch (e) {
       setState({ kind: 'error', reason: e instanceof Error ? e.message : String(e) });
     }
-  }, [noteId, partial, state.kind, teardown, transcript]);
+  }, [noteId, partial, state.kind, teardown, transcript, clientNonce]);
 
   // Runaway-recording guard. While the state machine is in 'recording'
   // (paused does NOT tick — the elapsed clock is tied to state.startedAt
@@ -468,6 +605,31 @@ export function CaptureStateProvider({
     const interval = setInterval(tick, 1_000);
     return () => clearInterval(interval);
   }, [state.kind, state.kind === 'recording' ? (state as { startedAt: number }).startedAt : 0, finish]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /**
+   * Take over the recording lock from another device on the same account.
+   * Sets the pending-takeover flag, resets the local state machine to
+   * idle (so start() will accept), and triggers a fresh start. The next
+   * realtime-key call ships `takeover: true` exactly once; the server
+   * displaces the prior lock and audits RECORDING_LOCK_TAKEOVER.
+   *
+   * The displaced device's next request sees the lock has moved and
+   * surfaces a "this recording was taken over on another device" UI on
+   * its side.
+   */
+  const confirmTakeover = useCallback(async () => {
+    if (state.kind !== 'lock-conflict') return;
+    pendingTakeoverRef.current = true;
+    // Reset local state to idle so the start() guard accepts. We don't
+    // call reset() because it clears transcript + audio buffers — we
+    // want to start fresh anyway, but reset() does that AND more,
+    // which is correct here.
+    teardown();
+    audioBuffersRef.current = [];
+    isPausedRef.current = false;
+    setState({ kind: 'idle' });
+    await start();
+  }, [state.kind, teardown, start]);
 
   const reset = useCallback(() => {
     if (reconnectTimerRef.current) {
@@ -507,6 +669,7 @@ export function CaptureStateProvider({
       resume,
       finish,
       reset,
+      confirmTakeover,
       isStub,
     }),
     [
@@ -522,6 +685,7 @@ export function CaptureStateProvider({
       resume,
       finish,
       reset,
+      confirmTakeover,
       isStub,
     ],
   );
@@ -549,7 +713,14 @@ export function useTranscript() {
 }
 export function useCaptureControls() {
   const c = useCapture();
-  return { start: c.start, pause: c.pause, resume: c.resume, finish: c.finish, reset: c.reset };
+  return {
+    start: c.start,
+    pause: c.pause,
+    resume: c.resume,
+    finish: c.finish,
+    reset: c.reset,
+    confirmTakeover: c.confirmTakeover,
+  };
 }
 export function useStubBanner() {
   return useCapture().isStub;

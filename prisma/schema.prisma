@@ -312,6 +312,9 @@ model User {
   // Sprint 0.18 — Cleo nudge lifecycle (back-relations only).
   cleoNudgesDismissed CleoNudge[] @relation("CleoNudgeDismissedBy")
   cleoNudgesSnoozed   CleoNudge[] @relation("CleoNudgeSnoozedBy")
+  // 2026-05-25 — single-concurrent-recording lock (anti-credential-sharing).
+  // Back-relation only; the unique constraint lives on ActiveRecordingLock.userId.
+  activeRecordingLock ActiveRecordingLock?
   cleoNudgesActed     CleoNudge[] @relation("CleoNudgeActedBy")
 }
 
@@ -1518,6 +1521,54 @@ model AudioSegment {
   createdAt    DateTime  @default(now())
 
   @@index([noteId, segmentIndex])
+}
+
+// =============================================================================
+// ActiveRecordingLock — single-concurrent-recording enforcement (anti-credential-
+// sharing defense, 2026-05-25).
+//
+// One row per User (unique on userId). The recording-capable surfaces claim a
+// row when /api/notes/[id]/realtime-key issues a Soniox key + refresh it on
+// every re-mint. /complete-stream releases on successful upload. A row whose
+// `lastHeartbeatAt` is older than the staleness window can be displaced by
+// any new device for the same user.
+//
+// Why per-user (not per-org or per-noteId): the threat model is two clinicians
+// sharing one credential to record simultaneously on different devices. The
+// legitimate use case (one clinician's tablet hands off to their phone after
+// a WiFi blip) is preserved by the staleness window + the explicit takeover
+// path the client surfaces with an AlertDialog.
+//
+// PHI: clientNonce is opaque (random per-device; no PHI). userId/orgId/noteId
+// are foreign-key shaped only — same constraints as the rest of the schema.
+// =============================================================================
+model ActiveRecordingLock {
+  id              String   @id @default(cuid())
+  /// One lock per user — ensures a single clinician account can hold AT MOST
+  /// one active recording across all their devices. The DB unique constraint
+  /// is the primary enforcement (the application logic is defense in depth).
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  orgId           String
+  /// The note currently being recorded by the holder. Only populated for
+  /// active locks; on takeover the row's noteId flips to the new device's
+  /// target note.
+  noteId          String
+  /// Opaque random identifier the client generates per recording surface
+  /// mount. Lets the server tell "same device re-minting" (refresh) apart
+  /// from "different device claiming" (conflict / takeover). NEVER logged
+  /// in audit metadata in full — only a short prefix when forensically
+  /// useful.
+  clientNonce     String
+  claimedAt       DateTime @default(now())
+  /// Updated on every realtime-key re-mint (the natural heartbeat — the
+  /// client re-mints every ~50s before the 60s key TTL expires). A lock
+  /// older than the staleness window in claim.ts is displaceable by any
+  /// new device for the same user without explicit takeover.
+  lastHeartbeatAt DateTime @default(now())
+
+  @@index([noteId])
+  @@index([orgId])
 }
 
 // =============================================================================

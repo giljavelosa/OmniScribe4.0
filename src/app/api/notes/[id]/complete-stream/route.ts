@@ -13,6 +13,10 @@ import {
   WAV_HEADER_BYTES,
   type AutoStopReason,
 } from '@/lib/audio/recording-limits';
+import {
+  releaseRecordingLock,
+  validateRecordingLock,
+} from '@/lib/recording-lock/claim';
 
 export const runtime = 'nodejs';
 
@@ -105,6 +109,47 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     autoStopRaw === 'time_limit' || autoStopRaw === 'size_limit'
       ? autoStopRaw
       : null;
+
+  // Single-concurrent-recording lock (2026-05-25): if the caller's
+  // device no longer holds the lock (a takeover happened on another
+  // device while this finalize was in flight), refuse the upload.
+  // Their audio belongs to a recording another device is now driving;
+  // accepting it would scramble the clinical record.
+  //
+  // The clientNonce is passed via the multipart form — same channel
+  // as autoStopReason. Legacy clients that don't pass the nonce skip
+  // this check (they hold a server-generated nonce; we can't validate).
+  const callerNonceRaw = form.get('clientNonce');
+  const callerNonce =
+    typeof callerNonceRaw === 'string' && callerNonceRaw.length >= 8
+      ? callerNonceRaw
+      : null;
+  if (callerNonce) {
+    const lock = await validateRecordingLock({
+      userId: user.id,
+      clientNonce: callerNonce,
+    });
+    if (!lock) {
+      await writeAuditLog({
+        userId: user.id,
+        orgId: orgUser.orgId,
+        action: 'RECORDING_FINALIZED',
+        resourceType: 'Note',
+        resourceId: noteId,
+        metadata: { outcome: 'lock_lost' },
+      });
+      return NextResponse.json(
+        {
+          error: {
+            code: 'recording_lock_lost',
+            message:
+              'Recording was taken over on another device. The audio from this device is no longer the active recording for this note.',
+          },
+        },
+        { status: 410 },
+      );
+    }
+  }
 
   const audioBlob = audioFile instanceof Blob ? audioFile : null;
   // "No audio" = field missing, 0 bytes, or a header-only WAV. A real
@@ -215,6 +260,28 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       autoStopReason,
     },
   });
+
+  // Release the recording lock now that the audio is safely durable.
+  // Legacy clients without a clientNonce skip this — their lock will
+  // age out naturally after the 60s staleness window. New clients
+  // get an immediate release so the clinician can start a fresh
+  // recording without waiting.
+  if (callerNonce) {
+    const release = await releaseRecordingLock({
+      userId: user.id,
+      clientNonce: callerNonce,
+    });
+    if (release.released) {
+      await writeAuditLog({
+        userId: user.id,
+        orgId: orgUser.orgId,
+        action: 'RECORDING_LOCK_RELEASED',
+        resourceType: 'Note',
+        resourceId: noteId,
+        metadata: { noteId, lockHeldMs: release.lockHeldMs },
+      });
+    }
+  }
 
   // Unit 04 hand-off: the transcription worker picks up TRANSCRIBING notes
   // and cleans transcriptRaw → transcriptClean, then enqueues ai-generation.
