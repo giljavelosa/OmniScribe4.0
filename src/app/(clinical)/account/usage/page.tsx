@@ -15,6 +15,7 @@ import {
   compareSoloPlans,
   recommendSoloPlan,
 } from '@/lib/billing/recommend-plan';
+import { countOrgDraftsSince } from '@/lib/billing/draft-counter';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Usage' };
@@ -68,7 +69,7 @@ export default async function AccountUsagePage() {
   // billed overage uses the Stripe period (see usage-reporter).
   const now = new Date();
   const periodStart = new Date(now.getTime() - 30 * MS_PER_DAY);
-  const draftsThisPeriod = await countDistinctDrafts(orgId, periodStart);
+  const draftsThisPeriod = await countOrgDraftsSince(orgId, periodStart);
 
   const monthlyHistory = await countDraftsByMonth(orgId, 6);
 
@@ -378,20 +379,6 @@ function MonthlySparkline({
 }
 
 // ---------------------------------------------------------------------------
-
-async function countDistinctDrafts(orgId: string, since: Date): Promise<number> {
-  const rows = await prisma.auditLog.findMany({
-    where: {
-      orgId,
-      action: 'NOTE_GENERATION_COMPLETED',
-      createdAt: { gte: since },
-      resourceId: { not: null },
-    },
-    select: { resourceId: true },
-    distinct: ['resourceId'],
-  });
-  return rows.length;
-}
 
 async function countDraftsByMonth(
   orgId: string,

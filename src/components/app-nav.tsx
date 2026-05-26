@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { signOut } from 'next-auth/react';
 import type { OrgRole, PlatformRole } from '@prisma/client';
 import {
+  Gauge,
   LayoutDashboard,
   LogOut,
   ShieldCheck,
@@ -72,6 +73,11 @@ export function AppNav({ email, role, platformRole, orgName, currentSection }: A
   const clinicalItems: NavItem[] = [
     { href: '/home', label: 'Home', Icon: LayoutDashboard, section: '/home' },
     { href: '/patients', label: 'Patients', Icon: Stethoscope, section: '/patients' },
+    // Usage page surfaces the per-period draft count + plan-comparison
+    // table — the customer-facing half of the BillingPlan rollout.
+    // Visible to every signed-in user because every plan (Solo / Duo /
+    // Practice / Trial) has usage data worth seeing.
+    { href: '/account/usage', label: 'Usage', Icon: Gauge, section: '/account' },
   ];
 
   // Role-gated console links.
