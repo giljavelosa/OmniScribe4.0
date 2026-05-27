@@ -4,6 +4,7 @@ import { NoteArtifactKind, NoteStatus, Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { writeAuditLog } from '@/lib/audit/log';
 import { getLLMService } from '@/services/llm';
+import { stripJsonFence } from '@/lib/llm/strip-json-fence';
 import { projectPatientForPrompt, projectEpisodeForPrompt } from '@/lib/notes/projections';
 import {
   buildPatientInstructionsPrompt,
@@ -197,7 +198,7 @@ function parseArtifact(
 ): PatientInstructionsContent | ReferralLetterContent {
   let parsed: Record<string, unknown> | null = null;
   try {
-    parsed = JSON.parse(rawText.trim()) as Record<string, unknown>;
+    parsed = JSON.parse(stripJsonFence(rawText)) as Record<string, unknown>;
   } catch {
     parsed = null;
   }

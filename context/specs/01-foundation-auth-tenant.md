@@ -1,10 +1,24 @@
 # Unit 01: Foundation — Auth & Tenancy
 
 > **Wave 0.** The `Seat` model in this unit is **Wave 7 §01** (billing foundation) — see [`00-build-plan.md`](00-build-plan.md) Wave 7.
+>
+> **Sprint 0.20 — MFA REMOVED.** Authentication is now password-only.
+> Every reference below to MFA TOTP, authenticator setup, the
+> `/mfa-challenge` page, the `/mfa-setup` wizard, the `User.mfaSecret`
+> / `mfaEnabled` / `mfaRecoveryCodes` columns, and the
+> `Organization.forceMfa` flag is **HISTORICAL ONLY**. The current
+> implementation is: NextAuth credentials provider →
+> `User.passwordHash` (bcrypt 12) → `User.failedLoginCount` /
+> `lockedUntil` for lockout → `/home`. Account recovery is admin
+> invite + user/admin-initiated password reset. The note-signing PIN
+> (`User.signingPinHash` / `signUnlockedUntil`) is unchanged and is
+> the only remaining "second factor" — at sign-time only.
+>
+> The full removal is documented in `progress-tracker.md` (Sprint 0.20).
 
 ## Goal
 
-Build the multi-tenant identity, access-control, and BAA-tracking foundation that every subsequent unit depends on. After this unit, the product has Organizations (with BAA fields), Sites, Rooms, Users with role-based access, MFA TOTP, password reset, customer self-onboarding wizard, the `requireFeatureAccess` middleware, and PHI-scoping helpers — all backed by seed data that lets a developer sign in immediately.
+Build the multi-tenant identity, access-control, and BAA-tracking foundation that every subsequent unit depends on. After this unit, the product has Organizations (with BAA fields), Sites, Rooms, Users with role-based access, password authentication + admin/user-initiated password reset, customer self-onboarding wizard, the `requireFeatureAccess` middleware, and PHI-scoping helpers — all backed by seed data that lets a developer sign in immediately.
 
 ## Design
 

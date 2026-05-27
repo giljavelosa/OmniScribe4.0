@@ -1,5 +1,8 @@
 # Unit 17: Telehealth Clinician Room
 
+> **Sprint 0.20 — MFA removed.** Any reference to MFA, /mfa-challenge, /mfa-setup, TOTP, authenticator app setup, or login-verified gates in this document is HISTORICAL. Authentication is now password-only. See `context/specs/01-foundation-auth-tenant.md` and `progress-tracker.md`.
+
+
 ## Goal
 
 Wave 3 Phase 2 (per `references/telehealth-architecture-spec.md`). Ship the clinician-facing `/telehealth/room/[scheduleId]` surface so a telehealth visit is a complete clinician journey: open the room → see the patient on video → live transcript while you talk → end call → land on `/processing` for the standard note-generation pipeline. Reuses the in-person capture flow's `TranscriptWorkspace` + `LiveNotePanel` + Soniox transcript shape so the clinician sees one mental model, not two.

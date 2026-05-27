@@ -65,7 +65,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 
   const requestId = randomBytes(8).toString('hex');
-  await prisma.note.update({ where: { id }, data: { noteStyle: nextStyle } });
+  // Flip back to DRAFTING so the ai-generation worker's DRAFT short-circuit
+  // (added to prevent BullMQ-retry regeneration storms) doesn't skip the
+  // restyle. The worker resets to DRAFT on completion.
+  await prisma.note.update({
+    where: { id },
+    data: { noteStyle: nextStyle, status: NoteStatus.DRAFTING },
+  });
   await enqueueAiGenerationJob({
     noteId: id,
     orgId: authorizationUser.orgId,

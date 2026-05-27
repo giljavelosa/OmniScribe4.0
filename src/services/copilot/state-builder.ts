@@ -16,13 +16,14 @@
  * notes / measures / goals) — never what TO DO about it.
  */
 
-import { Prisma, type PrismaClient } from '@prisma/client';
+import { Prisma, type PatientUploadKind, type PrismaClient } from '@prisma/client';
 import { z } from 'zod';
 
 import { prisma as defaultPrisma } from '@/lib/prisma';
 import { divisionForProfession } from '@/lib/professions';
 import { viewerRecencyForCase } from '@/lib/case-management/viewer-recency';
 import type { PriorContextBriefContent } from '@/types/brief';
+import { UPLOAD_KIND_LABEL } from '@/lib/patient-uploads/display';
 
 /**
  * Bump when the state JSON shape changes meaningfully. The cleo-state
@@ -119,6 +120,8 @@ const ObservedPatternBaseSchema = z.object({
     // SUCCEEDED/CANCELLED do NOT emit this pattern — only the FAILED
     // + non-transient cohort that actually needs clinician attention.
     'fhir_writeback_failed_permanent',
+    /** Clinician-accepted paper/PDF scan on file (PatientUpload ATTESTED). */
+    'attested_scan_on_file',
   ]),
   /** Short label for the card UI ("Sleep mentioned in last 3 visits"). */
   label: z.string().min(1).max(160),
@@ -149,6 +152,7 @@ const ConversationFactSchema = z.object({
   sourceFollowUpId: z.string().min(1).optional(),
   sourceGoalId: z.string().min(1).optional(),
   sourceConditionId: z.string().min(1).optional(),
+  sourcePatientUploadId: z.string().min(1).optional(),
   citedAt: z.string().min(1),
 });
 
@@ -225,6 +229,7 @@ type Tx = Pick<
   // Sprint 0.18 — surface non-transient write-back failures as the
   // `fhir_writeback_failed_permanent` observed pattern.
   | 'fhirWriteBackProposal'
+  | 'patientUpload'
 >;
 
 /**
@@ -446,6 +451,18 @@ export async function buildStateProjections(
   // exposes them to whatever clinician's state we're rebuilding so the
   // Cleo's-read card can surface them regardless of who detected the
   // drift originally.
+  const attestedUploads = await client.patientUpload.findMany({
+    where: { orgId, patientId, status: 'ATTESTED', isDeleted: false },
+    orderBy: { attestedAt: 'desc' },
+    take: 5,
+    select: {
+      id: true,
+      kind: true,
+      attestedAt: true,
+      captureContext: true,
+    },
+  });
+
   const openDriftLogs = await client.caseFhirDriftLog.findMany({
     where: { orgId, patientId, resolvedAt: null },
     orderBy: { detectedAt: 'desc' },
@@ -495,6 +512,7 @@ export async function buildStateProjections(
     ...detectGoalStalled(episodes),
     ...detectCaseFhirDrift(openDriftLogs),
     ...detectFhirWritebackFailedPermanent(blockedWritebacks),
+    ...detectAttestedScansOnFile(attestedUploads),
   );
 
   const observedPatterns: ObservedPatternsJson = { patterns };
@@ -860,6 +878,31 @@ function escapeRegex(s: string): string {
 
 function capitalize(s: string): string {
   return s.length === 0 ? s : s[0]!.toUpperCase() + s.slice(1);
+}
+
+export function detectAttestedScansOnFile(
+  uploads: Array<{
+    id: string;
+    kind: PatientUploadKind;
+    attestedAt: Date | null;
+    captureContext: string | null;
+  }>,
+): ObservedPattern[] {
+  const out: ObservedPattern[] = [];
+  for (const u of uploads) {
+    if (!u.attestedAt) continue;
+    const at = u.attestedAt.toISOString();
+    out.push({
+      kind: 'attested_scan_on_file',
+      label: truncateLabel(`Accepted ${UPLOAD_KIND_LABEL[u.kind]} on chart`, 160),
+      detail: { uploadId: u.id, kind: u.kind, captureContext: u.captureContext },
+      observedInNoteIds: [],
+      count: 1,
+      firstSeen: at,
+      lastSeen: at,
+    });
+  }
+  return out;
 }
 
 function truncateLabel(s: string, max: number): string {

@@ -1,5 +1,8 @@
 # Journey 03 — Returning Patient + Prior-Context Brief + Copilot Watch
 
+> **Sprint 0.20 — MFA removed.** Any reference to MFA, /mfa-challenge, /mfa-setup, TOTP, authenticator app setup, or login-verified gates in this document is HISTORICAL. Authentication is now password-only. See `context/specs/01-foundation-auth-tenant.md` and `progress-tracker.md`.
+
+
 > The 30-second-card experience. This is the journey that converts OmniScribe from "scribe" to "copilot." Read after Journey 02.
 
 ## Who

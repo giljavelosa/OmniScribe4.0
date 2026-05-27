@@ -24,7 +24,12 @@ import { COPILOT_DISPLAY_NAME } from '@/services/copilot/persona';
  */
 
 export type ObservedPatternSummary = {
-  kind: 'topic_mentioned_unaddressed' | 'measure_trend' | 'recert_due_soon' | 'goal_stalled';
+  kind:
+    | 'topic_mentioned_unaddressed'
+    | 'measure_trend'
+    | 'recert_due_soon'
+    | 'goal_stalled'
+    | 'attested_scan_on_file';
   label: string;
 };
 
@@ -40,6 +45,8 @@ export type CleoReadCardData = {
   cases: CaseAwarenessSummary;
   patterns: ObservedPatternSummary[];
   openFollowUpCount: number;
+  /** Accepted scans on chart (server count; may exceed state-rebuild patterns). */
+  attestedScanCount: number;
   lastRebuiltAt: string | null;
 };
 
@@ -101,6 +108,11 @@ export function CleoReadCard({ patientFirstName, data, onAskOpen }: Props) {
   if (data.openFollowUpCount > 0) {
     headlineParts.push(
       `${data.openFollowUpCount} open follow-up${data.openFollowUpCount === 1 ? '' : 's'}`,
+    );
+  }
+  if (data.attestedScanCount > 0) {
+    headlineParts.push(
+      `${data.attestedScanCount} accepted scan${data.attestedScanCount === 1 ? '' : 's'}`,
     );
   }
 

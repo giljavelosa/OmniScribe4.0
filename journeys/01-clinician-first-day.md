@@ -1,5 +1,8 @@
 # Journey 01 — Clinician's First Day
 
+> **Sprint 0.20 — MFA removed.** Any reference to MFA, /mfa-challenge, /mfa-setup, TOTP, authenticator app setup, or login-verified gates in this document is HISTORICAL. Authentication is now password-only. See `context/specs/01-foundation-auth-tenant.md` and `progress-tracker.md`.
+
+
 > A new clinician at a customer clinic. Goes from "I got an invite email" to "I just signed my first OmniScribe note" in under 20 minutes.
 
 ## Who

@@ -27,6 +27,22 @@ type Flag = {
   resolutionNote: string | null;
 };
 
+/**
+ * Sprint 0 lockdown — the `meta` envelope from GET /flags. The panel
+ * uses these to render the right button state + the lockdown copy +
+ * the carried-forward affordance per row.
+ */
+type FlagsMeta = {
+  analysisState?: 'idle' | 'pending' | 'completed';
+  runCount?: number;
+  runsRemaining?: number;
+  cap?: number;
+  canReanalyze?: boolean;
+  editedSinceLastAnalysis?: boolean;
+  editedSectionIds?: string[];
+  lastAnalysisCompletedAt?: string | null;
+};
+
 type Props = {
   noteId: string;
   sections: Array<{ id: string; label: string }>;
@@ -50,6 +66,7 @@ const SEVERITY_ORDER: Severity[] = ['RED', 'BLUE', 'YELLOW'];
  */
 export function FlagReviewPanel({ noteId, sections, isSigned }: Props) {
   const [flags, setFlags] = useState<Flag[]>([]);
+  const [meta, setMeta] = useState<FlagsMeta>({});
   const [error, setError] = useState<string | null>(null);
   const [loading, startLoading] = useTransition();
   const [analyzing, startAnalyzing] = useTransition();
@@ -68,8 +85,9 @@ export function FlagReviewPanel({ noteId, sections, isSigned }: Props) {
         setError('Failed to load flags.');
         return;
       }
-      const json = (await res.json()) as { data: Flag[] };
+      const json = (await res.json()) as { data: Flag[]; meta?: FlagsMeta };
       setFlags(json.data);
+      if (json.meta) setMeta(json.meta);
     });
   }
 
@@ -84,11 +102,26 @@ export function FlagReviewPanel({ noteId, sections, isSigned }: Props) {
     startAnalyzing(async () => {
       const res = await fetch(`/api/notes/${noteId}/analyze-flags`, { method: 'POST' });
       if (!res.ok) {
-        const body = await res.json().catch(() => null);
+        const body = (await res.json().catch(() => null)) as
+          | { error?: { code?: string; message?: string } }
+          | null;
+        // Sprint 0 lockdown — surface the cap as its own message so
+        // the clinician doesn't read a generic failure. The panel's
+        // header will already be hiding the button after a successful
+        // run #2; this catches racy double-clicks.
+        if (body?.error?.code === 'analysis_cap_reached') {
+          setAnalyzeMessage(
+            body.error.message ??
+              "You've already used both AI analysis passes on this note. Resolve the remaining flags or sign.",
+          );
+          // Reload to pick up the locked-state meta.
+          load();
+          return;
+        }
         setAnalyzeMessage(body?.error?.message ?? `Analyze failed (${res.status}).`);
         return;
       }
-      setAnalyzeMessage('Analyzing — checking for new flags every few seconds…');
+      setAnalyzeMessage('Re-analyzing — Haiku is checking your edits for new compliance flags…');
       setIsPolling(true);
       // Poll the lifecycle state, NOT the flag count. The previous
       // implementation stopped on "count unchanged" which was a false
@@ -107,14 +140,15 @@ export function FlagReviewPanel({ noteId, sections, isSigned }: Props) {
           if (r.ok) {
             const json = (await r.json()) as {
               data: Flag[];
-              meta?: { analysisState?: 'idle' | 'pending' | 'completed' };
+              meta?: FlagsMeta;
             };
             setFlags(json.data);
+            if (json.meta) setMeta(json.meta);
             if (json.meta?.analysisState === 'completed') {
               const newOpen = json.data.filter((f) => f.status === 'OPEN').length;
               setAnalyzeMessage(
                 newOpen === 0
-                  ? 'Analysis finished — no compliance flags surfaced.'
+                  ? 'Re-analysis finished — no new compliance flags surfaced.'
                   : null,
               );
               setIsPolling(false);
@@ -140,15 +174,41 @@ export function FlagReviewPanel({ noteId, sections, isSigned }: Props) {
   const grouped = useMemo(() => {
     const open = flags.filter((f) => f.status === 'OPEN');
     const greenResolved = flags.filter((f) => f.severity === 'GREEN' && f.status === 'RESOLVED');
+    // Sprint 0 lockdown — surfaces the "Cleo re-found 3 things you
+    // already fixed; we honored your prior decisions" copy so the
+    // clinician sees that re-analyzing didn't undo their work.
+    const carriedForward = flags.filter((f) => f.resolutionAction === 'CARRIED_FORWARD');
     const byOpenSev: Record<Severity, Flag[]> = { RED: [], BLUE: [], YELLOW: [], GREEN: [] };
     for (const f of open) byOpenSev[f.severity].push(f);
-    return { byOpenSev, greenResolvedCount: greenResolved.length, totalOpen: open.length };
+    return {
+      byOpenSev,
+      greenResolvedCount: greenResolved.length,
+      carriedForwardCount: carriedForward.length,
+      totalOpen: open.length,
+    };
   }, [flags]);
+
+  // Sprint 0 lockdown — derived UI state for the header + button.
+  //
+  //   - lockedByCap : both runs used; button hidden permanently
+  //   - lockedByPending : a run is in flight; button disabled to avoid races
+  //   - showLegacyAnalyze : pre-deploy note that hasn't been analyzed yet;
+  //                         the inline pipeline didn't run so we let the
+  //                         clinician kick off run #1 manually (one-shot
+  //                         backward compat per L-9 in the spec).
+  //
+  // The cap is the user-facing endpoint: once it's reached, the panel
+  // shifts to a "review what you've got and sign" framing.
+  const runCount = meta.runCount ?? 0;
+  const runsRemaining = meta.runsRemaining ?? Math.max(0, (meta.cap ?? 2) - runCount);
+  const lockedByCap = !isSigned && meta.canReanalyze === false && runCount >= (meta.cap ?? 2);
+  const lockedByPending = meta.analysisState === 'pending';
+  const showLegacyAnalyze = !isSigned && runCount === 0 && flags.length === 0;
 
   return (
     <Card>
       <CardHeader className="flex flex-row items-start justify-between gap-3">
-        <div>
+        <div className="space-y-1">
           <CardTitle className="text-md flex items-center gap-2">
             <Sparkles className="size-4" aria-hidden="true" />
             Flag review
@@ -157,11 +217,45 @@ export function FlagReviewPanel({ noteId, sections, isSigned }: Props) {
             AI compliance flags grouped by severity. RED contradicts the transcript and must be
             resolved before sign; BLUE / YELLOW are clinician judgment calls.
           </CardDescription>
+          {!isSigned && runCount > 0 && (
+            <p className="text-xs text-muted-foreground">
+              {lockedByCap ? (
+                <>
+                  <span className="font-medium text-foreground">Analysis locked.</span>{' '}
+                  Both AI analysis passes have been used. Resolve any remaining flags and sign.
+                </>
+              ) : (
+                <>
+                  Analyzed {runCount} of {meta.cap ?? 2} times.{' '}
+                  {runsRemaining > 0
+                    ? `${runsRemaining} re-analysis remaining.`
+                    : 'No re-analyses remaining.'}
+                </>
+              )}
+            </p>
+          )}
         </div>
-        {!isSigned && (
-          <Button type="button" variant="outline" size="sm" onClick={analyze} disabled={analyzing}>
+        {!isSigned && !lockedByCap && (showLegacyAnalyze || runCount > 0) && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={analyze}
+            disabled={analyzing || lockedByPending}
+            title={
+              lockedByPending
+                ? 'AI is still analyzing — please wait.'
+                : runsRemaining === 0
+                  ? 'No re-analyses remaining.'
+                  : undefined
+            }
+          >
             <Eye className={cn('size-3', analyzing && 'animate-pulse')} aria-hidden="true" />
-            {analyzing ? 'Analyzing…' : flags.length > 0 ? 'Re-analyze' : 'Analyze for flags'}
+            {analyzing
+              ? 'Analyzing…'
+              : runCount === 0
+                ? 'Analyze for flags'
+                : 'Re-analyze'}
           </Button>
         )}
       </CardHeader>
@@ -193,6 +287,15 @@ export function FlagReviewPanel({ noteId, sections, isSigned }: Props) {
             <Check className="inline size-3 text-[var(--status-success-fg)] mr-1" aria-hidden="true" />
             {grouped.greenResolvedCount} claim{grouped.greenResolvedCount === 1 ? '' : 's'} auto-verified
             (GREEN, source matches transcript).
+          </p>
+        )}
+
+        {grouped.carriedForwardCount > 0 && (
+          <p className="text-xs text-muted-foreground">
+            <Check className="inline size-3 text-[var(--status-success-fg)] mr-1" aria-hidden="true" />
+            {grouped.carriedForwardCount} finding
+            {grouped.carriedForwardCount === 1 ? '' : 's'} carried forward from your prior decisions
+            — re-analysis re-surfaced these, and your previous resolutions were honored automatically.
           </p>
         )}
 
@@ -336,6 +439,7 @@ function FlagRow({
   const actionsDisabled = pending || isAnalyzing;
 
   const cfg = severityVisual(flag.severity);
+  const carriedForward = flag.resolutionAction === 'CARRIED_FORWARD';
 
   return (
     <li className={cn('rounded-md border p-3 space-y-2', cfg.rowClass)}>
@@ -347,6 +451,11 @@ function FlagRow({
             <span className="text-muted-foreground">
               {Math.round(flag.confidence * 100)}% confidence
             </span>
+            {carriedForward && (
+              <StatusBadge variant="success" noIcon>
+                Carried forward from prior analysis
+              </StatusBadge>
+            )}
           </div>
           <p className="text-sm font-medium">&ldquo;{flag.claim}&rdquo;</p>
           <p className="text-xs text-muted-foreground">{flag.rationale}</p>
@@ -358,6 +467,11 @@ function FlagRow({
           {flag.suggestion && (
             <p className="text-xs text-[var(--status-success-fg)] border-l-2 border-[var(--status-success-border)] pl-2">
               Suggested: {flag.suggestion}
+            </p>
+          )}
+          {carriedForward && flag.resolutionNote && (
+            <p className="text-xs text-muted-foreground border-l-2 border-[var(--status-success-border)] pl-2">
+              {flag.resolutionNote}
             </p>
           )}
         </div>

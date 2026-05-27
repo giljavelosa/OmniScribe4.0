@@ -28,9 +28,12 @@ const DIVISIONS = [
   { value: 'MULTI', label: 'Multi' },
 ];
 
-const VISIBILITY = [
+const VISIBILITY_ALL = [
   { value: 'PERSONAL', label: 'Personal (only you)' },
   { value: 'TEAM', label: 'Team (whole org)' },
+];
+const VISIBILITY_PERSONAL_ONLY = [
+  { value: 'PERSONAL', label: 'Personal (only you)' },
 ];
 
 const SENSITIVITY = [
@@ -42,12 +45,23 @@ const SENSITIVITY = [
 /**
  * CreateTemplateSheet — header / structure-only form. Initial section
  * skeleton (one "Notes" section) is created server-side; the per-section
- * editor lives in /admin/templates/[id]. Two-step flow is simpler than
- * a single mega-form + lets the live preview show against an empty
+ * editor lives at `${basePath}/[id]`. Two-step flow is simpler than a
+ * single mega-form + lets the live preview show against an empty
  * starter shape.
+ *
+ * `basePath` parameterizes the editor URL (admin → `/admin/templates`;
+ * clinical → `/templates`). `personalOnly` hides TEAM from the picker
+ * for non-admin callers — the API enforces the same rule server-side.
  */
-export function CreateTemplateSheet() {
+export function CreateTemplateSheet({
+  basePath = '/admin/templates',
+  personalOnly = false,
+}: {
+  basePath?: string;
+  personalOnly?: boolean;
+} = {}) {
   const router = useRouter();
+  const visibilityChoices = personalOnly ? VISIBILITY_PERSONAL_ONLY : VISIBILITY_ALL;
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -94,7 +108,7 @@ export function CreateTemplateSheet() {
       }
       const json = (await res.json()) as { data: { id: string } };
       setOpen(false);
-      router.push(`/admin/templates/${json.data.id}`);
+      router.push(`${basePath}/${json.data.id}`);
     });
   }
 
@@ -146,9 +160,9 @@ export function CreateTemplateSheet() {
             <div className="space-y-1.5">
               <Label>Visibility</Label>
               <Select value={visibility} onValueChange={setVisibility}>
-                <SelectTrigger disabled={pending}><SelectValue /></SelectTrigger>
+                <SelectTrigger disabled={pending || personalOnly}><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {VISIBILITY.map((v) => <SelectItem key={v.value} value={v.value}>{v.label}</SelectItem>)}
+                  {visibilityChoices.map((v) => <SelectItem key={v.value} value={v.value}>{v.label}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>

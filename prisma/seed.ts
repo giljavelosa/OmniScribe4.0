@@ -3,14 +3,15 @@
  * every role (ORG_ADMIN, CLINICIAN, VIEWER, SITE_ADMIN, PLATFORM_OWNER),
  * one site with two rooms, and 5 seats. All passwords hash to `Demo1234!`.
  *
- * D9 — admin@demo.local seeds with MFA pre-enrolled using the canonical otplib
- * test vector secret `JBSWY3DPEHPK3PXP`. Document at docs/SEED_CREDENTIALS.md.
+ * All passwords hash to `Demo1234!`. Sign-in codes are emailed (or SMS-stubbed)
+ * on each login — check the dev-server log when RESEND is in stub mode.
  *
  * Anti-regression rule 4: ALWAYS run `npx prisma db seed` after schema changes.
  */
 
 import {
   PrismaClient,
+  BillingPlan,
   Division,
   OrgRole,
   PlatformRole,
@@ -33,7 +34,6 @@ import {
   ExternalContextStatus,
 } from '@prisma/client';
 import bcrypt from 'bcryptjs';
-import { generate as generateTotp } from 'otplib';
 import {
   SEED_VISIT_CORPUS,
   SEED_PATIENT_DEMOGRAPHICS,
@@ -60,16 +60,13 @@ import { upsertCaseManagement, upsertRehabEpisode } from './seed-case-helpers';
 import { seedAcmeOrganization, seedAcmeAdditionalEpisodes } from './seed-acme-org';
 import { seedCascadiaOrganization } from './seed-cascadia-org';
 import { seedRiverbendOrganization } from './seed-riverbend-org';
+import { seedCarePathwaysForOrg } from './seed-care-pathways';
 import type { PriorContextBriefContent } from '../src/types/brief';
 
 const prisma = new PrismaClient();
 
 const DEMO_PASSWORD = 'Demo1234!';
 const BCRYPT_ROUNDS = 12;
-// Stable test secret (20 bytes / 32 base32 chars) — predictable for local dev only.
-// Never set this secret in any deployed environment. otplib v13 enforces a
-// 16-byte minimum; the old 10-byte JBSWY3DPEHPK3PXP test vector is too short.
-const DEMO_ADMIN_MFA_SECRET = '7FSWEU6M2MYDQONC5WHDM72MK3FUQZ4Q';
 
 async function hashPassword(plain: string) {
   return bcrypt.hash(plain, BCRYPT_ROUNDS);
@@ -112,6 +109,12 @@ async function seedVisitCorpus(
       'seed-acme-episode-bh': 'seed-acme-case-seed-acme-patient-bh',
       'seed-acme-episode-rh-medical': 'seed-acme-case-rh-medical',
       'seed-acme-episode-es-medical': 'seed-acme-case-es-medical',
+      // Rachel Kim's BH visits in ACME_EXTENDED_VISITS reference this
+      // episode id, but BH never gets an EpisodeOfCare row (REHAB-only by
+      // schema CHECK). The case itself is created by
+      // seedAcmeAdditionalEpisodes (seed-acme-org.ts) — map points the
+      // orphan episode id at it so the encounter upsert resolves.
+      'seed-acme-episode-rk-bh': 'seed-acme-case-rk-bh',
       'seed-cascadia-episode-marcus-medical': 'seed-cascadia-case-marcus-medical',
       'seed-cascadia-episode-marcus-bh': 'seed-cascadia-case-marcus-bh',
       'seed-cascadia-episode-priya-medical': 'seed-cascadia-case-priya-medical',
@@ -237,6 +240,19 @@ async function seedBriefsAndFollowUps(
   for (const spec of specs) {
     const input = spec.builder(spec.noteId, spec.orgId);
     const content = buildPatientBrief(input);
+    // Some BriefInputs reference division-scoped episode ids (MEDICAL/BH)
+    // that never become EpisodeOfCare rows — episodes are REHAB-only by
+    // schema CHECK. Validate the linkage so the FollowUp upsert (which
+    // has an episodeId FK constraint) doesn't fail.
+    const episodeId =
+      input.episodeId &&
+      (await prisma.episodeOfCare.findUnique({
+        where: { id: input.episodeId },
+        select: { id: true },
+      }))
+        ? input.episodeId
+        : null;
+
     await prisma.noteBrief.upsert({
       where: { noteId: spec.noteId },
       update: { content: content as unknown as object },
@@ -245,7 +261,7 @@ async function seedBriefsAndFollowUps(
         noteId: spec.noteId,
         patientId: input.patientId,
         orgId: spec.orgId,
-        episodeId: input.episodeId ?? null,
+        episodeId,
         sourceNoteIds: content.sourceNoteIds,
         generatedAt: new Date(),
         generatorVersion: 'seed-v1',
@@ -262,7 +278,7 @@ async function seedBriefsAndFollowUps(
           id: fu.followUpId,
           orgId: spec.orgId,
           patientId: input.patientId,
-          episodeId: input.episodeId ?? null,
+          episodeId,
           originNoteId: fu.source.noteId,
           text: fu.text,
           status: 'OPEN',
@@ -272,40 +288,179 @@ async function seedBriefsAndFollowUps(
   }
 }
 
-/** Returns 10 plain recovery codes and their bcrypt hashes. */
-async function generateRecoveryCodes(count = 10) {
-  const plain: string[] = [];
-  const hashed: string[] = [];
-  for (let i = 0; i < count; i++) {
-    const code = Math.random().toString(36).slice(2, 7) + '-' + Math.random().toString(36).slice(2, 7);
-    plain.push(code);
-    hashed.push(await bcrypt.hash(code, BCRYPT_ROUNDS));
+/**
+ * Fallback brief generator for any patient with a signed note but no curated
+ * NoteBrief. Prevents "Brief unavailable" on the prepare-visit + patient pages
+ * for seeded patients the curated `seedBriefsAndFollowUps` list missed.
+ *
+ * Real notes signed through the UI enqueue a `precompute-brief` BullMQ job
+ * (sign route → note-brief worker → LLM). Seed inserts notes directly, so
+ * that job never fires — we synthesize a minimal-but-valid brief instead.
+ * Idempotent: skips any patient who already has a NoteBrief row.
+ */
+async function seedFallbackBriefsForUnbriefed() {
+  console.log('Seeding fallback NoteBriefs for any signed notes without one …');
+
+  const briefed = await prisma.noteBrief.findMany({ select: { patientId: true } });
+  const briefedPatientIds = new Set(briefed.map((b) => b.patientId));
+
+  const signedNotes = await prisma.note.findMany({
+    where: {
+      status: { in: [NoteStatus.SIGNED, NoteStatus.TRANSFERRED] },
+      patientId: { notIn: [...briefedPatientIds] },
+    },
+    orderBy: { signedAt: 'desc' },
+    select: {
+      id: true,
+      orgId: true,
+      patientId: true,
+      signedAt: true,
+      division: true,
+      templateId: true,
+      clinicianOrgUserId: true,
+      encounterId: true,
+    },
+  });
+
+  const mostRecentByPatient = new Map<string, (typeof signedNotes)[number]>();
+  for (const n of signedNotes) {
+    if (!mostRecentByPatient.has(n.patientId)) mostRecentByPatient.set(n.patientId, n);
   }
-  return { plain, hashed };
+
+  if (mostRecentByPatient.size === 0) {
+    console.log('  All seeded patients already have briefs — nothing to backfill.');
+    return;
+  }
+
+  const notes = [...mostRecentByPatient.values()];
+  const clinicianIds = [...new Set(notes.map((n) => n.clinicianOrgUserId))];
+  const templateIds = [...new Set(notes.map((n) => n.templateId).filter((v): v is string => !!v))];
+  const encounterIds = [...new Set(notes.map((n) => n.encounterId).filter((v): v is string => !!v))];
+
+  const [clinicians, templates, encounters] = await Promise.all([
+    prisma.orgUser.findMany({
+      where: { id: { in: clinicianIds } },
+      select: { id: true, user: { select: { name: true, email: true } } },
+    }),
+    prisma.noteTemplate.findMany({
+      where: { id: { in: templateIds } },
+      select: { id: true, name: true },
+    }),
+    prisma.encounter.findMany({
+      where: { id: { in: encounterIds } },
+      select: { id: true, episodeOfCareId: true },
+    }),
+  ]);
+
+  const clinicianById = new Map(clinicians.map((c) => [c.id, c]));
+  const templateById = new Map(templates.map((t) => [t.id, t]));
+  const encounterById = new Map(encounters.map((e) => [e.id, e]));
+
+  const generatedAt = new Date();
+  let created = 0;
+
+  for (const [patientId, note] of mostRecentByPatient) {
+    const clinician = clinicianById.get(note.clinicianOrgUserId);
+    const template = note.templateId ? templateById.get(note.templateId) : null;
+    const encounter = note.encounterId ? encounterById.get(note.encounterId) : null;
+
+    const clinicianName = clinician?.user?.name ?? clinician?.user?.email ?? 'Clinician';
+
+    const signedAt = note.signedAt ?? generatedAt;
+    const daysAgo = Math.max(
+      0,
+      Math.floor((generatedAt.getTime() - signedAt.getTime()) / 86_400_000),
+    );
+    const noteType =
+      note.division === Division.REHAB
+        ? 'Rehab note'
+        : note.division === Division.BEHAVIORAL_HEALTH
+          ? 'BH session'
+          : 'Medical note';
+
+    const content: PriorContextBriefContent = {
+      patientOneLine: null,
+      episodeContext: null,
+      lastVisit: {
+        noteId: note.id,
+        date: signedAt.toISOString().slice(0, 10),
+        daysAgo,
+        clinicianName,
+        noteType,
+        templateName: template?.name ?? null,
+      },
+      chiefConcern: null,
+      priorAssessment: null,
+      trajectory: null,
+      objectiveMeasures: [],
+      interventionsPerformed: [],
+      homeProgram: null,
+      educationGiven: [],
+      carryForwardPlan: [],
+      topActiveGoals: [],
+      watch: {
+        recentMedChanges: [],
+        recentResults: [],
+        precautions: [],
+        redFlagsFromPriorNote: [],
+      },
+      sourceNoteIds: [note.id],
+      openFollowUps: [],
+      generatedAt: generatedAt.toISOString(),
+      generatorVersion: 'seed-fallback-v1',
+    };
+
+    await prisma.noteBrief.upsert({
+      where: { noteId: note.id },
+      update: { content: content as unknown as object, generatedAt },
+      create: {
+        id: `seed-fallback-brief-${note.id}`,
+        noteId: note.id,
+        patientId,
+        orgId: note.orgId,
+        episodeId: encounter?.episodeOfCareId ?? null,
+        sourceNoteIds: [note.id],
+        generatedAt,
+        generatorVersion: 'seed-fallback-v1',
+        model: 'seed-fallback',
+        content: content as unknown as object,
+      },
+    });
+    created++;
+  }
+
+  console.log(`  Seeded ${created} fallback briefs.`);
 }
 
 async function main() {
   const passwordHash = await hashPassword(DEMO_PASSWORD);
-  const adminRecoveryCodes = await generateRecoveryCodes(10);
 
   console.log('Seeding Demo Clinic …');
 
   // ---------------- Organization + Site + Rooms ----------------
   const org = await prisma.organization.upsert({
     where: { id: 'seed-demo-clinic' },
-    update: {},
+    // Keep the PRACTICE plan up-to-date on re-seed against existing dev
+    // databases — without this, a dev DB seeded before this change
+    // stays on TRIAL (seatCap=1) and every invite-related flow 409s.
+    update: { billingPlan: BillingPlan.PRACTICE },
     create: {
       id: 'seed-demo-clinic',
       name: 'Demo Clinic',
       division: Division.MULTI,
       defaultDivision: Division.MEDICAL,
       billingEmail: 'billing@demo.local',
-      forceMfa: false,
       // BAA pre-attested so the Owner console shows green for the demo org.
       baaExecutedAt: new Date('2026-05-17T00:00:00Z'),
       baaVersion: '2026.05.01',
       // Note: countersignedBy filled in after we create the owner user below.
       complianceProfile: ComplianceProfile.STANDARD,
+      // PRACTICE plan = 49-seat cap. The demo org seeds 12 clinicians
+      // already (Main + South + cross-division roles), so the default
+      // TRIAL plan's 1-seat cap would block any invite-create flow in
+      // dev. PRACTICE matches the demo org's "small mixed-discipline
+      // clinic" persona + lets e2e invite specs actually create rows.
+      billingPlan: BillingPlan.PRACTICE,
     },
   });
 
@@ -322,6 +477,24 @@ async function main() {
     },
   });
 
+  // Second site for site-scoping coverage. Used by e2e specs that need to
+  // prove SITE_ADMIN's enrollment scope actually restricts user/site
+  // listings + write paths (encounters, patient creation). The dev seed
+  // is the single source of truth for fixture data; otherwise every
+  // multi-site test would have to bring its own beforeAll setup.
+  const siteSouth = await prisma.site.upsert({
+    where: { id: 'seed-demo-site-south' },
+    update: {},
+    create: {
+      id: 'seed-demo-site-south',
+      orgId: org.id,
+      name: 'Demo South Office',
+      address: '2 South Plaza, Springfield, USA',
+      phone: '+1-555-0200',
+      primaryDivision: Division.MEDICAL,
+    },
+  });
+
   await prisma.room.upsert({
     where: { id: 'seed-demo-room-1' },
     update: {},
@@ -332,9 +505,13 @@ async function main() {
     update: {},
     create: { id: 'seed-demo-room-2', siteId: site.id, name: 'Exam Room 2' },
   });
+  await prisma.room.upsert({
+    where: { id: 'seed-demo-room-south-1' },
+    update: {},
+    create: { id: 'seed-demo-room-south-1', siteId: siteSouth.id, name: 'South Exam Room 1' },
+  });
 
   // ---------------- Users + OrgUsers + Seats ----------------
-  // Tuple shape: [email, OrgRole, Division, profession?, professionType?, canManagePatients?, mfaEnabled?, platformRole?]
   const users: Array<{
     email: string;
     role: OrgRole;
@@ -342,10 +519,9 @@ async function main() {
     profession?: string;
     professionType?: Profession;
     canManagePatients?: boolean;
-    mfaEnabled: boolean;
     platformRole?: PlatformRole;
   }> = [
-    { email: 'admin@demo.local', role: OrgRole.ORG_ADMIN, division: Division.MULTI, mfaEnabled: true },
+    { email: 'admin@demo.local', role: OrgRole.ORG_ADMIN, division: Division.MULTI },
     {
       email: 'clinician@demo.local',
       role: OrgRole.CLINICIAN,
@@ -353,20 +529,26 @@ async function main() {
       profession: 'Family Medicine MD',
       professionType: Profession.MD,
       canManagePatients: true,
-      mfaEnabled: false,
     },
-    { email: 'viewer@demo.local', role: OrgRole.VIEWER, division: Division.MEDICAL, mfaEnabled: false },
+    { email: 'viewer@demo.local', role: OrgRole.VIEWER, division: Division.MEDICAL },
     {
       email: 'siteadmin@demo.local',
       role: OrgRole.SITE_ADMIN,
       division: Division.MEDICAL,
-      mfaEnabled: false,
+    },
+    {
+      // Site-scoped admin pinned to Demo South Office only. Pairs with
+      // `siteadmin@demo.local` (Main Office) so e2e specs can prove
+      // SITE_ADMIN sees a STRICTLY DIFFERENT user/site set depending
+      // on which site they're enrolled at.
+      email: 'southadmin@demo.local',
+      role: OrgRole.SITE_ADMIN,
+      division: Division.MEDICAL,
     },
     {
       email: 'owner@demo.local',
       role: OrgRole.CLINICIAN, // org-membership role; platform-owner-ness lives on User.platformRole
       division: Division.MEDICAL,
-      mfaEnabled: false,
       platformRole: PlatformRole.PLATFORM_OWNER,
     },
   ];
@@ -378,28 +560,12 @@ async function main() {
       where: { email: u.email },
       update: {
         passwordHash,
-        // Only re-stamp the canonical test secret for users pre-enrolled in the
-        // seed definition (admin@demo.local). For all other seed users, leave
-        // mfaEnabled / mfaSecret / mfaRecoveryCodes untouched so that any real
-        // enrollment completed during a dev session survives a re-seed.
-        // Without this guard, every `npx prisma db seed` call resets
-        // mfaEnabled=false, forcing the MFA setup screen on every sign-in.
-        ...(u.mfaEnabled
-          ? {
-              mfaSecret: DEMO_ADMIN_MFA_SECRET,
-              mfaEnabled: true,
-              mfaRecoveryCodes: adminRecoveryCodes.hashed as unknown as object,
-            }
-          : {}),
         platformRole: u.platformRole ?? PlatformRole.NONE,
       },
       create: {
         email: u.email,
         name: u.email.split('@')[0]!.replace(/\./g, ' '),
         passwordHash,
-        mfaSecret: u.mfaEnabled ? DEMO_ADMIN_MFA_SECRET : null,
-        mfaEnabled: u.mfaEnabled,
-        mfaRecoveryCodes: u.mfaEnabled ? (adminRecoveryCodes.hashed as unknown as object) : undefined,
         platformRole: u.platformRole ?? PlatformRole.NONE,
       },
     });
@@ -464,20 +630,30 @@ async function main() {
     }
 
     // Multi-site enrollment seed — pre-enroll the clinician and the site
-    // admin at the demo site as primary so the demo flows work end-to-end
-    // without an admin click. Org-wide-admins (admin@demo.local /
-    // owner@demo.local) don't need rows here.
-    if (u.email === 'clinician@demo.local' || u.email === 'siteadmin@demo.local') {
+    // admins at the demo site(s) as primary so the demo flows work
+    // end-to-end without an admin click. Org-wide-admins
+    // (admin@demo.local / owner@demo.local) don't need rows here.
+    //
+    // `siteadmin@demo.local`  → Main Office only
+    // `southadmin@demo.local` → South Office only (e2e site-scope fixture)
+    // `clinician@demo.local`  → Main Office (primary)
+    if (
+      u.email === 'clinician@demo.local' ||
+      u.email === 'siteadmin@demo.local' ||
+      u.email === 'southadmin@demo.local'
+    ) {
       const ou = await prisma.orgUser.findUnique({
         where: { userId_orgId: { userId: user.id, orgId: org.id } },
       });
       if (ou) {
+        const enrollSiteId =
+          u.email === 'southadmin@demo.local' ? siteSouth.id : site.id;
         await prisma.orgUserSite.upsert({
-          where: { orgUserId_siteId: { orgUserId: ou.id, siteId: site.id } },
+          where: { orgUserId_siteId: { orgUserId: ou.id, siteId: enrollSiteId } },
           update: { isPrimary: true },
           create: {
             orgUserId: ou.id,
-            siteId: site.id,
+            siteId: enrollSiteId,
             isPrimary: true,
           },
         });
@@ -894,7 +1070,6 @@ async function main() {
         email: c.email,
         name: c.name,
         passwordHash: await hashPassword(DEMO_PASSWORD),
-        mfaEnabled: false,
         platformRole: PlatformRole.NONE,
       },
     });
@@ -1309,6 +1484,12 @@ async function main() {
   // Riverbend Integrated Care — fourth org with Jamal + Linda.
   const riverbendCtx = await seedRiverbendOrganization(prisma, hashPassword);
 
+  // Sprint 0.19 / Tier 12 — starter Care Pathway library for every org.
+  // Idempotent (skips when (orgId, primaryIcd, version) already exists).
+  for (const orgIdForPathways of [org.id, acmeCtx.orgId, cascadiaCtx.orgId, riverbendCtx.orgId]) {
+    await seedCarePathwaysForOrg(prisma, orgIdForPathways);
+  }
+
   const deptByKey = {
     medical: deptMedical.id,
     rehab: deptRehab.id,
@@ -1339,6 +1520,8 @@ async function main() {
     { builder: JAMAL_CARTER_BRIEF, noteId: 'seed-riverbend-visit-jc-md-headline', orgId: riverbendCtx.orgId },
     { builder: LINDA_FOSTER_BRIEF, noteId: 'seed-riverbend-visit-lf-md-headline', orgId: riverbendCtx.orgId },
   ]);
+
+  await seedFallbackBriefsForUnbriefed();
 
   // Backfill ICD-10-CM codes onto migration-generated CaseManagement rows
   // (`cm-from-ep-*` and `cm-uncat-*`). These predate the seed helper and are
@@ -1388,14 +1571,7 @@ async function main() {
     });
   }
 
-  // Sanity: generate a TOTP token against the seeded secret so devs know
-  // their authenticator app will accept it.
-  const token = await generateTotp({ secret: DEMO_ADMIN_MFA_SECRET });
-  console.log(`Seeded admin@demo.local MFA secret (test vector): ${DEMO_ADMIN_MFA_SECRET}`);
-  console.log(`Current TOTP token (changes every 30s): ${token}`);
-  console.log(`Recovery codes (one-time print): ${adminRecoveryCodes.plain.join(', ')}`);
-
-  console.log('Seed complete.');
+  console.log('Seed complete. Sign-in codes print to the dev-server log in email/SMS stub mode.');
 }
 
 main()

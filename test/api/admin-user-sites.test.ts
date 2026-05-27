@@ -91,7 +91,6 @@ describe('POST /api/admin/users/[id]/sites', () => {
       division: 'MULTI',
       isActive: true,
       canManagePatients: false,
-      organization: { forceMfa: false },
     });
 
     const res = await POST(buildRequest({ wrongField: true }), {
@@ -111,7 +110,6 @@ describe('POST /api/admin/users/[id]/sites', () => {
       division: 'MULTI',
       isActive: true,
       canManagePatients: false,
-      organization: { forceMfa: false },
     });
 
     const res = await POST(buildRequest({ siteIds: ['s1', 's2'], primarySiteId: 's_other' }), {
@@ -131,7 +129,6 @@ describe('POST /api/admin/users/[id]/sites', () => {
       division: 'MULTI',
       isActive: true,
       canManagePatients: false,
-      organization: { forceMfa: false },
     });
     orgUserFindFirst.mockResolvedValueOnce({ id: 'ou_target', role: 'CLINICIAN' });
     siteFindMany.mockResolvedValueOnce([{ id: 's1' }]); // only 1 of 2 belongs to org
@@ -153,7 +150,6 @@ describe('POST /api/admin/users/[id]/sites', () => {
       division: 'MULTI',
       isActive: true,
       canManagePatients: false,
-      organization: { forceMfa: false },
     });
     orgUserFindFirst.mockResolvedValueOnce({ id: 'ou_target', role: 'CLINICIAN' });
     siteFindMany.mockResolvedValueOnce([{ id: 's1' }, { id: 's2' }]);

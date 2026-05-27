@@ -1,5 +1,8 @@
 # Unit 32: Owner Console Maturity
 
+> **Sprint 0.20 — MFA removed.** Any reference to MFA, /mfa-challenge, /mfa-setup, TOTP, authenticator app setup, or login-verified gates in this document is HISTORICAL. Authentication is now password-only. See `context/specs/01-foundation-auth-tenant.md` and `progress-tracker.md`.
+
+
 > **Wave 6** (platform). Subscription plan metadata in this unit is **Wave 7 Unit 39** — see [`00-build-plan.md`](00-build-plan.md) Wave 7.
 
 ## Goal

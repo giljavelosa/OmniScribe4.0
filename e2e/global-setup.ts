@@ -47,11 +47,15 @@ export default async function globalSetup(): Promise<void> {
 
   const browser = await chromium.launch();
   try {
-    process.stdout.write('[e2e setup] caching auth state for admin + clinician + viewer + owner…\n');
+    process.stdout.write(
+      '[e2e setup] caching auth state for admin + clinician + viewer + owner + siteadmin + southadmin…\n',
+    );
     await saveAuthState(browser, 'admin');
     await saveAuthState(browser, 'clinician');
     await saveAuthState(browser, 'viewer');
     await saveAuthState(browser, 'owner');
+    await saveAuthState(browser, 'siteadmin');
+    await saveAuthState(browser, 'southadmin');
     process.stdout.write('[e2e setup] auth state cached.\n');
   } finally {
     await browser.close();

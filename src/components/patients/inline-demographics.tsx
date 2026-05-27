@@ -148,6 +148,9 @@ export function InlineDemographics({
               save();
             }}
           >
+            <p className="col-span-full text-xs text-muted-foreground">
+              Please fill in as much information as possible to prevent save errors. If a value is unknown, enter <span className="font-mono">n/a</span> rather than leaving the field blank.
+            </p>
             <div className="space-y-1.5">
               <Label htmlFor="firstName">First name</Label>
               <Input id="firstName" value={firstName} onChange={(e) => setFirstName(e.target.value)} disabled={pending} />

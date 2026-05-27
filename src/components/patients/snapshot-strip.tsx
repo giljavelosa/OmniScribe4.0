@@ -52,7 +52,7 @@ export function PatientSnapshotStrip({ patientId, strip }: Props) {
       <div className="flex flex-wrap gap-2">
         {strip.measures.map((m) => (
           <SnapshotCard
-            key={m.measureKey}
+            key={`${m.measureKey}:${m.case?.id ?? 'none'}`}
             patientId={patientId}
             measure={m}
             episodeId={episodeId}
@@ -129,7 +129,15 @@ function SnapshotCard({
   return (
     <div className="min-w-[160px] rounded-lg border border-border bg-card p-3 space-y-1 relative">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-xs uppercase tracking-wide text-muted-foreground">{measure.label}</p>
+        <div className="min-w-0">
+          <p className="text-xs uppercase tracking-wide text-muted-foreground">{measure.label}</p>
+          {measure.case && (
+            <p className="text-[10px] text-muted-foreground/80 truncate" title={measure.case.label}>
+              {measure.case.primaryIcd ? `${measure.case.primaryIcd} · ` : ''}
+              {measure.case.label}
+            </p>
+          )}
+        </div>
         <Tooltip>
           <TooltipTrigger asChild>
             <StatusBadge variant={sourceBadge.variant} noIcon className="text-[10px]">

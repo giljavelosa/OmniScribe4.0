@@ -3,6 +3,25 @@
 **Status:** Engineering artifact for compliance review — **not** legal advice or a HIPAA certification.  
 **Scope:** Audio capture → transcription → AI-assisted draft → clinician review/sign → immutable signed note. Does **not** assert full EHR, billing clearinghouse, or payer-facing workflows.
 
+> **Sprint 0.20 deliberate omission — MFA removed.** OmniScribe v1
+> ships with password-only authentication (NextAuth credentials
+> provider, bcrypt 12-round hash, account lockout via
+> `User.failedLoginCount` / `lockedUntil`, admin-initiated invites,
+> admin- and user-initiated password reset). HIPAA Security Rule
+> §164.312(d) "Person or entity authentication" is **technically
+> satisfied** by password + lockout. MFA is widely treated as a
+> baseline expectation by reasonable peers and many SOC 2 auditors,
+> and its omission is a **deliberate product decision** — not an
+> oversight. The supporting code (`User.mfaSecret` / `mfaEnabled` /
+> `mfaRecoveryCodes` / `Organization.forceMfa` columns;
+> `/mfa-setup` + `/mfa-challenge` pages; `/api/auth/mfa/*` routes;
+> `src/lib/mfa.ts`; otplib + qrcode dependencies) was removed in
+> the Sprint 0.20 PR. Re-introducing MFA is a future product
+> decision; the schema migration that dropped the columns is the
+> only blocker (additive re-add). Note-signing PIN
+> (`User.signingPinHash` + `signUnlockedUntil`) is a **separate
+> sign-time gate** that is unchanged.
+
 ## 1. Roles & governance
 
 | Topic | Target posture | Evidence / pointers |
@@ -15,9 +34,9 @@
 
 | Topic | Target posture | Evidence / pointers |
 |--------|----------------|---------------------|
-| Workforce access | Role-based access; MFA path for users | NextAuth + MFA enrollment; platform vs org roles |
+| Workforce access | Role-based access; password + lockout (Sprint 0.20 — MFA removed) | NextAuth credentials provider; `User.failedLoginCount` / `lockedUntil`; platform vs org roles |
 | Minimum necessary | Org/site scoping; clinical feature gates | `requireFeatureAccess`, org-scoped APIs |
-| Admin accountability | Org admin + ops actions logged | `AuditLog`; new actions `ADMIN_FORCE_PASSWORD_RESET`, `ADMIN_CLEAR_MFA`; platform `logPlatformAction` |
+| Admin accountability | Org admin + ops actions logged | `AuditLog`; `ADMIN_FORCE_PASSWORD_RESET`; platform `logPlatformAction` |
 
 ## 3. Physical & technical safeguards
 
@@ -27,7 +46,7 @@
 | Encryption at rest | RDS, S3 server-side encryption | AWS baseline |
 | Integrity | Signed notes immutable (`finalJson`) | `.cursorrules` / ingestion pipeline |
 | Audit controls | PHI access and sensitive admin events logged | `auditLog` writes (no silent swallow — rule 8) |
-| Authentication | Password + MFA capability; session invalidation on credential reset | User model; admin credential routes clear sessions |
+| Authentication | Password (Sprint 0.20 — MFA removed; deliberate omission); session invalidation on credential reset | User model; admin credential routes clear sessions; `User.failedLoginCount` / `lockedUntil` |
 
 ## 4. Product-specific (scribe)
 

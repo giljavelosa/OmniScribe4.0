@@ -4,6 +4,7 @@ import { Division, NoteSensitivityLevel } from '@prisma/client';
 
 import { prisma } from '@/lib/prisma';
 import { requireFeatureAccess } from '@/lib/authz/server';
+import { isOrgAdminRole } from '@/lib/authz/internal-authorization';
 import { writeAuditLog } from '@/lib/audit/log';
 import { TemplateSectionSchemaList } from '@/lib/templates/section-schema';
 
@@ -113,6 +114,22 @@ export async function POST(req: Request) {
       );
     }
     ids.add(s.id);
+  }
+
+  // Option A — non-admin callers may only create PERSONAL templates.
+  // Reject (rather than silently coerce) so the UI doesn't end up with a
+  // mismatched optimistic state vs server response.
+  const isAdmin = isOrgAdminRole(authorizationUser.role);
+  if (!isAdmin && parsed.data.visibility !== 'PERSONAL') {
+    return NextResponse.json(
+      {
+        error: {
+          code: 'visibility_forbidden',
+          message: 'Only org admins can create TEAM templates. Use visibility: "PERSONAL".',
+        },
+      },
+      { status: 403 },
+    );
   }
 
   const created = await prisma.noteTemplate.create({

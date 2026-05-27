@@ -124,13 +124,16 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 - **Reconstructable state on important mutations.** Sign, transfer, sensitive-tier change, BAA acceptance — capture enough metadata to reconstruct.
 - **Every PHI access logged.** Every read of patient or note data, every export, every print.
 
-## Authentication & MFA
+## Authentication
+
+> **Sprint 0.20 — MFA + login-verified gates removed.** Authentication is password-only.
 
 - **Every API route gates with `requireFeatureAccess`.** No exceptions. Even GETs.
-- **MFA re-verification for sensitive actions.** Sign, payment changes, MFA reset, BAA acceptance.
+- **Sign-time PIN re-verification for note signing.** `User.signingPinHash` + `signUnlockedUntil` grace window — separate from authentication; applies at sign-time only. Other sensitive actions (BAA acceptance, payment changes) gate on role + audit, not on a second factor.
 - **Password hashes via `bcryptjs`.** Never plaintext. Never log passwords or tokens.
 - **NextAuth session is JWT, stateless.** No session table.
 - **Invite tokens expire** — verify in code, not just DB constraint. Return 410 Gone for expired.
+- **Account recovery** — admin-initiated invite (`POST /api/admin/invites` → email → `/onboarding/[token]`) and password reset (admin- or user-initiated; bcrypt-hashed token + 1-hour TTL).
 
 ## Testing
 

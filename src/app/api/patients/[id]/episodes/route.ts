@@ -116,22 +116,76 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     secondaryIcdLabel = parentCase.primaryIcdLabel;
   }
 
-  const created = await prisma.episodeOfCare.create({
-    data: {
-      orgId: authorizationUser.orgId,
-      patientId: patient.id,
-      caseManagementId: parentCase.id,
-      clinicianOrgUserId: authorizationUser.orgUserId,
-      departmentId: department.id,
-      division: Division.REHAB,
-      diagnosis: data.diagnosis,
-      bodyPart: data.bodyPart ?? null,
-      primaryIcd,
-      primaryIcdLabel,
-      secondaryIcd,
-      secondaryIcdLabel,
-      status: EpisodeStatus.ACTIVE,
-    },
+  // Wrap create + backfill in one transaction so a clinician viewing
+  // /patients/[id] never sees the episode exist before its encounters are
+  // backfilled (and so the count we audit is consistent).
+  const { created, backfilledCount, backfillSkipReason } = await prisma.$transaction(async (tx) => {
+    const ep = await tx.episodeOfCare.create({
+      data: {
+        orgId: authorizationUser.orgId,
+        patientId: patient.id,
+        caseManagementId: parentCase.id,
+        clinicianOrgUserId: authorizationUser.orgUserId,
+        departmentId: department.id,
+        division: Division.REHAB,
+        diagnosis: data.diagnosis,
+        bodyPart: data.bodyPart ?? null,
+        primaryIcd,
+        primaryIcdLabel,
+        secondaryIcd,
+        secondaryIcdLabel,
+        status: EpisodeStatus.ACTIVE,
+      },
+    });
+
+    // Backfill: link prior rehab encounters in this case that were started
+    // BEFORE this episode existed (so encounters/start.ts's auto-link couldn't
+    // see it) and that were never explicitly assigned to another episode.
+    //
+    // Guards:
+    //   1. Only when this is the SOLE ACTIVE episode for the case — otherwise
+    //      the assignment is ambiguous and the clinician must pick.
+    //   2. Skip encounters that started during a PRIOR episode's window
+    //      (encounter.startedAt < latest ENDED episode's endedAt) — those
+    //      were intentionally part of that earlier episode's life.
+    //   3. Encounter must have at least one REHAB note; medical/BH notes
+    //      can never link to an episode (mayLinkEpisodeOnEncounter).
+    const otherActive = await tx.episodeOfCare.count({
+      where: {
+        caseManagementId: parentCase.id,
+        status: EpisodeStatus.ACTIVE,
+        id: { not: ep.id },
+      },
+    });
+    if (otherActive > 0) {
+      return { created: ep, backfilledCount: 0, backfillSkipReason: 'multiple_active_episodes' as const };
+    }
+
+    // "Closed" episodes are DISCHARGED or CANCELLED. Encounters that fell
+    // within a prior episode's window belong to that history; don't sweep
+    // them into the new episode.
+    const latestClosed = await tx.episodeOfCare.findFirst({
+      where: {
+        caseManagementId: parentCase.id,
+        status: { in: [EpisodeStatus.DISCHARGED, EpisodeStatus.CANCELLED] },
+        endedAt: { not: null },
+      },
+      orderBy: { endedAt: 'desc' },
+      select: { endedAt: true },
+    });
+    const startedAfter = latestClosed?.endedAt ?? undefined;
+
+    const { count } = await tx.encounter.updateMany({
+      where: {
+        caseManagementId: parentCase.id,
+        episodeOfCareId: null,
+        notes: { some: { division: Division.REHAB } },
+        ...(startedAfter ? { startedAt: { gt: startedAfter } } : {}),
+      },
+      data: { episodeOfCareId: ep.id },
+    });
+
+    return { created: ep, backfilledCount: count, backfillSkipReason: null };
   });
 
   await writeAuditLog({
@@ -145,6 +199,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       division: created.division,
       departmentId: department.id,
       hasBodyPart: !!data.bodyPart,
+      backfilledEncounterCount: backfilledCount,
+      ...(backfillSkipReason ? { backfillSkipReason } : {}),
     },
   });
 

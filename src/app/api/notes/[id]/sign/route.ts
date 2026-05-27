@@ -13,7 +13,12 @@ import {
 } from '@/lib/queue';
 import { readSectionStatus } from '@/lib/notes/section-status';
 import { deriveProgressStrip, isReadyForSign } from '@/lib/notes/derive-progress-strip';
-import { isFlagAnalysisPending } from '@/lib/notes/flag-analysis-state';
+import {
+  computeSectionHashes,
+  diffSectionHashes,
+  isFlagAnalysisPending,
+  parseSectionHashes,
+} from '@/lib/notes/flag-analysis-state';
 import type { NoteSectionDef } from '@/lib/notes/build-prompt';
 import { randomBytes } from 'node:crypto';
 
@@ -26,6 +31,14 @@ const bodySchema = z.object({
    *  been resolved (Unit 06). Default false → sign refuses with 409
    *  open_followups_present + the open list if any are still OPEN. */
   sweepAcknowledged: z.boolean().optional(),
+  /** Sprint 0 lockdown — set true by the client when the clinician has
+   *  ticked the inline attestation ("I've reviewed my edits since the
+   *  last AI analysis and accept them without re-analysis"). Required
+   *  when section-content hashes differ from the post-analysis snapshot
+   *  AND the clinician chose Sign rather than Re-analyze. The route
+   *  refuses 409 edited_since_analysis_unattested otherwise. Audited
+   *  via NOTE_SIGNED_WITH_EDITED_SINCE_ANALYSIS_ATTESTATION. */
+  editedSinceAnalysisAttested: z.boolean().optional(),
 });
 
 /**
@@ -215,6 +228,64 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         { status: 409 },
       );
     }
+  }
+
+  // Sprint 0 flag-analysis lockdown — edited-since-analysis attestation.
+  // The analyzer stamped a hash snapshot of every section's content at
+  // the end of its last successful run. If the current draft hashes
+  // differ AND the clinician has not ticked the attestation checkbox,
+  // refuse with 409 + the edited section ids so the sign client can
+  // surface the attestation UI inline. The attestation is independent
+  // of the open-RED gate (which fired earlier) — it's about "did you
+  // change anything after the last AI pass?", not "is anything
+  // unresolved?". When `flagAnalysisSectionHashes` is null (pre-deploy
+  // notes that never carried a baseline), this gate is a no-op.
+  const sectionsForHashCheck =
+    (note.template?.sectionSchema as { sections: NoteSectionDef[] } | null)?.sections ?? [];
+  const priorHashes = parseSectionHashes(note.flagAnalysisSectionHashes);
+  if (priorHashes && sectionsForHashCheck.length > 0) {
+    const currentHashes = computeSectionHashes(
+      note.draftJson as Record<string, { content?: string | null }> | null,
+      sectionsForHashCheck.map((s) => s.id),
+    );
+    const diff = diffSectionHashes(priorHashes, currentHashes);
+    if (diff.edited && !parsed.data.editedSinceAnalysisAttested) {
+      return NextResponse.json(
+        {
+          error: {
+            code: 'edited_since_analysis_unattested',
+            message:
+              "You've edited the note since the last AI analysis. Re-analyze for flags or confirm you've reviewed your edits.",
+          },
+          data: {
+            editedSectionIds: diff.editedSectionIds,
+            lastAnalysisCompletedAt: note.flagAnalysisCompletedAt?.toISOString() ?? null,
+          },
+        },
+        { status: 409 },
+      );
+    }
+    if (diff.edited && parsed.data.editedSinceAnalysisAttested) {
+      // Audited BEFORE the transaction so a sign that throws still
+      // leaves the attestation event on the record (the clinician
+      // DID attest, even if the sign itself didn't land).
+      await writeAuditLog({
+        userId: user.id,
+        orgId: orgUser.orgId,
+        action: 'NOTE_SIGNED_WITH_EDITED_SINCE_ANALYSIS_ATTESTATION',
+        resourceType: 'Note',
+        resourceId: noteId,
+        metadata: {
+          editedSectionIds: diff.editedSectionIds,
+          lastAnalysisCompletedAt: note.flagAnalysisCompletedAt?.toISOString() ?? null,
+          flagAnalysisRunCount: note.flagAnalysisRunCount,
+        },
+      });
+    }
+    // If the clinician sent `editedSinceAnalysisAttested: true` without
+    // actual edits (no diff), we silently ignore the flag — no audit
+    // row, no surface change. Avoids cluttering the audit lens with
+    // attestations that didn't gate anything.
   }
 
   // Sign-time authorization. Prefer the signing-PIN unlock window if active.

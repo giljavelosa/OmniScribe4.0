@@ -105,6 +105,8 @@ const buildPriorNote = (id: string, dateIso: string, content: string) =>
       // fields; they're here purely to satisfy Note's structural type.
       flagAnalysisStartedAt: null,
       flagAnalysisCompletedAt: null,
+      flagAnalysisRunCount: 0,
+      flagAnalysisSectionHashes: null,
       createdAt: new Date(dateIso),
       updatedAt: new Date(dateIso),
       template: { name: 'PT Progress Note' },

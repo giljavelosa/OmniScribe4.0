@@ -47,7 +47,6 @@ export async function seedAcmeOrganization(
       division: Division.MULTI,
       defaultDivision: Division.MEDICAL,
       billingEmail: 'billing@acme.local',
-      forceMfa: false,
       baaExecutedAt: new Date('2026-05-17T00:00:00Z'),
       baaVersion: '2026.05.01',
       complianceProfile: 'STANDARD',
@@ -186,7 +185,6 @@ export async function seedAcmeOrganization(
         email: u.email,
         name: u.name,
         passwordHash,
-        mfaEnabled: false,
         platformRole: 'NONE',
       },
     });

@@ -88,14 +88,12 @@ enum NoteStyle {
 // -----------------------------------------------------------------------------
 
 model Organization {
-  id               String    @id @default(cuid())
-  name             String
-  division         Division
-  defaultDivision  Division?
-  billingEmail     String
-  stripeCustomerId String?
-  forceMfa         Boolean   @default(false)
-
+  id                 String            @id @default(cuid())
+  name               String
+  division           Division
+  defaultDivision    Division?
+  billingEmail       String
+  stripeCustomerId   String?
   // BAA tracking — required for the Owner console to mark an org "BAA on file".
   // Required at the application layer for new orgs created via /owner/orgs/new;
   // optional at the DB layer so legacy/dev rows can exist without it.
@@ -134,35 +132,39 @@ model Organization {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  sites                  Site[]
-  orgUsers               OrgUser[]
-  seats                  Seat[]
-  invites                Invite[]
-  featureFlags           FeatureFlag[]
-  ipAllowlistEntries     IpAllowlistEntry[]
-  patients               Patient[]
-  departments            Department[]
-  noteTemplates          NoteTemplate[]
-  noteBriefs             NoteBrief[]
-  followUps              FollowUp[]
-  telehealthSessions     TelehealthSession[]
-  fhirIdentities         FhirIdentity[]
-  ehrConnections         OrgEhrConnection[]
-  usageDaily             OrgUsageDaily[]
-  llmCalls               LlmCallLog[]
-  llmCostDaily           OrgLlmCostDaily[]
-  externalContexts       ExternalContext[]
-  caseManagements        CaseManagement[]
-  caseRouterRuns         CaseRouterRun[]
+  sites                   Site[]
+  orgUsers                OrgUser[]
+  seats                   Seat[]
+  invites                 Invite[]
+  featureFlags            FeatureFlag[]
+  ipAllowlistEntries      IpAllowlistEntry[]
+  patients                Patient[]
+  departments             Department[]
+  noteTemplates           NoteTemplate[]
+  noteBriefs              NoteBrief[]
+  followUps               FollowUp[]
+  telehealthSessions      TelehealthSession[]
+  fhirIdentities          FhirIdentity[]
+  ehrConnections          OrgEhrConnection[]
+  usageDaily              OrgUsageDaily[]
+  llmCalls                LlmCallLog[]
+  llmCostDaily            OrgLlmCostDaily[]
+  externalContexts        ExternalContext[]
+  caseManagements         CaseManagement[]
+  caseRouterRuns          CaseRouterRun[]
   // Sprint 0.14 — Miss Cleo's per-(patient × clinician) memory + chat threads.
-  copilotPatientStates   CopilotPatientState[]
-  copilotConversations   CopilotConversation[]
+  copilotPatientStates    CopilotPatientState[]
+  copilotConversations    CopilotConversation[]
   // Sprint 0.16 — FHIR reconciliation drift log (back-relation only).
-  caseFhirDriftLogs      CaseFhirDriftLog[]
+  caseFhirDriftLogs       CaseFhirDriftLog[]
   // Sprint 0.17 — FHIR write-back proposals (back-relation only).
-  fhirWriteBackProposals FhirWriteBackProposal[]
+  fhirWriteBackProposals  FhirWriteBackProposal[]
   // Sprint 0.18 — Cleo's proactive nudges (back-relation only).
-  cleoNudges             CleoNudge[]
+  cleoNudges              CleoNudge[]
+  // Sprint 0.19 — Tiers 12/13/14 (back-relations only).
+  carePathways            CarePathway[]
+  patientUploads          PatientUpload[]
+  internalPatientMessages InternalPatientMessage[]
 
   @@index([baaExecutedAt])
   @@index([subscriptionPlan])
@@ -175,39 +177,22 @@ enum SubscriptionPlan {
   CUSTOM
 }
 
-/// 2026-05-25 — public pricing tiers (the consumer-facing SKUs).
-///
-/// Distinct from `SubscriptionPlan` (the owner-console-facing tier label
-/// that pre-dates the public pricing decision and is still used by the
-/// existing `/owner/orgs/[id]` UI). Both columns coexist intentionally:
-/// `subscriptionPlan` is editable by the platform owner for sales-driven
-/// overrides; `billingPlan` is the SKU the customer is paying for via
-/// Stripe and drives seat caps + draft bundles + Stripe usage reporting.
-///
-/// One-to-one mapping with the Stripe Product objects documented in
-/// `references/strategic/stripe-pricing-skus.md`. Adding a value here
-/// requires creating the corresponding Stripe Product + Price BEFORE
-/// deploying — `src/lib/billing/plan-policy.ts` will throw on a plan
-/// without a registered policy.
+/// 2026-05-25 — Public pricing SKU enum for the Stripe-backed billing
+/// plan field on Organization. Distinct from `SubscriptionPlan` (the
+/// owner-console-facing tier label that pre-dates the public pricing
+/// decision and is still used by the existing `/owner/orgs/[id]` UI).
+/// Both columns coexist intentionally: `subscriptionPlan` is editable by
+/// the platform owner for sales-driven overrides; `billingPlan` is the
+/// SKU the customer is paying for via Stripe and drives seat caps +
+/// draft bundles + Stripe usage reporting.
 enum BillingPlan {
-  /// Trial — no charge; 14-day free trial cap. New orgs default here.
   TRIAL
-  /// Solo Starter — $99/mo · 60 drafts · $1.99/draft overage · 1 user.
   SOLO_STARTER
-  /// Solo Pro — $179/mo · 160 drafts · $1.49/draft overage · 1 user.
   SOLO_PRO
-  /// Solo Power — $299/mo · 300 drafts · $1.29/draft overage · 1 user.
   SOLO_POWER
-  /// Solo Unlimited (optional) — $349/mo · unlimited drafts (soft fair-use) · 1 user.
   SOLO_UNLIMITED
-  /// Duo — $149/seat · exactly 2 users · 120 drafts/seat. Anti-credential-
-  /// sharing wedge: priced just above sharing-savings threshold so two
-  /// clinicians who'd split a Solo Pro convert to legitimate Duo seats.
   DUO
-  /// Practice — $179/seat · 3+ users · 160 drafts/seat. Volume tiers via
-  /// Stripe price ladder; the BillingPlan stays PRACTICE for all volumes.
   PRACTICE
-  /// Enterprise — custom contract; seat caps + draft bundles negotiated.
   ENTERPRISE
 }
 
@@ -324,13 +309,9 @@ model User {
   name              String?
   image             String?
   passwordHash      String
-  mfaSecret         String?
-  mfaEnabled        Boolean      @default(false)
-  // JSON array of bcrypt-hashed recovery codes; each element is consumed when used.
-  mfaRecoveryCodes  Json?
   // Signing-PIN MVP — provider sets a 4-digit PIN once, used to unlock sign
   // actions for a grace window (signUnlockedUntil) instead of re-prompting
-  // TOTP per signature. Bcrypt-hashed at rest.
+  // per signature. Bcrypt-hashed at rest.
   signingPinHash    String?
   signUnlockedUntil DateTime?
   platformRole      PlatformRole @default(NONE)
@@ -360,10 +341,10 @@ model User {
   // Sprint 0.18 — Cleo nudge lifecycle (back-relations only).
   cleoNudgesDismissed      CleoNudge[]             @relation("CleoNudgeDismissedBy")
   cleoNudgesSnoozed        CleoNudge[]             @relation("CleoNudgeSnoozedBy")
+  cleoNudgesActed          CleoNudge[]             @relation("CleoNudgeActedBy")
   // 2026-05-25 — single-concurrent-recording lock (anti-credential-sharing).
   // Back-relation only; the unique constraint lives on ActiveRecordingLock.userId.
   activeRecordingLock      ActiveRecordingLock?
-  cleoNudgesActed          CleoNudge[]             @relation("CleoNudgeActedBy")
 }
 
 model OrgUser {
@@ -385,19 +366,25 @@ model OrgUser {
   createdAt          DateTime     @default(now())
   updatedAt          DateTime     @updatedAt
 
-  seatId                 String?               @unique
-  seat                   Seat?                 @relation(fields: [seatId], references: [id])
-  practitionerProfile    PractitionerProfile?
-  fhirIdentities         FhirIdentity[]        @relation("FhirIdentityClinician")
-  externalContextsAdded  ExternalContext[]     @relation("ExternalContextAddedBy")
-  siteEnrollments        OrgUserSite[]         @relation("OrgUserSiteMember")
-  siteEnrollmentsCreated OrgUserSite[]         @relation("OrgUserSiteEnroller")
-  voiceProfile           VoiceProfile?
+  seatId                   String?                  @unique
+  seat                     Seat?                    @relation(fields: [seatId], references: [id])
+  practitionerProfile      PractitionerProfile?
+  fhirIdentities           FhirIdentity[]           @relation("FhirIdentityClinician")
+  externalContextsAdded    ExternalContext[]        @relation("ExternalContextAddedBy")
+  siteEnrollments          OrgUserSite[]            @relation("OrgUserSiteMember")
+  siteEnrollmentsCreated   OrgUserSite[]            @relation("OrgUserSiteEnroller")
+  voiceProfile             VoiceProfile?
   // Sprint 0.14 — per-clinician Cleo memory + persistent chat threads.
-  copilotPatientStates   CopilotPatientState[]
-  copilotConversations   CopilotConversation[]
+  copilotPatientStates     CopilotPatientState[]
+  copilotConversations     CopilotConversation[]
   // Sprint 0.18 — Cleo's proactive nudges, scoped to this clinician.
-  cleoNudges             CleoNudge[]
+  cleoNudges               CleoNudge[]
+  // Sprint 0.19 — Tiers 13/14 (back-relations only).
+  patientUploadsCreated    PatientUpload[]          @relation("PatientUploadUploadedBy")
+  patientUploadsAttested   PatientUpload[]          @relation("PatientUploadAttestedBy")
+  patientUploadsRejected   PatientUpload[]          @relation("PatientUploadRejectedBy")
+  internalMessagesSent     InternalPatientMessage[] @relation("InternalPatientMessageSender")
+  internalMessagesReceived InternalPatientMessage[] @relation("InternalPatientMessageRecipient")
 
   @@unique([userId, orgId])
   @@index([orgId, role])
@@ -501,6 +488,9 @@ model PasswordResetToken {
 
   @@index([userId, consumedAt])
 }
+
+// Sprint 0.20 — `LoginVerificationCode` model + `LoginVerifyChannel` enum
+// removed alongside MFA. Authentication is password-only.
 
 // -----------------------------------------------------------------------------
 // Audit (anti-regression rule 8: audit writes NEVER wrapped in swallowing
@@ -954,6 +944,10 @@ model Patient {
   fhirWriteBackProposals   FhirWriteBackProposal[]
   // Sprint 0.18 — Cleo's proactive nudges anchored to this patient.
   cleoNudges               CleoNudge[]
+  // Sprint 0.19 — Tier 13 multimedia + Tier 14 team-coordination
+  // back-relations only.
+  patientUploads           PatientUpload[]
+  internalPatientMessages  InternalPatientMessage[]
 
   @@unique([orgId, mrn])
   @@index([orgId, lastName, firstName])
@@ -1476,6 +1470,26 @@ model Note {
   flagAnalysisStartedAt   DateTime?
   flagAnalysisCompletedAt DateTime?
 
+  /// Sprint 0 flag-analysis lockdown — count of analyzer runs against this
+  /// note. Bumped by both the inline run from generate-note (run #1) and
+  /// the clinician-triggered POST /analyze-flags re-analysis (run #2).
+  /// Capped at 2; the route refuses 409 analysis_cap_reached past that.
+  flagAnalysisRunCount Int @default(0)
+
+  /// Snapshot of sha256(draftJson[sectionId].content) per section, captured
+  /// at the end of each successful analyzer run. Powers two gates:
+  ///   1. Run #2 diff-skip: sections whose hash matches the prior snapshot
+  ///      are not re-analyzed; their flag set is preserved verbatim.
+  ///   2. Sign-time edited-since-analysis gate: if any current section
+  ///      hash differs from the snapshot AND the client did not pass
+  ///      editedSinceAnalysisAttested=true, sign refuses 409 + lists
+  ///      the edited section ids. Attestation tick is audited via
+  ///      NOTE_SIGNED_WITH_EDITED_SINCE_ANALYSIS_ATTESTATION.
+  /// Shape: { [sectionId: string]: string (sha256_hex) }. NULL on
+  /// notes that haven't been analyzed yet — both gates are no-ops in
+  /// that case (backward compatible with pre-deploy rows).
+  flagAnalysisSectionHashes Json?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1872,15 +1886,33 @@ model ReviewFlag {
   resolvedAt          DateTime?
   resolvedByOrgUserId String?
   /**
-   * 'ACCEPT_EDIT' | 'DISMISS_KEEP' | 'REGENERATE_SECTION' | 'AUTO_VERIFIED'
+   * 'ACCEPT_EDIT' | 'DISMISS_KEEP' | 'REGENERATE_SECTION' | 'AUTO_VERIFIED' |
+   * 'CARRIED_FORWARD' (Sprint 0 lockdown — written by the analyzer when a
+   * new run's claim signature matches a prior RESOLVED/DISMISSED row on
+   * the same note; the new flag is created already-resolved with the
+   * prior decision honored, and `resolutionNote` cites the prior date).
    */
   resolutionAction    String?
   resolutionNote      String?
+  /**
+   * Sprint 0 flag-analysis lockdown — sha256(sectionId + "|" + normalize(claim))
+   * where normalize = lowercase → collapse whitespace → strip punctuation.
+   * Stable across re-analysis runs and across model output drift on the
+   * same underlying claim. Powers the carry-forward lookup (see the
+   * (noteId, claimSignature) index below). Nullable for backward
+   * compatibility with rows written before the migration; new writes
+   * always set it.
+   */
+  claimSignature      String?
   createdAt           DateTime           @default(now())
 
   @@index([noteId, status])
   @@index([noteId, sectionId])
   @@index([orgId, createdAt])
+  /// Sprint 0 lockdown — powers findFirst({ noteId, claimSignature, status IN ... })
+  /// inside the analyzer's carry-forward branch. Compound so the planner
+  /// can use it for the noteId-scoped lookup without scanning.
+  @@index([noteId, claimSignature])
 }
 
 // =============================================================================
@@ -2552,4 +2584,232 @@ model CopilotMessage {
   conversation CopilotConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
   @@index([conversationId, createdAt])
+}
+
+// =====================================================================
+// Sprint 0.19 — Tier 12 (Care Pathway library), Tier 13 (Multimedia
+// intake), Tier 14 (Internal team coordination).
+//
+// All three additions are org-scoped, additive, and follow the
+// established pattern of (orgId, patientId?, userId?) FKs +
+// soft-delete on user-uploaded content.
+// =====================================================================
+
+/// Tier 12 — Care Pathway library.
+///
+/// One row per managed protocol the org has adopted (or that ships with
+/// the platform as a default). Cleo cites these when comparing a draft
+/// note to the org's documented approach.
+///
+/// Org-scoped: orgs may extend or override platform-default pathways
+/// per their own protocols. Soft-deleted (isDeleted) so historical
+/// references on signed-note artifacts stay resolvable.
+model CarePathway {
+  id              String       @id @default(cuid())
+  orgId           String
+  organization    Organization @relation(fields: [orgId], references: [id])
+  /// Free-text name ("Type 2 Diabetes — adult stepped care"). Used in UI
+  /// + as the sub-LLM prompt anchor.
+  name            String
+  /// Primary ICD-10 the pathway is keyed off of (e.g. E11.9, M54.50,
+  /// F32.0). Loose-prefix match in the lookup tool so E11 matches all
+  /// T2DM sub-codes.
+  primaryIcd      String
+  primaryIcdLabel String
+  division        Division
+  /// Free-text source / version anchor ("USPSTF 2023", "ADA 2024 SoCs").
+  evidenceSource  String?
+  /// Free-text version string for this pathway ("v1", "v2.1-org-override").
+  version         String       @default("v1")
+  isDeleted       Boolean      @default(false)
+  deletedAt       DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  steps CarePathwayStep[]
+
+  @@index([orgId, primaryIcd])
+  @@index([orgId, division, isDeleted])
+}
+
+/// One ordered step inside a CarePathway. Steps carry the action /
+/// finding / decision-point text + an optional list of required
+/// documentation elements the sub-LLM compares the draft note against.
+model CarePathwayStep {
+  id                   String      @id @default(cuid())
+  pathwayId            String
+  pathway              CarePathway @relation(fields: [pathwayId], references: [id], onDelete: Cascade)
+  /// Ordinal — controls UI rendering + the sub-LLM's "what step are we on?"
+  /// answer.
+  ordinal              Int
+  /// Title / headline of the step ("Baseline labs", "Lifestyle counseling").
+  title                String
+  /// Free-text description (markdown allowed).
+  description          String
+  /// Optional list of documentation elements that should be present in
+  /// the note if this step has been executed. The compare-to-pathway
+  /// sub-LLM uses these as checkpoints.
+  /// `[ "fasting BG documented", "A1c ordered" ]`
+  requiredElementsJson Json?
+
+  @@unique([pathwayId, ordinal])
+  @@index([pathwayId])
+}
+
+// ---------------- Tier 13 — Multimedia intake -------------------------
+
+/// What kind of artifact the upload is. Drives which extraction prompt
+/// the worker uses + which UI affordances the chart shows.
+enum PatientUploadKind {
+  /// Patient brings in a paper medication list / pill bottle photos.
+  MED_LIST
+  /// Lab report PDF or photo.
+  LAB_REPORT
+  /// Outside imaging report (e.g. radiology read brought by the patient).
+  IMAGING_REPORT
+  /// Insurance card photo (front/back).
+  INSURANCE_CARD
+  /// Government ID for identity verification.
+  ID_CARD
+  /// Outside records, miscellaneous PDFs.
+  OUTSIDE_RECORDS
+  /// Catch-all — manual review only, no auto-extraction.
+  OTHER
+}
+
+/// Where in the OCR/extraction pipeline this upload is.
+enum PatientUploadStatus {
+  PENDING_EXTRACTION
+  EXTRACTING
+  EXTRACTED
+  EXTRACTION_FAILED
+  /// User declined to extract OR kind = OTHER and was reviewed manually.
+  MANUAL_ONLY
+  /// Clinician accepted extraction (or manual attestation) — rule-20 source.
+  ATTESTED
+  /// Clinician denied — retained for audit, excluded from standing context.
+  REJECTED
+}
+
+/// Tier 13 — Patient-side multimedia intake.
+///
+/// Rule 15 enforced: S3 bucket public access blocked; access is via
+/// presigned URL only. Files are NEVER deleted from S3 — `isDeleted`
+/// soft-deletes the DB row (rule 7 lineage).
+model PatientUpload {
+  id                     String              @id @default(cuid())
+  orgId                  String
+  organization           Organization        @relation(fields: [orgId], references: [id])
+  patientId              String
+  patient                Patient             @relation(fields: [patientId], references: [id])
+  uploadedByOrgUserId    String
+  uploadedBy             OrgUser             @relation("PatientUploadUploadedBy", fields: [uploadedByOrgUserId], references: [id])
+  kind                   PatientUploadKind
+  /// Source MIME type — drives whether the extractor uses image vision
+  /// (image/*) or pdf-text (application/pdf) or rejects (other).
+  mimeType               String
+  /// Original client-supplied filename — for UI display.
+  filename               String?
+  /// S3 bucket + key (rule 15: blocked from public access; presigned
+  /// only). Bucket is derived from S3_PATIENT_UPLOADS_BUCKET env.
+  s3Bucket               String
+  s3Key                  String
+  /// Bytes — server-validated against MAX_UPLOAD_BYTES (default 25 MB).
+  byteSize               Int
+  status                 PatientUploadStatus @default(PENDING_EXTRACTION)
+  /// Raw text recovered by OCR (image) or PDF text-extraction. Empty
+  /// when not yet extracted.
+  ocrText                String?
+  /// Structured findings emitted by the vision/LLM extraction worker.
+  /// Shape varies by kind:
+  ///   MED_LIST       → `{ medications: [{name, dose?, frequency?, route?}] }`
+  ///   LAB_REPORT     → `{ labs: [{name, value, unit?, refLow?, refHigh?, flag?, dateIso?}] }`
+  ///   IMAGING_REPORT → `{ studyType, dateIso?, findings, impression }`
+  ///   INSURANCE_CARD → `{ carrier, memberId, groupId?, planName? }`
+  ///   ID_CARD        → `{ lastName, firstName, dob?, idNumber? }`
+  ///   OUTSIDE_RECORDS→ `{ summary, dateIso? }`
+  extractedJson          Json?
+  extractionErrorMessage String?
+  /// Clinician note about what this scan is (blurry outside lab, etc.).
+  captureContext         String?
+  /// Final structured facts after Accept — defaults to extractedJson copy.
+  attestedJson           Json?
+  attestedAt             DateTime?
+  attestedByOrgUserId    String?
+  attestedBy             OrgUser?            @relation("PatientUploadAttestedBy", fields: [attestedByOrgUserId], references: [id])
+  rejectedAt             DateTime?
+  rejectedByOrgUserId    String?
+  rejectedBy             OrgUser?            @relation("PatientUploadRejectedBy", fields: [rejectedByOrgUserId], references: [id])
+  /// Re-scan chain — new upload supersedes a prior row.
+  supersedesUploadId     String?
+  supersedesUpload       PatientUpload?      @relation("PatientUploadRescan", fields: [supersedesUploadId], references: [id])
+  rescanUploads          PatientUpload[]     @relation("PatientUploadRescan")
+  /// PHI-free flag — when true, the extracted text/json never leaves
+  /// the org and is excluded from any analytics aggregation.
+  isPhiSensitive         Boolean             @default(true)
+  isDeleted              Boolean             @default(false)
+  deletedAt              DateTime?
+  createdAt              DateTime            @default(now())
+  updatedAt              DateTime            @updatedAt
+
+  @@index([orgId, patientId, isDeleted])
+  @@index([orgId, status])
+  @@index([patientId, kind])
+  @@index([orgId, patientId, status])
+}
+
+// ---------------- Tier 14 — Internal team coordination ----------------
+
+enum InternalMessageUrgency {
+  LOW
+  NORMAL
+  URGENT
+}
+
+enum InternalMessageStatus {
+  SENT
+  READ
+  ARCHIVED
+}
+
+/// Tier 14 — In-app message from one clinician to another, anchored to
+/// a specific patient. NOT a chat; one-shot send with optional reply
+/// thread later. PHI may live in the body — same at-rest posture as
+/// note bodies.
+///
+/// Delivery: in-app only (header bell + patient-chart thread). No
+/// off-platform delivery (push/email/SMS) in this sprint.
+model InternalPatientMessage {
+  id                 String                   @id @default(cuid())
+  orgId              String
+  organization       Organization             @relation(fields: [orgId], references: [id])
+  patientId          String
+  patient            Patient                  @relation(fields: [patientId], references: [id])
+  senderOrgUserId    String
+  sender             OrgUser                  @relation("InternalPatientMessageSender", fields: [senderOrgUserId], references: [id])
+  recipientOrgUserId String
+  recipient          OrgUser                  @relation("InternalPatientMessageRecipient", fields: [recipientOrgUserId], references: [id])
+  /// Short subject line. ≤120 chars enforced at the route.
+  topic              String
+  /// Free-text body. May carry PHI; same posture as note content.
+  body               String
+  urgency            InternalMessageUrgency   @default(NORMAL)
+  status             InternalMessageStatus    @default(SENT)
+  /// Optional explicit deep-link the recipient should land on
+  /// (e.g. `/patients/<id>?tab=cases`). Server-validates same-origin
+  /// + same-orgId.
+  contextHref        String?
+  /// Optional reply-to lineage so threading on the same patient stays
+  /// resolvable when we add a thread UI later.
+  inReplyToId        String?
+  inReplyTo          InternalPatientMessage?  @relation("InternalPatientMessageReplyChain", fields: [inReplyToId], references: [id])
+  replies            InternalPatientMessage[] @relation("InternalPatientMessageReplyChain")
+  sentAt             DateTime                 @default(now())
+  readAt             DateTime?
+  isDeleted          Boolean                  @default(false)
+  deletedAt          DateTime?
+
+  @@index([orgId, recipientOrgUserId, status, sentAt])
+  @@index([orgId, patientId, sentAt])
+  @@index([senderOrgUserId, sentAt])
 }

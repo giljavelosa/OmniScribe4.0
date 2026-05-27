@@ -4,9 +4,9 @@
  * AuditLog rows reference these strings.
  *
  * Unit 01 surface area:
- *   - Auth: USER_SIGNED_IN / _FAILED, MFA_VERIFIED / _FAILED, MFA_ENROLLED /
- *     _FAILED, PASSWORD_RESET_REQUESTED / _COMPLETED / _INITIATED_BY_ADMIN,
- *     MFA_RESET (admin), INVITE_SENT / _CONSUMED, USER_CREATED, USER_UPDATED,
+ *   - Auth: USER_SIGNED_IN / _FAILED, LOGIN_CODE_SENT / VERIFIED / VERIFY_FAILED,
+ *     PASSWORD_RESET_REQUESTED / _COMPLETED / _INITIATED_BY_ADMIN,
+ *     INVITE_SENT / _CONSUMED, USER_CREATED, USER_UPDATED,
  *     USER_DEACTIVATED
  *   - Owner: ORG_CREATED, ORG_BAA_UPDATED, PLATFORM_ORG_CREATED
  *   - Onboarding: ONBOARDING_COMPLETED
@@ -14,6 +14,10 @@
 export type AuditAction =
   | 'USER_SIGNED_IN'
   | 'USER_SIGNED_IN_FAILED'
+  | 'LOGIN_CODE_SENT'
+  | 'LOGIN_CODE_VERIFIED'
+  | 'LOGIN_CODE_VERIFY_FAILED'
+  /** Legacy — retained so historical audit rows resolve. No longer emitted. */
   | 'MFA_VERIFIED'
   | 'MFA_VERIFY_FAILED'
   | 'MFA_ENROLLED'
@@ -406,6 +410,47 @@ export type AuditAction =
   | 'CLEO_NUDGE_SNOOZED'
   | 'CLEO_NUDGE_ACTED'
   | 'CLEO_NUDGE_EXPIRED'
+  // ---- Sprint 0.19: Tier 12 — Care Pathway library ----
+  // CARE_PATHWAY_REFERENCED fires when Cleo cites a pathway in an
+  // answer / draft / comparison. Metadata: { pathwayId, primaryIcd,
+  // toolName, personaVersion: 'miss-cleo-v1' }. PHI-free.
+  | 'CARE_PATHWAY_REFERENCED'
+  // ---- Sprint 0.19: Tier 13 — Multimedia intake ----
+  // PATIENT_UPLOAD_CREATED fires once per row inserted into PatientUpload
+  // (independent of which clinician created the row). Metadata:
+  // { patientUploadId, kind, mimeType, byteSize }. PHI-free.
+  // PATIENT_UPLOAD_EXTRACTED fires when the vision-extract worker
+  // successfully populates extractedJson + flips status to EXTRACTED.
+  // Metadata: { patientUploadId, kind, extractedFieldsCount,
+  // extractorVersion }. PHI-free — counts only.
+  // PATIENT_UPLOAD_EXTRACTION_FAILED fires when the worker exhausts
+  // retries or hits a permanent failure (unsupported mime type, etc.).
+  // Metadata: { patientUploadId, kind, errorMessage }. errorMessage is
+  // bounded ≤600 chars + has bearer-token-shaped fragments scrubbed.
+  // PATIENT_UPLOAD_DELETED fires on soft-delete (rule 7 — never hard
+  // delete from S3, only flip isDeleted). Metadata: { patientUploadId,
+  // kind, reason }.
+  | 'PATIENT_UPLOAD_CREATED'
+  | 'PATIENT_UPLOAD_EXTRACTED'
+  | 'PATIENT_UPLOAD_EXTRACTION_FAILED'
+  | 'PATIENT_UPLOAD_DELETED'
+  // PATIENT_UPLOAD_ATTESTED — clinician Accept on review screen.
+  // Metadata: { patientUploadId, kind, attestedFieldCount, hadCaptureContext }.
+  // PATIENT_UPLOAD_REJECTED — clinician Deny. Metadata: { patientUploadId, kind,
+  // hadCaptureContext }. PHI-free.
+  | 'PATIENT_UPLOAD_ATTESTED'
+  | 'PATIENT_UPLOAD_REJECTED'
+  // ---- Sprint 0.19: Tier 14 — Internal team coordination ----
+  // INTERNAL_PATIENT_MESSAGE_SENT fires on row insert. Metadata:
+  // { messageId, recipientOrgUserId, urgency, topicLength, bodyLength,
+  //   inReplyToId? }. PHI-free — never logs topic or body content.
+  // INTERNAL_PATIENT_MESSAGE_READ fires on the read state-transition
+  // (SENT → READ). Metadata: { messageId }.
+  // INTERNAL_PATIENT_MESSAGE_ARCHIVED fires on READ → ARCHIVED.
+  // Metadata: { messageId }.
+  | 'INTERNAL_PATIENT_MESSAGE_SENT'
+  | 'INTERNAL_PATIENT_MESSAGE_READ'
+  | 'INTERNAL_PATIENT_MESSAGE_ARCHIVED'
   // ---- Unit 12: Patient detail redesign ----
   | 'SNAPSHOT_OVERRIDE_CREATED'
   | 'SNAPSHOT_OVERRIDE_SUPERSEDED'
@@ -422,6 +467,57 @@ export type AuditAction =
   | 'FLAG_RESOLVED'
   | 'FLAG_DISMISSED'
   | 'SECTION_COPIED_TO_CLIPBOARD'
+  // ---- Sprint 0 flag-analysis lockdown (Unit 14 follow-on) ----
+  // Spec: context/specs/sprint-0-flag-analysis-lockdown.md
+  //
+  // FLAGS_AUTO_ANALYZED_ON_DRAFT fires when the inline analyzer at the
+  // tail of generate-note completes successfully. Metadata: { runCount,
+  // sectionsAnalyzed, flagsCreated, carriedForwardCount }. runCount is
+  // always 1 for this action (it's the pipeline's first-and-only call).
+  // PHI-free.
+  //
+  // FLAGS_AUTO_ANALYSIS_FAILED fires when the inline analyzer throws.
+  // The pipeline still flips status → DRAFT so the clinician can land
+  // on /review with a "Flag analysis unavailable" banner; run #1 is
+  // consumed (runCount bumps to 1) so the existing retry budget logic
+  // works. Metadata: { errorClass, runCount }.
+  //
+  // FLAGS_RE_ANALYZED fires when the clinician-triggered re-analyze
+  // run #2 completes. Metadata: { runCount, sectionsAnalyzed (only the
+  // ones that weren't diff-skipped), sectionsSkippedUnchanged,
+  // flagsCreated, carriedForwardCount, abortedBySign }.
+  //
+  // FLAGS_CARRIED_FORWARD fires once per ReviewFlag row created with
+  // resolutionAction = 'CARRIED_FORWARD' (i.e. the analyzer found a
+  // claimSignature match against a prior RESOLVED/DISMISSED row and
+  // honored the prior decision). Metadata: { newFlagId, priorFlagId,
+  // priorStatus, sectionId, claimSignature }. Volume bounded by
+  // (resolved/dismissed flags × matching re-analysis runs); typically
+  // small.
+  //
+  // FLAGS_SECTION_SKIPPED_UNCHANGED fires once per section whose hash
+  // matched the prior-run hash on re-analyze (no LLM call). Metadata:
+  // { sectionId, hash }. Volume = sections-per-note × re-runs.
+  //
+  // FLAGS_ANALYSIS_CAP_REACHED fires from the /analyze-flags route
+  // when a clinician POSTs after the cap. Metadata: { runCount,
+  // attemptedBy }. Pairs with the 409 response — auditor lens can
+  // count "how often does the cap actually bite?"
+  //
+  // NOTE_SIGNED_WITH_EDITED_SINCE_ANALYSIS_ATTESTATION fires from
+  // the sign route when the clinician's request carried
+  // `editedSinceAnalysisAttested: true` AND the section hashes
+  // differed from the post-analysis snapshot. Metadata: {
+  // editedSectionIds (string[]), lastAnalyzedAt }. PHI-free. Pairs
+  // with the existing NOTE_SIGNED row to give an auditor a single
+  // query for "notes signed without a fresh AI analysis pass."
+  | 'FLAGS_AUTO_ANALYZED_ON_DRAFT'
+  | 'FLAGS_AUTO_ANALYSIS_FAILED'
+  | 'FLAGS_RE_ANALYZED'
+  | 'FLAGS_CARRIED_FORWARD'
+  | 'FLAGS_SECTION_SKIPPED_UNCHANGED'
+  | 'FLAGS_ANALYSIS_CAP_REACHED'
+  | 'NOTE_SIGNED_WITH_EDITED_SINCE_ANALYSIS_ATTESTATION'
   // ---- Unit 15: Telehealth infra + patient auth ----
   | 'TELEHEALTH_SESSION_CREATED'
   | 'TELEHEALTH_MAGIC_LINK_FAILED'

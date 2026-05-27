@@ -1,5 +1,8 @@
 # Glossary
 
+> **Sprint 0.20 — MFA removed.** Any reference to MFA, /mfa-challenge, /mfa-setup, TOTP, authenticator app setup, or login-verified gates in this document is HISTORICAL. Authentication is now password-only. See `context/specs/01-foundation-auth-tenant.md` and `progress-tracker.md`.
+
+
 | Term | Definition |
 |---|---|
 | **OmniScribe** | The product. A HIPAA-grade medical AI scribe + agentic clinical copilot for Medical / Rehab / Behavioral Health clinicians. |

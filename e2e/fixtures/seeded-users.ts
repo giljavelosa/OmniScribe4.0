@@ -42,6 +42,22 @@ export const SEED_USERS = {
     role: 'CLINICIAN' as const,
     homeRoute: '/home',
   },
+  /** SITE_ADMIN enrolled ONLY at Demo Main Office. Pairs with `southadmin`
+   *  to prove site scope produces strictly different user/site listings. */
+  siteadmin: {
+    email: 'siteadmin@demo.local',
+    password: SEED_PASSWORD,
+    role: 'SITE_ADMIN' as const,
+    homeRoute: '/home',
+  },
+  /** SITE_ADMIN enrolled ONLY at Demo South Office. Seeded as the
+   *  contrast fixture for site-scope e2e coverage. */
+  southadmin: {
+    email: 'southadmin@demo.local',
+    password: SEED_PASSWORD,
+    role: 'SITE_ADMIN' as const,
+    homeRoute: '/home',
+  },
 } as const satisfies Record<
   string,
   {

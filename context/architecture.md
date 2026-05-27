@@ -13,7 +13,7 @@ Choose every layer below at the start. The combination is intentional; do not su
 | Rich text | TipTap 3 (StarterKit + Placeholder) | Note section editor; `Note.draftJson` is TipTap JSON |
 | Validation | Zod 4 | Schema validation at every API boundary |
 | State (client) | Zustand 5 + TanStack Query 5 | Lightweight client state + server-state cache |
-| Auth | NextAuth.js 5 + `@auth/prisma-adapter` + bcryptjs | JWT sessions, MFA TOTP, password hashing |
+| Auth | NextAuth.js 5 + bcryptjs | JWT sessions, password + one-time email/SMS login codes |
 | Database | Prisma 7 ORM + PostgreSQL 16 + pgvector | Structured data; voice embeddings as `vector(192)` |
 | Queues | BullMQ 5 + ioredis 5 + Redis 7 | Async pipelines (transcription, AI generation, finalize, voice-id, brief) |
 | Transcription | Soniox real-time STT (model `stt-rt-v4`, BAA) | Browser-side WebSocket; ephemeral key minted server-side |
@@ -30,7 +30,7 @@ Choose every layer below at the start. The combination is intentional; do not su
 | Secrets | AWS Secrets Manager | All credentials; never in console env vars |
 | IaC | AWS CDK (TypeScript) | `infra/lib/{compute,data,vpc,monitoring}-stack.ts` |
 | Billing | Stripe 21 | Subscriptions, seat tiers, customer portal — **Wave 7** in [`specs/00-build-plan.md`](specs/00-build-plan.md) |
-| Email | Resend (verified domain) | Transactional auth emails (verify, reset, MFA) |
+| Email | Resend (verified domain) | Transactional auth emails (login codes, reset, invites) |
 | PWA | next-pwa 5 | Installable web app for tablet clinicians |
 | Testing | Vitest + @testing-library/react + happy-dom | Unit + integration; integration tests touch real DB (no mocks for DB layer) |
 | Video (Wave 3) | Daily.co (HIPAA BAA) | Telehealth rooms, magic-link patient join |
@@ -40,7 +40,7 @@ Choose every layer below at the start. The combination is intentional; do not su
 
 Each top-level folder under `src/` owns exactly one responsibility. Cross-folder calls are explicit, typed, one-directional (UI → app routes → lib/services → db).
 
-- **`src/app/(auth)/`** — public sign-in, signup-via-invite, password reset, MFA challenge. No authenticated session required.
+- **`src/app/(auth)/`** — public sign-in, signup-via-invite, password reset. **Sprint 0.20 — MFA + login-verified gates removed; auth is password-only.**
 - **`src/app/(clinical)/`** — clinician workspace: `/home`, `/patients`, `/prepare/[noteId]`, `/capture/[noteId]`, `/processing/[noteId]`, `/review/[noteId]`, `/sign/[noteId]`, `/drafts`, `/templates`, `/profile`, `/profile/voice`. Gated by `requireFeatureAccess` + division scoping.
 - **`src/app/(admin)/`** — org-admin console: users, sites, rooms, seats, billing, manage-templates, voice profile admin, audit, org-settings, dashboard. Gated by `OrgRole` ∈ `{ORG_ADMIN, SITE_ADMIN}`.
 - **`src/app/(telehealth)/`** — `/telehealth/room/[scheduleId]`, `/telehealth/waiting/[scheduleId]`. Clinician + patient telehealth surfaces.
@@ -62,7 +62,7 @@ Each top-level folder under `src/` owns exactly one responsibility. Cross-folder
 - **`src/lib/audit/`** — append-only audit log writer; PHI-free metadata enforcement.
 - **`src/lib/queue.ts`** — BullMQ enqueue helpers with stable jobId idempotency.
 - **`src/lib/s3/`** — S3 client + presigned-URL minting.
-- **`src/lib/auth.config.ts`, `src/lib/auth.ts`, `src/lib/mfa.ts`** — NextAuth config, JWT callbacks, TOTP.
+- **`src/lib/auth.config.ts`, `src/lib/auth.ts`, `src/lib/auth/login-verification.ts`** — NextAuth config, JWT callbacks, login codes.
 - **`src/lib/prisma.ts`** — Prisma client singleton.
 - **`src/lib/redis.ts`** — ioredis singleton.
 - **`src/lib/note-medical-prompt.ts`, `note-behavioral-health-prompt.ts`, `note-rehab-master-prompt.ts`** — division-aware master prompt composition.
@@ -89,7 +89,8 @@ Build the `prisma/schema.prisma` file with these models grouped by domain. Migra
 - `SystemAnnouncement`, `IpAllowlistEntry` — ops controls.
 
 ### Identity & Roles
-- `User` — global identity; `email` (unique), `passwordHash`, `mfaSecret`, `mfaEnabled`, `platformRole` (`PLATFORM_OWNER` | `NONE`).
+- `User` — global identity; `email` (unique), `passwordHash`, optional `phone`, `loginVerifyChannel`, `platformRole` (`PLATFORM_OWNER` | `NONE`).
+- `LoginVerificationCode` — bcrypt-hashed one-time codes; fresh row per sign-in attempt.
 - `OrgUser` — membership row joining User × Org; `role` ∈ `{ORG_ADMIN, SITE_ADMIN, CLINICIAN, VIEWER}`, `division`, `profession`, `canManagePatients`, `preferredNoteStyle`. Platform-owner authority is exclusively on `User.platformRole = PLATFORM_OWNER` — never conflated with OrgRole.
 - `UserSession` — active session tokens.
 - `PractitionerProfile` — clinician identity for EHR (NPI, specialty, display name).
@@ -156,10 +157,10 @@ Build the `prisma/schema.prisma` file with these models grouped by domain. Migra
 ## Auth & Access Model
 
 - **NextAuth.js v5** with JWT strategy (stateless; no DB session table per NextAuth convention).
-- **Session shape** — `{ user: { id, email, name, image, orgId, role, division, profession, mfaEnabled, mfaVerified, platformRole } }`.
-- **MFA** — TOTP via `lib/mfa.ts`. `Organization.forceMfa` triggers required enrollment. Re-verification at sign-time (sensitive action).
+- **Session shape** — `{ user: { id, email, name, image, orgId, role, division, profession, professionType, platformRole } }`.
+- **Authentication** — password-only (NextAuth credentials provider; bcrypt 12 rounds; account lockout via `User.failedLoginCount` / `lockedUntil`). **Sprint 0.20 removed MFA + login-verified gates entirely.** Account recovery: admin invite (`POST /api/admin/invites` → `/onboarding/[token]`) + password reset (`/password-reset/{request,verify,confirm}`). Note-signing PIN (`User.signingPinHash` / `signUnlockedUntil`) is the only remaining second-factor and applies at sign-time only.
 - **Password reset** — single-use token via Resend email; bcryptjs hash on confirm; all sessions invalidated.
-- **MFA reset** — user-initiated (with current MFA) OR admin-initiated (audited; user re-enrolls on next sign-in).
+- **Sign-time auth** — 4-digit signing PIN with 30-minute unlock window (separate from login codes).
 - **API route gate** — `requireFeatureAccess(featureKey, req)` resolves `User` → `OrgUser` → `FeatureKey` allowlist. Returns `{ user, orgUser, authorizationUser, error }`. Routes early-return on error.
 - **FeatureKey enum** — `NOTE_CREATE, NOTE_EDIT, NOTE_REVIEW, NOTE_SIGN, VOICE_ID, PATIENT_MANAGEMENT, TEMPLATE_MANAGEMENT, BILLING_MANAGE, TEAM_MEMBERS_MANAGE, TRANSCRIPT_VIEW, VOICE_PROFILE_MANAGE, VISITS_CREATE, TEMPLATE_LIBRARY_READ, TEMPLATE_LIBRARY_MANAGE`. The (`OrgRole` × `Division` × `FeatureKey`) matrix lives in `src/lib/authz/internal-authorization.ts`.
 - **PHI scoping** — `src/lib/phi-access.ts` (`canAccessClinicianOwnedResource`, division gating, sensitivity-level gating). Org scoping enforced at the Prisma query layer (`WHERE orgId = ?` on every PHI query).
@@ -269,7 +270,7 @@ Note.status: DRAFTING → DRAFT → REVIEWING (when clinician opens /review)
         │
         │ clinician edits, regenerates sections, sweeps follow-ups
         ▼
-[POST /api/notes/[id]/sign] → re-MFA → finalize → status: SIGNED, finalJson frozen, audit log
+[POST /api/notes/[id]/sign] → signing PIN → finalize → status: SIGNED, finalJson frozen, audit log
         │
         │ enqueue note-brief job (precompute next visit's brief)
         │ enqueue post-sign-artifacts jobs (referral letters, patient instructions)

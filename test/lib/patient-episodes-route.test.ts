@@ -13,14 +13,44 @@ const departmentFindFirst = vi.fn();
 const caseManagementFindFirst = vi.fn();
 const episodeOfCareCreate = vi.fn();
 const auditLogCreate = vi.fn();
+const encounterFindMany = vi.fn();
+const encounterUpdateMany = vi.fn();
+const episodeOfCareFindFirst = vi.fn();
+const episodeOfCareCount = vi.fn();
+
+// `prisma.$transaction(async (tx) => …)` invokes the callback with `tx` which
+// must look like the same Prisma client surface used inside the closure
+// (episodeOfCare.create + .findFirst + .count for the sole-ACTIVE guard;
+// encounter.findMany/updateMany for the backfill). Sprint 0.11 landed the
+// transaction wrap; this shim keeps the mock backward-compatible.
+const txClient = {
+  episodeOfCare: {
+    create: (...a: unknown[]) => episodeOfCareCreate(...a),
+    findFirst: (...a: unknown[]) => episodeOfCareFindFirst(...a),
+    count: (...a: unknown[]) => episodeOfCareCount(...a),
+  },
+  encounter: {
+    findMany: (...a: unknown[]) => encounterFindMany(...a),
+    updateMany: (...a: unknown[]) => encounterUpdateMany(...a),
+  },
+};
 
 vi.mock('@/lib/prisma', () => ({
   prisma: {
     patient: { findFirst: (...a: unknown[]) => patientFindFirst(...a) },
     department: { findFirst: (...a: unknown[]) => departmentFindFirst(...a) },
     caseManagement: { findFirst: (...a: unknown[]) => caseManagementFindFirst(...a) },
-    episodeOfCare: { create: (...a: unknown[]) => episodeOfCareCreate(...a) },
+    episodeOfCare: {
+      create: (...a: unknown[]) => episodeOfCareCreate(...a),
+      findFirst: (...a: unknown[]) => episodeOfCareFindFirst(...a),
+      count: (...a: unknown[]) => episodeOfCareCount(...a),
+    },
+    encounter: {
+      findMany: (...a: unknown[]) => encounterFindMany(...a),
+      updateMany: (...a: unknown[]) => encounterUpdateMany(...a),
+    },
     auditLog: { create: (...a: unknown[]) => auditLogCreate(...a) },
+    $transaction: async (cb: (tx: typeof txClient) => Promise<unknown>) => cb(txClient),
   },
 }));
 
@@ -58,10 +88,22 @@ beforeEach(() => {
   caseManagementFindFirst.mockReset();
   episodeOfCareCreate.mockReset();
   auditLogCreate.mockReset();
+  encounterFindMany.mockReset();
+  encounterUpdateMany.mockReset();
+  episodeOfCareFindFirst.mockReset();
+  episodeOfCareCount.mockReset();
   writeAuditLog.mockReset();
   assertOrgScoped.mockReset();
   requireFeatureAccess.mockReset();
   caseManagementFindFirst.mockResolvedValue({ id: CASE_ID, primaryIcd: null, secondaryIcd: null });
+  // Default: no prior encounters to backfill + new episode is the only ACTIVE
+  // episode on the case (sole-episode guard satisfied → backfill runs but
+  // finds zero encounters to relink, which is the expected baseline).
+  encounterFindMany.mockResolvedValue([]);
+  encounterUpdateMany.mockResolvedValue({ count: 0 });
+  episodeOfCareFindFirst.mockResolvedValue(null);
+  // No other ACTIVE episodes on this case → sole-episode guard passes.
+  episodeOfCareCount.mockResolvedValue(0);
 });
 
 function authedGuard(overrides: Partial<{ orgId: string; orgUserId: string; userId: string }> = {}) {

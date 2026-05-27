@@ -28,6 +28,7 @@ import { PasteTranscriptForm } from './_components/paste-transcript-form';
 import { UploadAudioForm } from './_components/upload-audio-form';
 import { LiveCaptureButton } from './_components/live-capture-button';
 import { VisitContextStrip } from '@/components/clinical/visit-context-strip';
+import { PrepareScanBanner } from './_components/prepare-scan-banner';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Prepare visit' };
@@ -156,6 +157,8 @@ export default async function PreparePage({ params }: { params: Promise<{ noteId
           highest-leverage moment for continuity-story context. The
           block renders nothing when no patterns fire — decision 10. */}
       <PrepareNudgeBlock nudges={prepareNudges} />
+
+      <PrepareScanBanner patientId={note.patient.id} />
 
       {/* HERO recording CTA — sits above brief/context so the highest-frequency
           action (live recording) is one tap away. Upload / Paste live below

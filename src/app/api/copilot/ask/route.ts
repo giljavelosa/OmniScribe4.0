@@ -137,6 +137,11 @@ export async function POST(req: Request) {
       // OrgUser.division). The agent's VIEWER LENS block uses this to
       // frame answers; tool results are NOT filtered.
       viewerDivision: authorizationUser.division ?? null,
+      // Sprint 0.x — clinicianOrgUserId is plumbed into ToolContext so
+      // per-clinician memory tools (lookupCleoPatterns) can find this
+      // clinician's CopilotPatientState row. Memory is scoped per
+      // (patient × clinician) — never shared across clinicians.
+      clinicianOrgUserId: authorizationUser.orgUserId,
       history: history as AgentTurn[],
       question,
     },

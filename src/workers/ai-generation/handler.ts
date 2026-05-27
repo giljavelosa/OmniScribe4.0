@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma';
 import { writeAuditLog } from '@/lib/audit/log';
 import { enqueueCaseRouterJob, enqueueCleoStateRefresh } from '@/lib/queue';
 import { getLLMService } from '@/services/llm';
+import { stripJsonFence } from '@/lib/llm/strip-json-fence';
 import { buildMasterPrompt, buildSectionPrompt, type NoteSectionDef } from '@/lib/notes/build-prompt';
 import { projectPatientForPrompt, projectEpisodeForPrompt } from '@/lib/notes/projections';
 import { PERSONA_VERSION } from '@/services/copilot/persona';
@@ -16,6 +17,7 @@ import {
 } from '@/lib/notes/section-status';
 import { markNoteEmptyTranscript } from '@/lib/notes/empty-transcript';
 import type { TranscriptClean } from '@/services/transcription';
+import { randomBytes } from 'node:crypto';
 
 type GenerateNoteJob = {
   noteId: string;
@@ -91,6 +93,14 @@ export async function handle(job: Job<AiGenerationJob>) {
   }
   if (note.status === NoteStatus.SIGNED) {
     return { skipped: 'signed' };
+  }
+  // Idempotency: a generate-note retry on a note that already reached DRAFT
+  // would re-walk the section loop and look like a regeneration storm to the
+  // clinician on /review. Restyle resets status to DRAFTING before enqueueing
+  // so it still re-runs; other callers should rely on regenerate-section for
+  // targeted re-runs.
+  if (type === 'generate-note' && note.status === NoteStatus.DRAFT) {
+    return { skipped: 'already_drafted' };
   }
 
   // Template resolution. If the note hasn't been assigned a template yet
@@ -263,17 +273,20 @@ export async function handle(job: Job<AiGenerationJob>) {
         personaVersion: PERSONA_VERSION,
       },
     });
-    // Sprint 0.13 — chain-enqueue Miss Cleo's case-router. Same pattern as
-    // enqueueNoteBriefJob from the sign route. Idempotent on noteId
-    // (queue.ts) so a retried completion collapses to one Redis entry.
-    await enqueueCaseRouterJob({ noteId, orgId });
-    // Sprint 0.14 — chain-enqueue the cleo-state refresh for the note's
-    // authoring clinician. Throttled per-tuple (5 min) at the queue layer.
-    await enqueueCleoStateRefresh({
-      orgId,
-      patientId: note.patientId,
-      clinicianOrgUserId: note.clinicianOrgUserId,
-    });
+    // Sprint 0 lockdown — even on the empty-transcript short-circuit
+    // path, run the inline flag analyzer so the lifecycle stamps +
+    // runCount advance consistently. With zero content the analyzer
+    // produces no flags but the section-hash snapshot is captured
+    // (all empty-string hashes) so the sign-route edited-since-analysis
+    // gate has a baseline to diff against if the clinician later
+    // edits a placeholder.
+    await runInlineFlagAnalysis({ noteId, orgId, sectionCount: sections.length });
+
+    // Sprint 0.13/0.14 — chain-enqueue Miss Cleo's case-router + state
+    // refresh. Best-effort: a failure here MUST NOT fail the parent job
+    // (BullMQ retries would re-walk the section loop and look like a
+    // regeneration storm to /review).
+    await fireChainEnqueues({ noteId, orgId, patientId: note.patientId, clinicianOrgUserId: note.clinicianOrgUserId });
     return { ok: true, sections: sections.length, failed: 0, skipped: 'no_transcript' };
   }
 
@@ -344,6 +357,15 @@ export async function handle(job: Job<AiGenerationJob>) {
     }
   }
 
+  // Sprint 0 lockdown — run #1 of the flag analyzer (Haiku) INLINE
+  // at the tail of generate-note, BEFORE flipping status to DRAFT.
+  // The /review page is gated on DRAFT, so by the time the
+  // clinician can route there, the initial flag set is already
+  // populated. Failures degrade gracefully — the note still flips
+  // to DRAFT and the clinician sees a banner; the retry budget is
+  // still consumed so the retry-loop logic stays consistent.
+  await runInlineFlagAnalysis({ noteId, orgId, sectionCount: sections.length });
+
   await prisma.note.update({
     where: { id: noteId },
     data: { status: NoteStatus.DRAFT },
@@ -367,20 +389,124 @@ export async function handle(job: Job<AiGenerationJob>) {
     },
   });
 
-  // Sprint 0.13 — chain-enqueue Miss Cleo's case-router so the review
-  // screen can render her routing proposal at the top. Idempotent on
-  // noteId (queue.ts) so a retried completion collapses to one Redis
-  // entry. Same pattern as enqueueNoteBriefJob from the sign route.
-  await enqueueCaseRouterJob({ noteId, orgId });
-  // Sprint 0.14 — chain-enqueue the cleo-state refresh for the note's
-  // authoring clinician. Throttled per-tuple (5 min) at the queue layer.
-  await enqueueCleoStateRefresh({
-    orgId,
-    patientId: note.patientId,
-    clinicianOrgUserId: note.clinicianOrgUserId,
-  });
+  // Sprint 0.13/0.14 — chain-enqueue Miss Cleo's case-router + state
+  // refresh. Best-effort: a failure here MUST NOT fail the parent job
+  // (BullMQ retries would re-walk the section loop and look like a
+  // regeneration storm to /review).
+  await fireChainEnqueues({ noteId, orgId, patientId: note.patientId, clinicianOrgUserId: note.clinicianOrgUserId });
 
   return { ok: true, sections: sections.length, failed: failedCount };
+}
+
+/**
+ * Sprint 0 lockdown — inline analyzer call invoked by generate-note
+ * BEFORE the DRAFT flip. Failure is caught + audited; the parent
+ * pipeline always proceeds (the clinician must be able to land on
+ * /review even when the analyzer is degraded).
+ *
+ * Stamps the lifecycle (flagAnalysisStartedAt) in a transaction-y
+ * preamble — the worker's own finally block in runFlagAnalysisCore
+ * advances flagAnalysisCompletedAt + bumps runCount.
+ */
+async function runInlineFlagAnalysis(args: {
+  noteId: string;
+  orgId: string;
+  sectionCount: number;
+}): Promise<void> {
+  const { noteId, orgId } = args;
+  const inlineReqId = randomBytes(8).toString('hex');
+
+  // Stamp the lifecycle anchor BEFORE invoking the core so any
+  // concurrent sign attempt sees `flag_analysis_pending` and refuses
+  // 409 (existing gate in sign route). The core's `finally` will
+  // stamp `flagAnalysisCompletedAt = now` so the gate clears
+  // deterministically.
+  try {
+    await prisma.note.update({
+      where: { id: noteId },
+      data: {
+        flagAnalysisStartedAt: new Date(),
+        flagAnalysisCompletedAt: null,
+      },
+    });
+  } catch (err) {
+    console.warn(
+      `[ai-generation] inline-flag-analyze startedAt stamp failed for ${noteId}:`,
+      err instanceof Error ? err.message : err,
+    );
+    // Fall through — we still try to run the analyzer.
+  }
+
+  try {
+    const { runFlagAnalysisCore } = await import('./analyze-flags-handler');
+    const result = await runFlagAnalysisCore({
+      noteId,
+      orgId,
+      requestId: `auto:${inlineReqId}`,
+      runOrigin: 'AUTO_ON_DRAFT',
+    });
+    // Success path audit happens inside runFlagAnalysisCore via
+    // FLAGS_AUTO_ANALYZED_ON_DRAFT. Skipped-cap is impossible here
+    // (runCount starts at 0 on a fresh note); skipped:no_template /
+    // no_sections are degenerate cases — we don't double-audit.
+    if ('skipped' in result) {
+      console.warn(
+        `[ai-generation] inline-flag-analyze skipped for ${noteId}: ${result.skipped}`,
+      );
+    }
+  } catch (err) {
+    // Analyzer threw an unhandled error — the core's finally already
+    // stamped completedAt + (possibly) bumped runCount. Audit the
+    // failure so the clinician's "Flag analysis unavailable" banner
+    // is reproducible from the audit trail.
+    console.warn(
+      `[ai-generation] inline-flag-analyze threw for ${noteId}:`,
+      err instanceof Error ? err.message : err,
+    );
+    try {
+      await writeAuditLog({
+        orgId,
+        action: 'FLAGS_AUTO_ANALYSIS_FAILED',
+        resourceType: 'Note',
+        resourceId: noteId,
+        metadata: {
+          errorClass: err instanceof Error ? err.name : 'Unknown',
+          errorMessage: err instanceof Error ? err.message.slice(0, 300) : String(err).slice(0, 300),
+        },
+      });
+    } catch {
+      // Audit write failed too — give up silently. The clinician will
+      // still see the "unavailable" banner from the empty flag set.
+    }
+  }
+}
+
+async function fireChainEnqueues(args: {
+  noteId: string;
+  orgId: string;
+  patientId: string;
+  clinicianOrgUserId: string;
+}): Promise<void> {
+  try {
+    await enqueueCaseRouterJob({ noteId: args.noteId, orgId: args.orgId });
+  } catch (err) {
+    console.error(
+      `[ai-generation] enqueueCaseRouterJob failed for note ${args.noteId}:`,
+      err instanceof Error ? err.message : err,
+    );
+  }
+  try {
+    await enqueueCleoStateRefresh({
+      orgId: args.orgId,
+      patientId: args.patientId,
+      clinicianOrgUserId: args.clinicianOrgUserId,
+    });
+  } catch (err) {
+    console.error(
+      `[ai-generation] enqueueCleoStateRefresh failed for note ${args.noteId}:`,
+      err instanceof Error ? err.message : err,
+    );
+  }
 }
 
 async function regenerateOne(
@@ -488,17 +614,7 @@ async function regenerateOne(
  * text as content.
  */
 function extractContent(rawText: string, sectionId: string): string {
-  let trimmed = rawText.trim();
-  // Strip markdown code fence if present. Claude and many other LLMs wrap
-  // JSON in ```json … ``` (or ``` … ```) even when asked for raw JSON via
-  // jsonMode. Without unwrapping, JSON.parse fails and the entire fenced
-  // block (including the ```json header and the inner { sectionId, content }
-  // wrapper) ends up rendered to the clinician as raw JSON in /review.
-  const fenceMatch = trimmed.match(/^```(?:json)?\s*\r?\n([\s\S]*?)\r?\n```$/);
-  if (fenceMatch?.[1]) {
-    trimmed = fenceMatch[1].trim();
-  }
-  // Try JSON parse.
+  const trimmed = stripJsonFence(rawText);
   try {
     const parsed = JSON.parse(trimmed) as { content?: string; sectionId?: string };
     if (typeof parsed.content === 'string') return parsed.content;

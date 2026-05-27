@@ -54,10 +54,28 @@ const BASE_MATRIX: Record<string, ReadonlyArray<FeatureKey>> = {
     'VOICE_PROFILE_MANAGE',
     'TRANSCRIPT_VIEW',
     'TEMPLATE_LIBRARY_READ',
+    // Personal-templates (Option A): clinicians may create / edit /
+    // archive / clone their OWN `PERSONAL` templates. Route-level
+    // guards (see `src/app/api/admin/templates/**`) enforce that a
+    // non-admin caller cannot touch TEAM / PUBLIC / preset rows or
+    // another clinician's PERSONAL row. The permission key only
+    // unlocks the route family; row-level authority is per-row.
+    'TEMPLATE_LIBRARY_MANAGE',
     'VISITS_CREATE',
   ],
   VIEWER: ['NOTE_REVIEW', 'TRANSCRIPT_VIEW', 'TEMPLATE_LIBRARY_READ'],
 };
+
+/**
+ * Admin-role predicate — single source of truth for the role-based half
+ * of the templates row-level guards. ORG_ADMIN keeps full authority over
+ * org templates; SITE_ADMIN treated as non-admin for template authoring
+ * (matches the base matrix — SITE_ADMIN has READ only). Platform owner
+ * elevation is handled separately by the route's caller chain.
+ */
+export function isOrgAdminRole(role: string | null | undefined): boolean {
+  return role === 'ORG_ADMIN';
+}
 
 export function canUseFeature(featureKey: FeatureKey, user: AuthorizationUser): boolean {
   // PATIENT_MANAGEMENT is gated by the per-user `canManagePatients` toggle

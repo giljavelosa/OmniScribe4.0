@@ -155,6 +155,8 @@ export const BriefLLMOutputSchema = z.object({
     redFlagsFromPriorNote: z.array(z.string()),
   }),
   sourceNoteIds: z.array(z.string().min(1)).min(1),
+  /** Upload ids drawn from attested_scanned_documents (may be empty). */
+  sourcePatientUploadIds: z.array(z.string().min(1)).optional(),
   ehrEnrichment: BriefEhrEnrichmentSchema.optional(),
 });
 export type BriefLLMOutput = z.infer<typeof BriefLLMOutputSchema>;

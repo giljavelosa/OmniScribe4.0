@@ -24,6 +24,7 @@
 import { z } from 'zod';
 
 import { getLLMService, type LLMService } from '@/services/llm';
+import { stripJsonFence } from '@/lib/llm/strip-json-fence';
 import {
   PERSONA_ANTI_DRIFT_BLOCK,
   PERSONA_VERSION,
@@ -47,8 +48,11 @@ const NewCaseSchema = z.object({
   /** ICD-10 when the model is confident; null when "Needs coding". */
   primaryIcd: z.string().nullable(),
   primaryIcdLabel: z.string().min(1).max(280),
-  secondaryIcd: z.string().optional(),
-  secondaryIcdLabel: z.string().optional(),
+  // .nullish() (= optional + nullable) because Claude commonly emits null
+  // for "not applicable" fields rather than omitting them. Worker treats
+  // null and undefined identically.
+  secondaryIcd: z.string().nullish(),
+  secondaryIcdLabel: z.string().nullish(),
 });
 
 const SecondaryIcdAdditionSchema = z.object({
@@ -127,7 +131,7 @@ const ReconcileProposalSchema = z.object({
   /** Optional pointer into `resolutionOptions` — the agent's
    *  recommended pre-selection. Index into the array; the UI
    *  pre-checks the matching radio when present. */
-  recommendedOptionIndex: z.number().int().min(0).optional(),
+  recommendedOptionIndex: z.number().int().min(0).nullish(),
 });
 
 const AlternativeSchema = z.object({
@@ -135,14 +139,14 @@ const AlternativeSchema = z.object({
   // too, so the LOW-confidence fallback view can offer both "attach to
   // existing native case" AND "open new from EHR diagnosis."
   action: z.enum(['attach', 'open-new', 'open-new-from-condition']),
-  caseManagementId: z.string().optional(),
+  caseManagementId: z.string().nullish(),
   newCase: z
     .object({
       primaryIcd: z.string().nullable(),
       primaryIcdLabel: z.string().min(1).max(280),
     })
-    .optional(),
-  newCaseFromCondition: NewCaseFromConditionSchema.optional(),
+    .nullish(),
+  newCaseFromCondition: NewCaseFromConditionSchema.nullish(),
   reasoning: z.string().min(1).max(600),
 });
 
@@ -159,13 +163,17 @@ export const CaseRouterProposalSchema = z.object({
     // chooses how to reconcile).
     'reconcile',
   ]),
-  caseManagementId: z.string().optional(),
-  newCase: NewCaseSchema.optional(),
+  // All action-specific payloads use .nullish() so the model can emit
+  // null for fields that don't apply to its chosen action (a common
+  // Claude JSON-output pattern). validateProposalAgainstInput enforces
+  // the action↔payload pairing.
+  caseManagementId: z.string().nullish(),
+  newCase: NewCaseSchema.nullish(),
   /** Sprint 0.15 — populated only for `open-new-from-condition`. */
-  newCaseFromCondition: NewCaseFromConditionSchema.optional(),
+  newCaseFromCondition: NewCaseFromConditionSchema.nullish(),
   /** Sprint 0.16 — populated only for `reconcile`. */
-  reconcileProposal: ReconcileProposalSchema.optional(),
-  secondaryIcdAddition: SecondaryIcdAdditionSchema.optional(),
+  reconcileProposal: ReconcileProposalSchema.nullish(),
+  secondaryIcdAddition: SecondaryIcdAdditionSchema.nullish(),
   confidence: z.enum(['high', 'medium', 'low']),
   reasoning: z.string().min(1).max(2000),
   alternatives: z.array(AlternativeSchema).max(3),
@@ -173,7 +181,7 @@ export const CaseRouterProposalSchema = z.object({
    *  Populated by the worker before persisting (the agent doesn't need
    *  to echo back its inputs — we know what we fed it). Optional so
    *  Sprint-0.13 runs (no FHIR inputs) round-trip unchanged. */
-  fhirCitations: z.array(FhirCitationSchema).optional(),
+  fhirCitations: z.array(FhirCitationSchema).nullish(),
 });
 
 export type CaseRouterProposal = z.infer<typeof CaseRouterProposalSchema>;
@@ -885,10 +893,7 @@ function modelFamily(modelId: string): 'sonnet' | 'haiku' | 'stub' | 'unknown' {
 }
 
 function parseProposal(rawText: string): { ok: true; value: CaseRouterProposal } | { ok: false; error: string } {
-  let trimmed = rawText.trim();
-  // Strip markdown code fence if present.
-  const fence = trimmed.match(/^```(?:json)?\s*\n([\s\S]*?)\n\s*```\s*$/);
-  if (fence?.[1] !== undefined) trimmed = fence[1].trim();
+  const trimmed = stripJsonFence(rawText);
 
   let json: unknown;
   try {
@@ -909,9 +914,12 @@ function parseProposal(rawText: string): { ok: true; value: CaseRouterProposal }
 
   const result = CaseRouterProposalSchema.safeParse(json);
   if (!result.success) {
+    const issue = result.error.issues[0];
+    const path = issue?.path.join('.') || '<root>';
+    const message = issue?.message ?? 'invalid_shape';
     return {
       ok: false,
-      error: `parse:${result.error.issues[0]?.message ?? 'invalid_shape'}`,
+      error: `parse:${path}:${message}`,
     };
   }
   return { ok: true, value: result.data };
@@ -970,7 +978,7 @@ function validateProposalAgainstInput(
     }
     // recommendedOptionIndex (if set) must point inside resolutionOptions.
     if (
-      rp.recommendedOptionIndex !== undefined &&
+      rp.recommendedOptionIndex != null &&
       rp.recommendedOptionIndex >= rp.resolutionOptions.length
     ) {
       return { ok: false, error: 'validate:reconcile_recommended_out_of_range' };
@@ -991,11 +999,11 @@ function validateProposalAgainstInput(
   // silently (the primary action's validation has already passed).
   const alternatives = proposal.alternatives.filter((a) => {
     if (a.action === 'attach') {
-      return a.caseManagementId !== undefined && knownCaseIds.has(a.caseManagementId);
+      return a.caseManagementId != null && knownCaseIds.has(a.caseManagementId);
     }
     if (a.action === 'open-new-from-condition') {
       return (
-        a.newCaseFromCondition !== undefined &&
+        a.newCaseFromCondition != null &&
         knownFhirIds.has(a.newCaseFromCondition.fhirConditionId)
       );
     }

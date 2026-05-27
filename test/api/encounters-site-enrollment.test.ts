@@ -99,7 +99,6 @@ describe('POST /api/encounters — multi-site enforcement', () => {
       division: 'MEDICAL',
       isActive: true,
       canManagePatients: false,
-      organization: { forceMfa: false },
     });
     patientFindFirst.mockResolvedValueOnce({ id: 'pat_1', siteId: 's_off_limits' });
     orgUserFindUnique.mockResolvedValueOnce({ role: 'CLINICIAN', orgId: 'org_1' });
@@ -124,7 +123,6 @@ describe('POST /api/encounters — multi-site enforcement', () => {
       division: 'MULTI',
       isActive: true,
       canManagePatients: false,
-      organization: { forceMfa: false },
     });
     patientFindFirst.mockResolvedValueOnce({ id: 'pat_1', siteId: 's_any' });
     caseManagementFindFirst.mockResolvedValueOnce({ id: 'case_1', status: 'ACTIVE' });
@@ -147,7 +145,6 @@ describe('POST /api/encounters — multi-site enforcement', () => {
       division: 'MEDICAL',
       isActive: true,
       canManagePatients: false,
-      organization: { forceMfa: false },
     });
     patientFindFirst.mockResolvedValueOnce({ id: 'pat_1', siteId: null });
     caseManagementFindFirst.mockResolvedValueOnce({ id: 'case_1', status: 'ACTIVE' });
@@ -171,7 +168,6 @@ describe('POST /api/encounters — multi-site enforcement', () => {
       division: 'MEDICAL',
       isActive: true,
       canManagePatients: false,
-      organization: { forceMfa: false },
     });
     patientFindFirst.mockResolvedValueOnce({ id: 'pat_1', siteId: null });
     orgUserFindUnique.mockResolvedValueOnce({ role: 'CLINICIAN', orgId: 'org_1' });

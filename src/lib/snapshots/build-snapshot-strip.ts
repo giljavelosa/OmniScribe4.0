@@ -1,8 +1,12 @@
+import type { Division as PrismaDivision } from '@prisma/client';
+
 import { prisma } from '@/lib/prisma';
 import type { PriorContextBriefContent } from '@/types/brief';
 
 import {
-  registryForDivision,
+  REHAB_MEASURES,
+  MEDICAL_MEASURES,
+  BH_MEASURES,
   type MeasureDef,
   type Division,
 } from './registry';
@@ -10,35 +14,45 @@ import { derivePatientDivision, renderDivisionFor } from './division';
 import type {
   PatientSnapshotStrip,
   SnapshotMeasure,
+  SnapshotMeasureCase,
   SnapshotScope,
 } from './types';
 
-export const SNAPSHOT_GENERATOR_VERSION = 'snapshot-v1';
+export const SNAPSHOT_GENERATOR_VERSION = 'snapshot-v2';
 
 type BuildInput = {
   orgId: string;
   patientId: string;
+  /**
+   * Viewer's clinical lens. Drives sort order — the viewer's division's
+   * measures float to the top of the strip. The strip still includes
+   * measures from other divisions when the chart contains them, because a
+   * rehab + medical clinician shouldn't be blind to a 180/100 BP on a PT
+   * patient (or vice versa). Falls back to derivePatientDivision when
+   * null/undefined (defensive — preserves the historical patient-centric
+   * order for callers without a viewer in context).
+   */
+  viewerDivision?: PrismaDivision | null;
 };
 
 /**
  * buildSnapshotStrip — Unit 12 §7 compute-on-read pipeline.
  *
  * For the given patient:
- *   1. Load active episode (status ACTIVE or RECERT_DUE; most recent),
- *      patient.site (with primaryDivision), org (defaultDivision +
- *      division).
- *   2. Derive division via derivePatientDivision; collapse MULTI → REHAB.
- *   3. Pick scope: episode-scoped when an active episode exists AND the
- *      registry for the division has any episode-scoped measures; else
- *      patient-scoped.
- *   4. For each MeasureDef in the registry: query latest non-superseded
- *      SnapshotOverride for (measureKey, scope). Hit → manual row. Miss
- *      → look up the most recent brief.content.objectiveMeasures entry
- *      whose measureKey matches → extracted row. Miss both → omit.
- *   5. Sort by registry priority. Return PatientSnapshotStrip.
+ *   1. Load patient (with site), most-recent brief, active episode, org.
+ *   2. Iterate the UNION of all registries (REHAB ∪ MEDICAL ∪ BH).
+ *      The viewer's discipline drives only sort order, not membership —
+ *      a PT looking at a hypertensive PT patient still sees the BP.
+ *   3. For each registry def: fan out by case — emit one row per
+ *      (measureKey, caseId) pair seen in the brief's objectiveMeasures.
+ *      The case is resolved via Note → Encounter → CaseManagement on the
+ *      source note. Overrides keep their original semantics (one per
+ *      measureKey, no case fan-out — overrides don't carry case scope).
+ *   4. Sort: viewer-division-first, then registry priority, then case
+ *      label (deterministic).
  *
- * Returns null when there's no patient + division to derive against
- * (defense; should never happen on a real load).
+ * Returns null when the patient or org can't be found (defense; should
+ * never happen on a real load).
  */
 export async function buildSnapshotStrip(input: BuildInput): Promise<PatientSnapshotStrip | null> {
   const [patient, mostRecentBrief, activeEpisode] = await Promise.all([
@@ -71,11 +85,13 @@ export async function buildSnapshotStrip(input: BuildInput): Promise<PatientSnap
   });
   if (!org) return null;
 
-  const fullDivision = derivePatientDivision({
-    activeEpisode: activeEpisode ? { division: activeEpisode.division } : null,
-    site: patient.site ? { primaryDivision: patient.site.primaryDivision } : null,
-    org,
-  });
+  const fullDivision: PrismaDivision = input.viewerDivision
+    ? input.viewerDivision
+    : derivePatientDivision({
+        activeEpisode: activeEpisode ? { division: activeEpisode.division } : null,
+        site: patient.site ? { primaryDivision: patient.site.primaryDivision } : null,
+        org,
+      });
   const renderDivision = renderDivisionFor(fullDivision);
   if (fullDivision === 'MULTI') {
     console.debug('snapshot.multi.fallback', {
@@ -84,15 +100,10 @@ export async function buildSnapshotStrip(input: BuildInput): Promise<PatientSnap
     });
   }
 
-  const registry = registryForDivision(renderDivision);
-  const scope = pickScope({ registry, activeEpisode });
+  // Union registry — all divisions' measures, viewer's discipline first.
+  const unionRegistry = unionRegistryWithViewerFirst(renderDivision);
+  const scope = pickScope({ registry: unionRegistry, activeEpisode });
 
-  // Overrides: pull all non-superseded for the patient at once + index by
-  // (measureKey, scopeKey) so the per-measure resolve is in-memory.
-  //
-  // `enteredByOrgUserId` is a scalar (not a relation) — see schema. The
-  // consumer below reads it as a raw id; if we later need the OrgUser
-  // row, batch-fetch by id rather than per-row include.
   const overrideRows = await prisma.snapshotOverride.findMany({
     where: {
       patientId: input.patientId,
@@ -100,11 +111,8 @@ export async function buildSnapshotStrip(input: BuildInput): Promise<PatientSnap
       supersededAt: null,
     },
   });
-  // Index overrides by (measureKey, scopeMatch).
   const overrideByKey = new Map<string, (typeof overrideRows)[number]>();
   for (const o of overrideRows) {
-    // Override matches the current scope if either both scopes are
-    // patient-wide (episodeId null) OR the episodeId matches.
     const sameScope =
       scope.kind === 'patient'
         ? o.episodeId === null
@@ -114,26 +122,45 @@ export async function buildSnapshotStrip(input: BuildInput): Promise<PatientSnap
 
   const briefContent = (mostRecentBrief?.content ?? null) as PriorContextBriefContent | null;
 
-  const measures: SnapshotMeasure[] = [];
-  for (const def of registry) {
-    const override = overrideByKey.get(def.key);
-    const extracted = findExtractedMeasure(briefContent, def.key);
+  // Batch-resolve every distinct sourceNoteId in the brief → case row.
+  const caseByNoteId = await resolveCasesForSourceNotes({
+    orgId: input.orgId,
+    sourceNoteIds: collectSourceNoteIds(briefContent),
+  });
 
+  const measures: SnapshotMeasure[] = [];
+  for (const def of unionRegistry) {
+    const override = overrideByKey.get(def.key);
+    const extractedByCase = findExtractedMeasuresByCase(briefContent, def.key, caseByNoteId);
+
+    // Override row first — overrides don't fan out by case today (scope is
+    // patient or episode, not case-level). They render as a single card.
     if (override) {
+      const firstExtractedForFallback = extractedByCase[0]?.[1];
       measures.push({
         measureKey: def.key,
         label: def.label,
         unit: override.unit ?? def.unit,
         value: stringifyOverrideValue(override.valueJson),
-        trend: extracted?.trend ?? 'unknown',
+        trend: firstExtractedForFallback?.trend ?? 'unknown',
         source: 'manual',
+        measureDivision: def.division,
+        case: null,
         overrideId: override.id,
         overriddenByName: override.enteredByOrgUserId,
         overriddenAt: override.enteredAt.toISOString(),
         recordedAt: override.recordedAt.toISOString(),
-        ...(extracted?.lastValue ? { extractedFallbackValue: extracted.lastValue } : {}),
+        ...(firstExtractedForFallback?.lastValue
+          ? { extractedFallbackValue: firstExtractedForFallback.lastValue }
+          : {}),
       });
-    } else if (extracted) {
+    }
+
+    // Extracted measures — one row per distinct case that recorded this
+    // measure. Skip cases already represented by the override row (the
+    // override speaks for the no-case bucket).
+    for (const [caseKey, extracted] of extractedByCase) {
+      if (override && caseKey === '__no_case__') continue;
       measures.push({
         measureKey: def.key,
         label: def.label,
@@ -141,18 +168,22 @@ export async function buildSnapshotStrip(input: BuildInput): Promise<PatientSnap
         value: extracted.lastValue,
         trend: extracted.trend,
         source: 'extracted',
+        measureDivision: def.division,
+        case: extracted.case,
         extractedFromNoteId: extracted.sourceNoteId,
       });
     }
-    // both miss → omit
   }
 
-  // Already in registry order; explicit sort for safety against future
-  // registry reordering at runtime.
+  // Stable sort: registry order already places viewer-division first +
+  // honors priority; tiebreaker by case label for determinism.
   measures.sort((a, b) => {
-    const aDef = registry.find((m) => m.key === a.measureKey);
-    const bDef = registry.find((m) => m.key === b.measureKey);
-    return (aDef?.priority ?? 99) - (bDef?.priority ?? 99);
+    const aIdx = unionRegistry.findIndex((m) => m.key === a.measureKey);
+    const bIdx = unionRegistry.findIndex((m) => m.key === b.measureKey);
+    if (aIdx !== bIdx) return aIdx - bIdx;
+    const aLabel = a.case?.label ?? '';
+    const bLabel = b.case?.label ?? '';
+    return aLabel.localeCompare(bLabel);
   });
 
   return {
@@ -162,6 +193,18 @@ export async function buildSnapshotStrip(input: BuildInput): Promise<PatientSnap
     generatedAt: new Date().toISOString(),
     generatorVersion: SNAPSHOT_GENERATOR_VERSION,
   };
+}
+
+/** Build the union registry sorted with viewer's discipline first.
+ *  Within each block, original registry priority is preserved. */
+function unionRegistryWithViewerFirst(viewer: Division): MeasureDef[] {
+  const blocks: Record<Division, MeasureDef[]> = {
+    REHAB: REHAB_MEASURES,
+    MEDICAL: MEDICAL_MEASURES,
+    BEHAVIORAL_HEALTH: BH_MEASURES,
+  };
+  const order: Division[] = [viewer, ...(['REHAB', 'MEDICAL', 'BEHAVIORAL_HEALTH'] as Division[]).filter((d) => d !== viewer)];
+  return order.flatMap((d) => blocks[d]);
 }
 
 function pickScope(input: {
@@ -182,19 +225,82 @@ function pickScope(input: {
   return { kind: 'patient', patientId: '__patient_scope__' };
 }
 
-function findExtractedMeasure(
+function collectSourceNoteIds(brief: PriorContextBriefContent | null): string[] {
+  if (!brief) return [];
+  return Array.from(new Set(brief.objectiveMeasures.map((m) => m.sourceNoteId).filter(Boolean)));
+}
+
+async function resolveCasesForSourceNotes(input: {
+  orgId: string;
+  sourceNoteIds: string[];
+}): Promise<Map<string, SnapshotMeasureCase | null>> {
+  const out = new Map<string, SnapshotMeasureCase | null>();
+  if (input.sourceNoteIds.length === 0) return out;
+  const rows = await prisma.note.findMany({
+    where: { id: { in: input.sourceNoteIds }, orgId: input.orgId },
+    select: {
+      id: true,
+      encounter: {
+        select: {
+          caseManagement: {
+            select: { id: true, primaryIcd: true, primaryIcdLabel: true },
+          },
+        },
+      },
+    },
+  });
+  for (const r of rows) {
+    const c = r.encounter?.caseManagement;
+    if (!c) {
+      out.set(r.id, null);
+      continue;
+    }
+    out.set(r.id, {
+      id: c.id,
+      primaryIcd: c.primaryIcd,
+      label: c.primaryIcdLabel,
+    });
+  }
+  return out;
+}
+
+type ExtractedMeasure = {
+  lastValue: string;
+  unit: string | null;
+  trend: SnapshotMeasure['trend'];
+  sourceNoteId: string;
+  case: SnapshotMeasureCase | null;
+};
+
+/** Returns one extracted entry per distinct case (keyed by case.id or
+ *  '__no_case__'). If the brief has multiple entries with the same
+ *  measureKey for the same case, the FIRST is kept (matches the legacy
+ *  `.find(...)` semantics).
+ *
+ *  Entries are returned in case-first-seen order, which is the order the
+ *  LLM emitted them — usually most-clinically-salient first within a
+ *  visit, oldest visit first across visits. */
+function findExtractedMeasuresByCase(
   brief: PriorContextBriefContent | null,
   measureKey: string,
-): { lastValue: string; unit: string | null; trend: SnapshotMeasure['trend']; sourceNoteId: string } | null {
-  if (!brief) return null;
-  const match = brief.objectiveMeasures.find((m) => m.measureKey === measureKey);
-  if (!match) return null;
-  return {
-    lastValue: match.lastValue,
-    unit: match.unit ?? null,
-    trend: match.trend,
-    sourceNoteId: match.sourceNoteId,
-  };
+  caseByNoteId: Map<string, SnapshotMeasureCase | null>,
+): Array<[string, ExtractedMeasure]> {
+  if (!brief) return [];
+  const byCase = new Map<string, ExtractedMeasure>();
+  for (const m of brief.objectiveMeasures) {
+    if (m.measureKey !== measureKey) continue;
+    const caseInfo = caseByNoteId.get(m.sourceNoteId) ?? null;
+    const caseKey = caseInfo?.id ?? '__no_case__';
+    if (byCase.has(caseKey)) continue;
+    byCase.set(caseKey, {
+      lastValue: m.lastValue,
+      unit: m.unit ?? null,
+      trend: m.trend,
+      sourceNoteId: m.sourceNoteId,
+      case: caseInfo,
+    });
+  }
+  return Array.from(byCase.entries());
 }
 
 function stringifyOverrideValue(value: unknown): string {

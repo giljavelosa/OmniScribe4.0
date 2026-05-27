@@ -357,7 +357,6 @@ describe('CaseRoutingPanel — synthetic fallback proposal', () => {
             primaryIcdLabel: 'Right shoulder pain',
             secondaryIcd: null,
             secondaryIcdLabel: null,
-            lastUpdatedAt: '2026-05-22T00:00:00.000Z',
           },
         ]}
         initialCurrentCaseId="case_pending"

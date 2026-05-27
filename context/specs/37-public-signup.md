@@ -1,5 +1,8 @@
 # Unit 37: Public Signup + Self-Serve Org Creation
 
+> **Sprint 0.20 — MFA removed.** Any reference to MFA, /mfa-challenge, /mfa-setup, TOTP, authenticator app setup, or login-verified gates in this document is HISTORICAL. Authentication is now password-only. See `context/specs/01-foundation-auth-tenant.md` and `progress-tracker.md`.
+
+
 > **Wave 6** (platform). Commercial signup provisioning in this unit is **Wave 7 Unit 40** — see [`00-build-plan.md`](00-build-plan.md) Wave 7.
 
 ## Goal

@@ -4,6 +4,7 @@ import { Division, NoteSensitivityLevel } from '@prisma/client';
 
 import { prisma } from '@/lib/prisma';
 import { requireFeatureAccess } from '@/lib/authz/server';
+import { isOrgAdminRole } from '@/lib/authz/internal-authorization';
 import { writeAuditLog } from '@/lib/audit/log';
 import { assertOrgScoped } from '@/lib/phi-access';
 import { diffForAudit } from '@/lib/audit/diff';
@@ -111,6 +112,36 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     before.createdByOrgUserId !== authorizationUser.orgUserId
   ) {
     return NextResponse.json({ error: { code: 'forbidden' } }, { status: 403 });
+  }
+  // Option A — non-admin row-level guards on TEAM/PUBLIC org templates.
+  const isAdmin = isOrgAdminRole(authorizationUser.role);
+  if (!isAdmin && before.visibility !== 'PERSONAL') {
+    return NextResponse.json(
+      {
+        error: {
+          code: 'forbidden',
+          message: 'Only org admins can edit team templates.',
+        },
+      },
+      { status: 403 },
+    );
+  }
+  // ...and non-admins must not be able to flip their PERSONAL row into a
+  // TEAM/PUBLIC one (visibility escalation = unauthorized publishing).
+  if (
+    !isAdmin &&
+    parsed.data.visibility !== undefined &&
+    parsed.data.visibility !== 'PERSONAL'
+  ) {
+    return NextResponse.json(
+      {
+        error: {
+          code: 'visibility_forbidden',
+          message: 'Only org admins can change visibility to TEAM or PUBLIC.',
+        },
+      },
+      { status: 403 },
+    );
   }
 
   // sectionSchema change bumps version.

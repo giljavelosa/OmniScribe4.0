@@ -1,5 +1,8 @@
 # Commercial Readiness Backlog (Memory Note)
 
+> **Sprint 0.20 — MFA removed.** Any reference to MFA, /mfa-challenge, /mfa-setup, TOTP, authenticator app setup, or login-verified gates in this document is HISTORICAL. Authentication is now password-only. See `context/specs/01-foundation-auth-tenant.md` and `progress-tracker.md`.
+
+
 **Captured:** 2026-05-05
 **Source:** Admin state-of-play audit run after Gil signaled intent to ship scribe-only commercially to existing customers.
 **Full audit:** `audit-admin-state-of-play.md` (sibling file in repo root) — read that for evidence and citations.

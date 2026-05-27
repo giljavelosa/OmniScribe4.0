@@ -45,7 +45,7 @@ const bodySchema = z.object({
  *      so repeat-IP signup detection works without storing raw IPs.
  *
  * Client signs in via NextAuth after this returns 201; new user
- * lands at /mfa-setup per the existing D2 enforcement chain.
+ * lands at /home after auto sign-in (password-only auth).
  */
 export async function POST(req: Request) {
   const ip = (req.headers.get('x-forwarded-for')?.split(',')[0] ?? '').trim() || null;

@@ -20,9 +20,12 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { StatusBanner } from '@/components/ui/status-banner';
 
-const VISIBILITY = [
+const VISIBILITY_ALL = [
   { value: 'PERSONAL', label: 'Personal (only you)' },
   { value: 'TEAM', label: 'Team (whole org)' },
+];
+const VISIBILITY_PERSONAL_ONLY = [
+  { value: 'PERSONAL', label: 'Personal (only you)' },
 ];
 
 /**
@@ -31,17 +34,26 @@ const VISIBILITY = [
  *
  * Works for both org-scoped templates and presets (preset clones land in
  * the current org with isPreset=false + clonedFromId set).
+ *
+ * `basePath` parameterizes the post-clone editor URL. `personalOnly`
+ * locks the visibility picker to PERSONAL for non-admin callers — the
+ * server enforces the same rule.
  */
 export function CloneTemplateButton({
   templateId,
   defaultName,
   variant = 'ghost',
+  basePath = '/admin/templates',
+  personalOnly = false,
 }: {
   templateId: string;
   defaultName: string;
   variant?: 'ghost' | 'outline';
+  basePath?: string;
+  personalOnly?: boolean;
 }) {
   const router = useRouter();
+  const visibilityChoices = personalOnly ? VISIBILITY_PERSONAL_ONLY : VISIBILITY_ALL;
   const [open, setOpen] = useState(false);
   const [name, setName] = useState(`${defaultName} (copy)`);
   const [visibility, setVisibility] = useState('PERSONAL');
@@ -63,7 +75,7 @@ export function CloneTemplateButton({
       }
       const json = (await res.json()) as { data: { id: string } };
       setOpen(false);
-      router.push(`/admin/templates/${json.data.id}`);
+      router.push(`${basePath}/${json.data.id}`);
     });
   }
 
@@ -103,9 +115,9 @@ export function CloneTemplateButton({
             <div className="space-y-1.5">
               <Label>Visibility</Label>
               <Select value={visibility} onValueChange={setVisibility}>
-                <SelectTrigger disabled={pending}><SelectValue /></SelectTrigger>
+                <SelectTrigger disabled={pending || personalOnly}><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {VISIBILITY.map((v) => <SelectItem key={v.value} value={v.value}>{v.label}</SelectItem>)}
+                  {visibilityChoices.map((v) => <SelectItem key={v.value} value={v.value}>{v.label}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>

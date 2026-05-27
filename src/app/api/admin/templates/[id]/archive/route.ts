@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { prisma } from '@/lib/prisma';
 import { requireFeatureAccess } from '@/lib/authz/server';
+import { isOrgAdminRole } from '@/lib/authz/internal-authorization';
 import { writeAuditLog } from '@/lib/audit/log';
 import { assertOrgScoped } from '@/lib/phi-access';
 
@@ -48,6 +49,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     template.createdByOrgUserId !== authorizationUser.orgUserId
   ) {
     return NextResponse.json({ error: { code: 'forbidden' } }, { status: 403 });
+  }
+  // Option A — non-admin row-level guard on TEAM/PUBLIC org templates.
+  const isAdmin = isOrgAdminRole(authorizationUser.role);
+  if (!isAdmin && template.visibility !== 'PERSONAL') {
+    return NextResponse.json(
+      {
+        error: {
+          code: 'forbidden',
+          message: 'Only org admins can archive team templates.',
+        },
+      },
+      { status: 403 },
+    );
   }
 
   const archiving = parsed.data.action === 'archive';

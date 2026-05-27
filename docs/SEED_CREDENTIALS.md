@@ -1,10 +1,15 @@
 # Seed credentials — LOCAL DEV ONLY
 
-> **WARNING.** Every secret in this file is for the local development
-> environment only. The TOTP seed below is a deterministic test value so
-> developers can scan a QR with their authenticator and be productive in
-> seconds. **Never** set this secret in a deployed environment — staging,
-> production, customer-pilot, anything reachable beyond `localhost`.
+> **WARNING.** Every credential below is for the local development
+> environment only. **Never** reuse these passwords in a deployed
+> environment — staging, production, customer-pilot, anything reachable
+> beyond `localhost`.
+>
+> **Sprint 0.20 — MFA removed.** Authentication is password-only.
+> Account recovery is admin-initiated invites + user-initiated password
+> reset. The previous TOTP setup, recovery codes, and authenticator-app
+> instructions in this file have been deleted along with the
+> supporting code.
 
 After `npx prisma db seed` runs, the local database contains **two organizations** with full clinical corpora:
 
@@ -23,13 +28,13 @@ After `npx prisma db seed` runs, the local database contains **two organizations
 
 All passwords: **`Demo1234!`** (bcrypt-hashed at rounds=12).
 
-| Email | OrgRole | Division | MFA pre-enrolled? | Notes |
-|---|---|---|---|---|
-| `admin@demo.local` | `ORG_ADMIN` | `MULTI` | yes | Use the TOTP secret below |
-| `clinician@demo.local` | `CLINICIAN` | `MEDICAL` | no | `canManagePatients = true`, has PractitionerProfile |
-| `viewer@demo.local` | `VIEWER` | `MEDICAL` | no | Read-only |
-| `siteadmin@demo.local` | `SITE_ADMIN` | `MEDICAL` | no | Team scoped to site |
-| `owner@demo.local` | `CLINICIAN` (at org) + **`platformRole = PLATFORM_OWNER`** | `MEDICAL` | no | Use for `/owner/orgs` testing |
+| Email | OrgRole | Division | Notes |
+|---|---|---|---|
+| `admin@demo.local` | `ORG_ADMIN` | `MULTI` | Org admin |
+| `clinician@demo.local` | `CLINICIAN` | `MEDICAL` | `canManagePatients = true`, has PractitionerProfile |
+| `viewer@demo.local` | `VIEWER` | `MEDICAL` | Read-only |
+| `siteadmin@demo.local` | `SITE_ADMIN` | `MEDICAL` | Team scoped to site |
+| `owner@demo.local` | `CLINICIAN` (at org) + **`platformRole = PLATFORM_OWNER`** | `MEDICAL` | Use for `/owner/orgs` testing |
 
 Demo Clinic also has 6 extra clinicians (`pt.smith@demo.local`, `np.brown@demo.local`, etc.) and **3 patients** with **7 signed visits each** (James Park, Maria Alvarez, Devon Mitchell).
 
@@ -69,69 +74,25 @@ Log in as `clinician@acme.local` to explore Acme charts. Use `owner@demo.local` 
 
 ---
 
-## Shared MFA note (Demo Clinic admin only)
+## Account recovery
 
-```
-7FSWEU6M2MYDQONC5WHDM72MK3FUQZ4Q
-```
+Sprint 0.20 removed MFA. Account recovery follows two paths, both
+already wired:
 
-This is a 20-byte (32-character base32) secret that satisfies otplib v13's
-16-byte minimum. The old canonical `JBSWY3DPEHPK3PXP` test vector is only
-10 bytes and is rejected by v13.
+- **Admin invite** — `POST /api/admin/invites` sends an email with a
+  one-time setup link. The recipient lands at `/onboarding/[token]`,
+  sets a password, and is signed in.
+- **User-initiated password reset** — `/password-reset/request` →
+  email link → `/password-reset/[token]` → set new password.
+- **Admin-initiated password reset** — admin opens the user row in
+  `/admin/users`, clicks "Send password reset". Same email + token
+  flow as the user-initiated path; emits an audit row attributing it
+  to the admin.
 
-To use it:
+## Why these passwords are committed
 
-1. Open your authenticator app (Authy, 1Password, Google Authenticator,
-   Microsoft Authenticator, etc.).
-2. Choose "Add account" → "Enter setup key" (or "Enter manually").
-3. Account name: `admin@demo.local`. Issuer: `OmniScribe`. Algorithm: SHA-1.
-   Period: 30 sec. Digits: 6.
-4. Paste the secret above.
-5. The app now shows the current 6-digit code that changes every 30s. Use
-   it on the `/mfa-challenge` page after signing in.
-
-Alternatively, `npx prisma db seed` prints the current token at the end of
-its output as a one-time sanity check.
-
-### CLI fallback (no authenticator app handy)
-
-Generate a code on demand from your terminal — uses the project's own
-otplib config so the result matches what the server expects:
-
-```bash
-cd /Users/gil/Downloads/OmniScribe4.0
-npx tsx -e "import('./src/lib/mfa.ts').then(m => m.generateTotpToken('7FSWEU6M2MYDQONC5WHDM72MK3FUQZ4Q').then(c => console.log(c)))"
-```
-
-Paste the printed 6-digit code immediately — TOTP windows are 30 seconds,
-and otplib's default `window: 1` tolerance gives you ±1 step (90 s
-effective grace). Re-run if the window flips before you submit.
-
-> **Tripwire**: a `node -e "const {TOTP} = require('otplib')..."` one-liner
-> from the bare Node REPL will fail with `CryptoPluginMissingError` —
-> v13's CJS entry doesn't auto-attach the crypto + base32 plugins.
-> ESM resolution via `tsx` does, which is why the snippet above works.
-
-## Recovery codes
-
-Recovery codes are regenerated at seed time and printed once to the seed
-command's stdout. Grab them from the terminal where you ran
-`npx prisma db seed`. They are stored bcrypt-hashed in
-`User.mfaRecoveryCodes`; the plaintext is never persisted.
-
-## Rotating the seed
-
-If a developer needs to change the test secret:
-
-1. Edit `DEMO_ADMIN_MFA_SECRET` in [`prisma/seed.ts`](../prisma/seed.ts).
-2. Update the secret above.
-3. Drop your local DB volume (`docker compose down -v && docker compose up -d`).
-4. Re-run `npx prisma migrate dev` and `npx prisma db seed`.
-
-## Why is this committed?
-
-The seed is a deterministic, local-only test value. Committing it lets every
-developer be productive within seconds of cloning the repo without exchanging
-secrets out-of-band. The risk is bounded because the secret never matches a
-deployed user (production seeds skip the pre-enrolled-MFA path; admins enroll
-fresh on first sign-in).
+`Demo1234!` is a deterministic, local-only test value. Committing it
+lets every developer be productive within seconds of cloning the repo
+without exchanging secrets out-of-band. The risk is bounded because
+none of these accounts exist in any deployed environment — production
+seeds never run.

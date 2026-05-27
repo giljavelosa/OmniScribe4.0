@@ -10,6 +10,22 @@
 
 export type SnapshotSource = 'extracted' | 'manual' | 'fhir';
 
+/** Case the measure came from — only present on extracted measures whose
+ *  source note is linked to a CaseManagement. Null for ad-hoc visits
+ *  without a case and for manual overrides (overrides don't carry case
+ *  scope today). */
+export type SnapshotMeasureCase = {
+  id: string;
+  /** ICD-10 code, e.g. "M25.551". null when the case has no primary ICD. */
+  primaryIcd: string | null;
+  /** Human label used in the strip — "Right hip pain" / "Rotator Cuff Injury". */
+  label: string;
+};
+
+/** Division of the measure's registry def — drives grouping/sorting on the
+ *  strip so the viewer's own discipline floats to the top. */
+export type SnapshotMeasureDivision = 'REHAB' | 'MEDICAL' | 'BEHAVIORAL_HEALTH';
+
 /** A single measure card on the snapshot strip. */
 export type SnapshotMeasure = {
   measureKey: string;
@@ -19,6 +35,12 @@ export type SnapshotMeasure = {
   /** Trend vs the prior reading: improving / stable / worsening / unknown. */
   trend: 'improving' | 'stable' | 'worsening' | 'unknown';
   source: SnapshotSource;
+  /** Division of the measure's registry def — drives the viewer-discipline-first
+   *  sort + lets the UI group across divisions. */
+  measureDivision: SnapshotMeasureDivision;
+  /** Case the measure came from. Null for measures with no case linkage
+   *  (ad-hoc visits) or manual overrides. */
+  case: SnapshotMeasureCase | null;
   /** When source='extracted', the source note id. */
   extractedFromNoteId?: string;
   /** When source='manual', who entered the override + when. */

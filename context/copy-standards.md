@@ -1,5 +1,8 @@
 # Copy Standards — Plain English for clinician-facing strings
 
+> **Sprint 0.20 — MFA removed.** Any reference to MFA, /mfa-challenge, /mfa-setup, TOTP, authenticator app setup, or login-verified gates in this document is HISTORICAL. Authentication is now password-only. See `context/specs/01-foundation-auth-tenant.md` and `progress-tracker.md`.
+
+
 OmniScribe's clinical surfaces are read by clinicians of varying tech literacy. Tech jargon (MFA, TOTP, SSO, JSON) is alienating and the wrong vocabulary even for sophisticated users. The opposite extreme — spelling out *every* abbreviation — is condescending and harder to scan for clinicians who use abbreviations every day (MRN, DOB, ICD, CPT).
 
 This doc defines the two lists and the principle.

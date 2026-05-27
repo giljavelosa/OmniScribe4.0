@@ -1,5 +1,8 @@
 # Screens — Reference Index
 
+> **Sprint 0.20 — MFA removed.** Any reference to MFA, /mfa-challenge, /mfa-setup, TOTP, authenticator app setup, or login-verified gates in this document is HISTORICAL. Authentication is now password-only. See `context/specs/01-foundation-auth-tenant.md` and `progress-tracker.md`.
+
+
 > Every screen in OmniScribe v1, with route, who can access it, what's on it, what the user can do. One section per screen. Use this as a map while reading the journey files or building the specs.
 
 ## Reading conventions

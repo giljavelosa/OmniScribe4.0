@@ -26,7 +26,8 @@ import {
 } from '@/components/ui/alert-dialog';
 
 const DIVISIONS = ['MEDICAL', 'REHAB', 'BEHAVIORAL_HEALTH', 'MULTI'];
-const VISIBILITY = ['PERSONAL', 'TEAM'];
+const VISIBILITY_ALL = ['PERSONAL', 'TEAM'];
+const VISIBILITY_PERSONAL_ONLY = ['PERSONAL'];
 const SENSITIVITY = ['STANDARD_CLINICAL', 'BEHAVIORAL_HEALTH', 'BILLING_ONLY'];
 
 type Section = {
@@ -60,8 +61,17 @@ const SLUG_RE = /^[a-z0-9_-]+$/;
  * preview pane renders the section list exactly as SectionAccordion
  * would on /review — text-only, no interactivity.
  */
-export function TemplateEditor({ template }: { template: Template }) {
+export function TemplateEditor({
+  template,
+  basePath = '/admin/templates',
+  personalOnly = false,
+}: {
+  template: Template;
+  basePath?: string;
+  personalOnly?: boolean;
+}) {
   const router = useRouter();
+  const visibilityChoices = personalOnly ? VISIBILITY_PERSONAL_ONLY : VISIBILITY_ALL;
   const [name, setName] = useState(template.name);
   const [description, setDescription] = useState(template.description ?? '');
   const [division, setDivision] = useState(template.division);
@@ -158,7 +168,7 @@ export function TemplateEditor({ template }: { template: Template }) {
                   <>
                     {' · '}
                     Cloned from{' '}
-                    <Link href={`/admin/templates/${template.clonedFrom.id}`} className="underline">
+                    <Link href={`${basePath}/${template.clonedFrom.id}`} className="underline">
                       {template.clonedFrom.name} (v{template.clonedFrom.version})
                     </Link>
                   </>
@@ -198,9 +208,9 @@ export function TemplateEditor({ template }: { template: Template }) {
             <div className="space-y-1.5">
               <Label>Visibility</Label>
               <Select value={visibility} onValueChange={setVisibility}>
-                <SelectTrigger disabled={pending}><SelectValue /></SelectTrigger>
+                <SelectTrigger disabled={pending || personalOnly}><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {VISIBILITY.map((v) => <SelectItem key={v} value={v}>{v}</SelectItem>)}
+                  {visibilityChoices.map((v) => <SelectItem key={v} value={v}>{v}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>

@@ -1,5 +1,8 @@
 # OmniScribe
 
+> **Sprint 0.20 — MFA removed.** Any reference to MFA, /mfa-challenge, /mfa-setup, TOTP, authenticator app setup, or login-verified gates in this document is HISTORICAL. Authentication is now password-only. See `context/specs/01-foundation-auth-tenant.md` and `progress-tracker.md`.
+
+
 > HIPAA-grade medical AI scribe with an integrated agentic clinical copilot.
 
 ## Implementation status

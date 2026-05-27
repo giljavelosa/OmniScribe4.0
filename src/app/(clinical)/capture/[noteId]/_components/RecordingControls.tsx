@@ -89,9 +89,11 @@ export function RecordingControls({ noteId, autostart = false }: Props) {
     }
   }, [state.kind, noteId, router]);
 
-  // Auto-start countdown — only runs once when the page mounts in idle.
-  // Cancels if the clinician taps Cancel or the state moves out of idle for
-  // any other reason. Fires `start()` exactly once.
+  // Auto-start countdown — only runs while the page is mounted in idle and
+  // autostart is active. Tick the remaining time only; the actual `start()`
+  // trigger lives in a separate effect so we never call a parent-component
+  // setter from inside a state updater (React forbids cross-component
+  // setState during render, including via batched updater callbacks).
   useEffect(() => {
     if (!autostartActive) return;
     if (state.kind !== 'idle') return;
@@ -99,23 +101,24 @@ export function RecordingControls({ noteId, autostart = false }: Props) {
 
     const tickMs = 100;
     const interval = setInterval(() => {
-      setAutostartMs((prev) => {
-        const next = prev - tickMs;
-        if (next <= 0) {
-          clearInterval(interval);
-          if (!autostartFiredRef.current) {
-            autostartFiredRef.current = true;
-            setAutostartActive(false);
-            void start();
-          }
-          return 0;
-        }
-        return next;
-      });
+      setAutostartMs((prev) => Math.max(0, prev - tickMs));
     }, tickMs);
 
     return () => clearInterval(interval);
-  }, [autostartActive, state.kind, start]);
+  }, [autostartActive, state.kind]);
+
+  // Fire `start()` exactly once when the countdown reaches zero. Runs as a
+  // post-commit effect so the cross-component setState inside `start` is
+  // performed outside any render / state-updater path.
+  useEffect(() => {
+    if (!autostartActive) return;
+    if (state.kind !== 'idle') return;
+    if (autostartMs > 0) return;
+    if (autostartFiredRef.current) return;
+    autostartFiredRef.current = true;
+    setAutostartActive(false);
+    void start();
+  }, [autostartActive, autostartMs, state.kind, start]);
 
   const isIdle = state.kind === 'idle';
   const isError = state.kind === 'error';

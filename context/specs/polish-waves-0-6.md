@@ -1,5 +1,8 @@
 # Polish — Waves 0–6 (gate before Wave 7 & 8)
 
+> **Sprint 0.20 — MFA removed.** Any reference to MFA, /mfa-challenge, /mfa-setup, TOTP, authenticator app setup, or login-verified gates in this document is HISTORICAL. Authentication is now password-only. See `context/specs/01-foundation-auth-tenant.md` and `progress-tracker.md`.
+
+
 > **Status:** in progress (planning). Waves 7 (billing Unit 41) and 8 (Miss Cleo port) are **paused** until this checklist is materially complete. Units 01–37 shipped capability; this document tracks the gaps, stubs, and deferred polish that block production trust.
 
 ## Gate rule

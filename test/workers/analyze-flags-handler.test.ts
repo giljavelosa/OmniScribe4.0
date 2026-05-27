@@ -27,6 +27,7 @@ const noteFindUnique = vi.fn();
 const noteUpdate = vi.fn();
 const reviewFlagDeleteMany = vi.fn();
 const reviewFlagCreate = vi.fn();
+const reviewFlagFindFirst = vi.fn();
 const writeAuditLog = vi.fn();
 const analyzeSection = vi.fn();
 
@@ -40,6 +41,7 @@ vi.mock('@/lib/prisma', () => ({
     reviewFlag: {
       deleteMany: (...a: unknown[]) => reviewFlagDeleteMany(...a),
       create: (...a: unknown[]) => reviewFlagCreate(...a),
+      findFirst: (...a: unknown[]) => reviewFlagFindFirst(...a),
     },
     $transaction: async (cb: (tx: unknown) => Promise<unknown>) =>
       cb({
@@ -49,6 +51,7 @@ vi.mock('@/lib/prisma', () => ({
         reviewFlag: {
           deleteMany: (...a: unknown[]) => reviewFlagDeleteMany(...a),
           create: (...a: unknown[]) => reviewFlagCreate(...a),
+          findFirst: (...a: unknown[]) => reviewFlagFindFirst(...a),
         },
       }),
   },
@@ -113,11 +116,15 @@ beforeEach(() => {
   noteUpdate.mockReset();
   reviewFlagDeleteMany.mockReset();
   reviewFlagCreate.mockReset();
+  reviewFlagFindFirst.mockReset();
   writeAuditLog.mockReset();
   analyzeSection.mockReset();
 
   reviewFlagDeleteMany.mockResolvedValue({ count: 0 });
   reviewFlagCreate.mockImplementation(async () => ({ id: `flag_${Math.random()}` }));
+  // Default: no prior decision in scope — the analyzer creates fresh
+  // OPEN rows. Carry-forward branch tests override this per-call.
+  reviewFlagFindFirst.mockResolvedValue(null);
   noteUpdate.mockResolvedValue({});
 });
 
@@ -165,9 +172,13 @@ describe('handleAnalyzeFlags — sign-race protection', () => {
       (call) => (call[0] as { data: { sectionId: string } }).data.sectionId,
     );
     expect(createdSectionIds).not.toContain('s2');
-    // Audit row reflects the abort.
+    // Audit row reflects the abort. Sprint 0 lockdown switched the
+    // audit action from the legacy `FLAGS_ANALYZED` to the origin-
+    // specific `FLAGS_RE_ANALYZED` (because `handleAnalyzeFlags` is
+    // always the clinician-triggered run #2 path). The auto-on-draft
+    // path emits `FLAGS_AUTO_ANALYZED_ON_DRAFT` instead.
     const flagsAnalyzedCall = writeAuditLog.mock.calls.find(
-      (c) => (c[0] as { action: string }).action === 'FLAGS_ANALYZED',
+      (c) => (c[0] as { action: string }).action === 'FLAGS_RE_ANALYZED',
     );
     expect(flagsAnalyzedCall).toBeDefined();
     expect(

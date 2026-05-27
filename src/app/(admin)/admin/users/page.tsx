@@ -85,7 +85,14 @@ export default async function AdminUsersPage() {
                 const isAllSitesRole = ou.role === 'ORG_ADMIN';
                 const enrolled = ou.siteEnrollments;
                 return (
-                  <tr key={ou.id} className="border-b border-border last:border-b-0">
+                  <tr
+                    key={ou.id}
+                    data-testid="admin-user-row"
+                    data-userid={ou.user.id}
+                    data-orguserid={ou.id}
+                    data-email={ou.user.email}
+                    className="border-b border-border last:border-b-0"
+                  >
                     <td className="px-4 py-3 font-mono">{ou.user.email}</td>
                     <td className="px-4 py-3">{ou.role}</td>
                     <td className="px-4 py-3">{ou.division}</td>

@@ -199,9 +199,12 @@ export function ReviewClient({
       {/* Sprint 0.13 — Miss Cleo's case-routing panel. Mounted at the top
           of the review surface so the routing decision is the first thing
           the clinician sees. Hides itself once accepted (collapses to a
-          compact pill via internal state). Hidden on signed notes (routing
-          is locked at sign). */}
-      {!isSigned && (
+          compact pill via internal state).
+          Normally hidden on signed notes (routing locks at sign), with one
+          narrow exception: a signed note whose case is still PENDING_ROUTER
+          slipped through the pre-block era and needs a post-sign resolution
+          path. The accept endpoint mirrors this exception. */}
+      {(!isSigned || initialCurrentCaseManagementStatus === 'PENDING_ROUTER') && (
         <CaseRoutingPanel
           noteId={noteId}
           initial={initialRouterRun}

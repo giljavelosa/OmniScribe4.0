@@ -1,5 +1,8 @@
 # Design Mockup Gap Analysis
 
+> **Sprint 0.20 — MFA removed.** Any reference to MFA, /mfa-challenge, /mfa-setup, TOTP, authenticator app setup, or login-verified gates in this document is HISTORICAL. Authentication is now password-only. See `context/specs/01-foundation-auth-tenant.md` and `progress-tracker.md`.
+
+
 This folder is a deep, file-citation-level comparison of the 21 HTML mockups in `design-mockups-2026-05/` against the corresponding production pages in `src/app/`. Each per-area markdown file enumerates what is **already built**, what is **partially built**, and what is **outright missing or conflicting**, with `file:line` citations and explicit cross-references to the existing task list in `cursor-tasks/01-quick-wins.md` (Tasks #1–#7). It is intended as the source of truth for scoping Phase 1+ design work — not a redesign proposal, not a tracking system.
 
 **Maintenance:** These docs are **living**. When production ships mockup-related UI, update the corresponding `*.md` row and the coverage matrix below (this supersedes the original “read-only snapshot” intent).

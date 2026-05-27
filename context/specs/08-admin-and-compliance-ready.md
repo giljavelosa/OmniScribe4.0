@@ -1,5 +1,8 @@
 # Unit 08: Admin & Compliance Ready
 
+> **Sprint 0.20 — MFA removed.** Any reference to MFA, /mfa-challenge, /mfa-setup, TOTP, authenticator app setup, or login-verified gates in this document is HISTORICAL. Authentication is now password-only. See `context/specs/01-foundation-auth-tenant.md` and `progress-tracker.md`.
+
+
 ## Goal
 
 Close the commercial-readiness gates: BAA tracking UI (schema already in Unit 01), Sites + Rooms CRUD, full admin user management surfaces (already covered by Unit 01 in API/auth shape — this unit completes the UI), and audit log enrichment for important mutations. After this unit, OmniScribe can be sold to and run for a first paying customer.

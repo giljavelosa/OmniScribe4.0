@@ -1,4 +1,5 @@
 import { getLLMService, type LLMService } from '@/services/llm';
+import { stripJsonFence } from '@/lib/llm/strip-json-fence';
 import {
   FOLLOWUP_EXTRACTOR_SYSTEM_PROMPT,
   buildFollowupExtractorUserMessage,
@@ -56,7 +57,7 @@ export class FollowupExtractor {
 function parseExtraction(rawText: string): FollowupExtraction {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(rawText.trim());
+    parsed = JSON.parse(stripJsonFence(rawText));
   } catch {
     return { items: [] };
   }
