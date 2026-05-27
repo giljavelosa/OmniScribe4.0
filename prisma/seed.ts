@@ -613,6 +613,9 @@ async function main() {
         primaryIcd: p.primaryIcd,
         primaryIcdLabel: p.diagnosis,
         description: bodyPart ?? null,
+        // Unit 49: case division mirrors the patient persona's division
+        // (matches the opener clinician's division in the seed graph).
+        division: p.division,
         status: 'ACTIVE',
         openedByOrgUserId: clinicianOrgUserId,
       },

@@ -7,6 +7,7 @@ import { requireFeatureAccess } from '@/lib/authz/server';
 import { writeAuditLog } from '@/lib/audit/log';
 import { singleFieldChange } from '@/lib/audit/diff';
 import { assertOrgScoped } from '@/lib/phi-access';
+import { assertCanContinueCase, CaseDivisionDeniedError } from '@/lib/case-access';
 
 export const runtime = 'nodejs';
 
@@ -32,6 +33,33 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: { code: 'not_found' } }, { status: 404 });
   }
   assertOrgScoped(existing.orgId, authorizationUser.orgId);
+
+  // Unit 49 — division gate on close. Closing is a write mutation, so
+  // only same-division (or MULTI) clinicians may perform it.
+  try {
+    assertCanContinueCase(existing, authorizationUser);
+  } catch (err) {
+    if (err instanceof CaseDivisionDeniedError) {
+      await writeAuditLog({
+        userId: user.id,
+        orgId: authorizationUser.orgId,
+        action: 'CASE_DIVISION_BLOCKED',
+        resourceType: 'CaseManagement',
+        resourceId: err.caseId,
+        metadata: {
+          caseId: err.caseId,
+          clinicianDivision: err.clinicianDivision,
+          caseDivision: err.caseDivision,
+          route: 'case-close',
+        },
+      });
+      return NextResponse.json(
+        { error: { code: 'forbidden', message: 'Case belongs to a different division.' } },
+        { status: 403 },
+      );
+    }
+    throw err;
+  }
 
   if (existing.status === CaseManagementStatus.CANCELLED) {
     return NextResponse.json(

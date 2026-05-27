@@ -4,6 +4,7 @@ import { notFound, redirect } from 'next/navigation';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { writeAuditLog } from '@/lib/audit/log';
+import { divisionForProfession } from '@/lib/professions';
 import { readSectionStatus, readInferenceLog } from '@/lib/notes/section-status';
 import type { NoteSectionDef } from '@/lib/notes/build-prompt';
 import { CopilotShell } from '@/components/copilot/copilot-shell';
@@ -139,12 +140,22 @@ export default async function ReviewPage({ params }: { params: Promise<{ noteId:
     : null;
   const currentCaseManagementId = note.encounter?.caseManagementId ?? null;
   const currentCaseManagementStatus = note.encounter?.caseManagement?.status ?? null;
+  // Unit 49 §E — viewer-division filter for the case picker. Off-division
+  // cases are silently hidden so the clinician can't accidentally route a
+  // visit into a case they're not allowed to write to (the API gate would
+  // also reject it, but the silent filter keeps the picker short).
+  const viewerDivisionForCasePicker = divisionForProfession(
+    session.user.professionType ?? null,
+  );
   const initialActiveCasesRaw = await prisma.caseManagement.findMany({
     where: {
       orgId: session.user.orgId,
       patientId: note.patientId,
       status: 'ACTIVE',
       ...(currentCaseManagementId ? { id: { not: currentCaseManagementId } } : {}),
+      ...(viewerDivisionForCasePicker
+        ? { division: { in: [viewerDivisionForCasePicker, 'MULTI'] } }
+        : {}),
     },
     orderBy: { openedAt: 'desc' },
     select: {

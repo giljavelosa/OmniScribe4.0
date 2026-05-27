@@ -588,4 +588,19 @@ export type AuditAction =
   // errors, reachedCap, dryRun }. resourceId is the literal string
   // 'sweep' (same convention as the episodes sweep).
   | 'CASE_BACKFILLED_FROM_PENDING_ROUTER'
-  | 'CASE_BACKFILL_SWEEP_RUN';
+  | 'CASE_BACKFILL_SWEEP_RUN'
+  // ---- Unit 49: Case-division rule ----
+  //
+  // CASE_DIVISION_BLOCKED fires when an API write boundary rejects a
+  // clinician's attempt to mutate / attach to / sign against a case
+  // whose division doesn't match theirs (and isn't `MULTI`). Emitted
+  // from the catch site for `CaseDivisionDeniedError` thrown by
+  // `assertCanContinueCase` (`src/lib/case-access.ts`). PHI-free:
+  // metadata is { caseId, clinicianDivision, caseDivision, route }
+  // where `route` discriminates the write boundary
+  // ('case-router-accept' | 'case-edit' | 'case-continue' |
+  // 'followup-triage' added in PR2). resourceId is the caseId (or
+  // followUpId for the PR2 path). Never wrapped in swallowing
+  // try-catch (rule 8) — the audit row is the auditor's evidence the
+  // gate is active.
+  | 'CASE_DIVISION_BLOCKED';
