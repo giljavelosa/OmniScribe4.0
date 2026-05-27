@@ -1363,6 +1363,9 @@ model Note {
   @@index([orgId, status])
   @@index([patientId, createdAt])
   @@index([patientId, status])
+  // Patients registry "Active/Dormant" lookup: most recent SIGNED note per
+  // patient. Indexed by patientId + status (filter) + signedAt (order/range).
+  @@index([patientId, status, signedAt])
 }
 
 // =============================================================================
