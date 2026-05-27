@@ -17,6 +17,7 @@ import { LateEntryBanner } from '@/components/notes/late-entry-banner';
 import { SectionAccordion } from './section-accordion';
 import { ReadinessPanel } from './readiness-panel';
 import { FailureRecoveryBanner } from './failure-recovery-banner';
+import { EmptyTranscriptBanner } from './empty-transcript-banner';
 import { FlagReviewPanel } from './flag-review-panel';
 import { NoteStyleToggle } from './note-style-toggle';
 import { TranscriptSheet } from './transcript-sheet';
@@ -67,6 +68,14 @@ type ReviewSnapshot = {
   /** Sign timestamp. Used in the late-entry banner so the "documented" date
    *  matches what NOTE_SIGNED audit records (not just "right now"). */
   signedAt?: string | null;
+  /** Empty-transcript signal stamped by the AI worker when no speech
+   *  was captured. Drives <EmptyTranscriptBanner> visibility — null
+   *  means a normal recording, an object means the draft is filler. */
+  emptyTranscript?: {
+    durationMs: number;
+    byteSize: number;
+    detectedAt: string | null;
+  } | null;
 };
 
 type Props = {
@@ -190,9 +199,12 @@ export function ReviewClient({
       {/* Sprint 0.13 — Miss Cleo's case-routing panel. Mounted at the top
           of the review surface so the routing decision is the first thing
           the clinician sees. Hides itself once accepted (collapses to a
-          compact pill via internal state). Hidden on signed notes (routing
-          is locked at sign). */}
-      {!isSigned && (
+          compact pill via internal state).
+          Normally hidden on signed notes (routing locks at sign), with one
+          narrow exception: a signed note whose case is still PENDING_ROUTER
+          slipped through the pre-block era and needs a post-sign resolution
+          path. The accept endpoint mirrors this exception. */}
+      {(!isSigned || initialCurrentCaseManagementStatus === 'PENDING_ROUTER') && (
         <CaseRoutingPanel
           noteId={noteId}
           initial={initialRouterRun}
@@ -213,6 +225,15 @@ export function ReviewClient({
           dateOfService={snap.dateOfService}
           lateEntryDaysGap={snap.lateEntryDaysGap ?? 0}
           signedAt={snap.signedAt ?? null}
+        />
+      )}
+
+      {snap.emptyTranscript && (
+        <EmptyTranscriptBanner
+          noteId={noteId}
+          durationMs={snap.emptyTranscript.durationMs}
+          byteSize={snap.emptyTranscript.byteSize}
+          isSigned={isSigned}
         />
       )}
 

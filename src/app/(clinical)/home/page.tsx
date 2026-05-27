@@ -24,6 +24,8 @@ import { UserAvatar } from '@/components/ui/user-avatar';
 import { SchedulingCard } from '@/components/clinical/scheduling-card';
 import { TodayStatusTiles } from '@/components/home/today-status-tiles';
 import { AiCommandPanel } from '@/components/home/ai-command-panel';
+import { DraftUsagePill } from '@/components/billing/draft-usage-pill';
+import { countOrgDraftsLast30Days } from '@/lib/billing/draft-counter';
 import { HomeSearchForm } from './_components/home-search-form';
 
 const ADMIN_ROLES: OrgRole[] = ['ORG_ADMIN', 'SITE_ADMIN'];
@@ -111,7 +113,7 @@ export default async function HomePage({
         status: { in: ['DRAFT', 'REVIEWING', 'PENDING_REVIEW'] },
       },
       orderBy: { updatedAt: 'desc' },
-      take: 10,
+      take: 50,
       select: {
         id: true,
         status: true,
@@ -126,7 +128,7 @@ export default async function HomePage({
         originNote: { clinicianOrgUserId },
       },
       orderBy: { createdAt: 'desc' },
-      take: 10,
+      take: 50,
       select: {
         id: true,
         text: true,
@@ -136,11 +138,22 @@ export default async function HomePage({
     }),
     prisma.organization.findUnique({
       where: { id: orgId },
-      select: { name: true },
+      select: { name: true, billingPlan: true },
     }),
   ]);
 
   const orgName = org?.name ?? null;
+  const billingPlan = org?.billingPlan ?? null;
+
+  // Live draft counter for the home cockpit pill — last-30-days
+  // distinct NOTE_GENERATION_COMPLETED count + the org's active seat
+  // count (per-seat plans need it for bundle math). Two cheap queries
+  // in parallel; the pill renders muted/warning/danger based on
+  // proportion-of-bundle.
+  const [draftsThisPeriod, activeSeatCount] = await Promise.all([
+    countOrgDraftsLast30Days(orgId),
+    prisma.orgUser.count({ where: { orgId, isActive: true } }),
+  ]);
   const role = session.user.role;
   const platformRole = session.user.platformRole;
   const isAdmin = role && ADMIN_ROLES.includes(role);
@@ -311,6 +324,20 @@ export default async function HomePage({
           <p className="text-primary-foreground/70 text-xs shrink-0 text-right">{dateLabel}</p>
         </div>
 
+        {/* 0.5. Live draft-usage pill — clinician sees their plan
+            consumption above the fold like a battery icon. Click →
+            /account/usage for the breakdown. */}
+        {billingPlan && (
+          <div className="px-4 pt-3 pb-1 bg-card flex justify-end">
+            <DraftUsagePill
+              draftsUsed={draftsThisPeriod}
+              billingPlan={billingPlan}
+              seatCount={activeSeatCount}
+              compact
+            />
+          </div>
+        )}
+
         {/* 1. Patient search — ABOVE FOLD */}
         <section className="px-4 pt-4 pb-3 border-b border-border bg-card">
           <HomeSearchForm />
@@ -379,7 +406,13 @@ export default async function HomePage({
               Drafts
               <StatusBadge variant="info" noIcon className="text-[10px]">{drafts.length}</StatusBadge>
             </h2>
-            <div className="space-y-1">{draftRows}</div>
+            <div
+              className="space-y-1 max-h-[280px] overflow-y-auto pr-1"
+              role="list"
+              aria-label={`Drafts, ${drafts.length} total`}
+            >
+              {draftRows}
+            </div>
           </section>
         )}
 
@@ -390,7 +423,13 @@ export default async function HomePage({
               Open follow-ups
               <StatusBadge variant="info" noIcon className="text-[10px]">{followups.length}</StatusBadge>
             </h2>
-            <div className="space-y-1">{followupRows}</div>
+            <div
+              className="space-y-1 max-h-[320px] overflow-y-auto pr-1"
+              role="list"
+              aria-label={`Open follow-ups, ${followups.length} total`}
+            >
+              {followupRows}
+            </div>
           </section>
         )}
 
@@ -415,6 +454,12 @@ export default async function HomePage({
 
           <SidebarLink href="/home" Icon={Sparkles} label="Home" active />
           <SidebarLink href="/patients" Icon={Stethoscope} label="Patients" />
+          {/* Personal templates (Option A — clinician-authored). Admins
+              see the richer "Templates" link under Console below and skip
+              this one to avoid two side-by-side templates entries. */}
+          {!isAdmin && (
+            <SidebarLink href="/templates" Icon={FileText} label="My templates" />
+          )}
 
           {(isAdmin || isOwner || isOps) && (
             <div className="mt-3 mb-1">
@@ -453,15 +498,28 @@ export default async function HomePage({
 
         {/* CENTER WORKSPACE */}
         <main className="px-6 py-6 overflow-y-auto space-y-6">
-          <div className="flex flex-col gap-0.5">
-            <h1 className="text-2lg font-semibold">
-              {timeGreeting}, {displayFirst}
-            </h1>
-            <p className="text-sm text-muted-foreground">
-              {dateLabel}
-              {orgName && <> · <span className="font-medium text-foreground">{orgName}</span></>}
-            </p>
-            <p className="text-xs text-muted-foreground">{session.user.email}</p>
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div className="flex flex-col gap-0.5 min-w-0">
+              <h1 className="text-2lg font-semibold">
+                {timeGreeting}, {displayFirst}
+              </h1>
+              <p className="text-sm text-muted-foreground">
+                {dateLabel}
+                {orgName && <> · <span className="font-medium text-foreground">{orgName}</span></>}
+              </p>
+              <p className="text-xs text-muted-foreground">{session.user.email}</p>
+            </div>
+            {/* Live draft-usage pill — proportion of bundle, color-coded.
+                Click → /account/usage. Hidden when billingPlan is null
+                (legacy seed orgs where the column hasn't been backfilled). */}
+            {billingPlan && (
+              <DraftUsagePill
+                draftsUsed={draftsThisPeriod}
+                billingPlan={billingPlan}
+                seatCount={activeSeatCount}
+                className="shrink-0"
+              />
+            )}
           </div>
 
           {/* Patient search */}
@@ -504,7 +562,7 @@ export default async function HomePage({
                 )}
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-2">
+            <CardContent>
               {drafts.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
                   No drafts waiting — finalize a recording on{' '}
@@ -514,7 +572,13 @@ export default async function HomePage({
                   to start one.
                 </p>
               ) : (
-                draftRows
+                <div
+                  className="max-h-[320px] overflow-y-auto pr-1 space-y-2"
+                  role="list"
+                  aria-label={`Drafts, ${drafts.length} total`}
+                >
+                  {draftRows}
+                </div>
               )}
             </CardContent>
           </Card>
@@ -532,13 +596,19 @@ export default async function HomePage({
                 )}
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-2">
+            <CardContent>
               {followups.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
                   No open follow-ups assigned to you.
                 </p>
               ) : (
-                followupRows
+                <div
+                  className="max-h-[360px] overflow-y-auto pr-1 space-y-2"
+                  role="list"
+                  aria-label={`Open follow-ups, ${followups.length} total`}
+                >
+                  {followupRows}
+                </div>
               )}
             </CardContent>
           </Card>

@@ -1,5 +1,8 @@
 # OmniScribe Redesign Spec
 
+> **Sprint 0.20 — MFA removed.** Any reference to MFA, /mfa-challenge, /mfa-setup, TOTP, authenticator app setup, or login-verified gates in this document is HISTORICAL. Authentication is now password-only. See `context/specs/01-foundation-auth-tenant.md` and `progress-tracker.md`.
+
+
 **Author:** Claude (with Gil)
 **Date:** April 29, 2026
 **Status:** Recommendation — ready for product/engineering review

@@ -53,16 +53,34 @@ export async function loadOrCreateConversation(args: {
   // (patientId is nullable for research mode). Use findUnique on the compound
   // key first, fall back to create. Race-safe via the unique index — a
   // duplicate-key error falls through to a fresh read.
-  let conversation = await prisma.copilotConversation.findUnique({
-    where: {
-      orgId_patientId_clinicianOrgUserId_mode: {
-        orgId,
-        patientId: patientId as string, // Prisma compound-unique type quirk
-        clinicianOrgUserId,
-        mode: mode as CopilotConversationMode,
-      },
-    },
-  });
+  //
+  // findUnique on a compound key REJECTS null values at the Prisma validation
+  // layer ("Argument `patientId` must not be null") even though Postgres
+  // accepts them. For research-mode rows (patientId=null) we use findFirst
+  // with explicit equality; uniqueness is still enforced by the partial
+  // unique index `CopilotConversation_research_singleton_idx`.
+  const findConversation = () =>
+    patientId === null
+      ? prisma.copilotConversation.findFirst({
+          where: {
+            orgId,
+            patientId: null,
+            clinicianOrgUserId,
+            mode: mode as CopilotConversationMode,
+          },
+        })
+      : prisma.copilotConversation.findUnique({
+          where: {
+            orgId_patientId_clinicianOrgUserId_mode: {
+              orgId,
+              patientId,
+              clinicianOrgUserId,
+              mode: mode as CopilotConversationMode,
+            },
+          },
+        });
+
+  let conversation = await findConversation();
 
   let wasCreated = false;
   if (!conversation) {
@@ -80,16 +98,7 @@ export async function loadOrCreateConversation(args: {
     } catch (err) {
       // Race: a sibling request created the row between our find + create.
       // Re-read; we should now find it.
-      conversation = await prisma.copilotConversation.findUnique({
-        where: {
-          orgId_patientId_clinicianOrgUserId_mode: {
-            orgId,
-            patientId: patientId as string,
-            clinicianOrgUserId,
-            mode: mode as CopilotConversationMode,
-          },
-        },
-      });
+      conversation = await findConversation();
       if (!conversation) throw err;
     }
   }

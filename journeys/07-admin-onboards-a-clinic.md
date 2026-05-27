@@ -1,5 +1,8 @@
 # Journey 07 — Admin Onboards a New Clinic
 
+> **Sprint 0.20 — MFA removed.** Any reference to MFA, /mfa-challenge, /mfa-setup, TOTP, authenticator app setup, or login-verified gates in this document is HISTORICAL. Authentication is now password-only. See `context/specs/01-foundation-auth-tenant.md` and `progress-tracker.md`.
+
+
 > Two parallel storylines: the platform owner provisions the customer organization with full BAA tracking; the customer's org admin sets up sites, rooms, users, billing, templates. By the end, the clinic is operational.
 
 ## Who

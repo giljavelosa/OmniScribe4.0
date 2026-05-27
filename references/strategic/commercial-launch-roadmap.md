@@ -1,5 +1,8 @@
 # OmniScribe Commercial-Launch Roadmap (LOCKED)
 
+> **Sprint 0.20 — MFA removed.** Any reference to MFA, /mfa-challenge, /mfa-setup, TOTP, authenticator app setup, or login-verified gates in this document is HISTORICAL. Authentication is now password-only. See `context/specs/01-foundation-auth-tenant.md` and `progress-tracker.md`.
+
+
 **Status:** Active. Locked 2026-05-05 by Gil.
 **Goal:** Ship the scribe portion of OmniScribe commercially to existing customers in 5-7 weeks. Bundle UI redesign work with commercial-readiness work — every page touched gets the redesign-spec'd version. FHIR work parked (waiting on NextGen).
 **Workflow mode (LOCKED):** Claude implements directly on feature branches, runs tests to green, drafts PRs. Gil reviews and merges every PR. Production deploys remain Gil's call.

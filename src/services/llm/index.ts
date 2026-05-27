@@ -80,6 +80,30 @@ export function getLLMService(): LLMService {
       // the stream's final token tally lives in the caller's accumulator.
       yield* base.generateStream(sys, user, opts);
     },
+    // Sprint 0.19 / Tier 13 — vision extraction wrapper. Mirrors the
+    // PHI + meter semantics of `generate`. If the underlying provider
+    // doesn't implement it (e.g. a stub or non-vision endpoint),
+    // surface a typed error so the caller can decide whether to fail
+    // the upload extraction or fall back to OCR-only.
+    extractFromImage: base.extractFromImage
+      ? async (sys, user, opts) => {
+          if (opts.phi) assertProviderAllowedForPHI(activeProvider);
+          const result = await base.extractFromImage!(sys, user, opts);
+          if (opts.meter) {
+            await writeLlmCallLog({
+              orgId: opts.meter.orgId,
+              noteId: opts.meter.noteId,
+              surface: opts.meter.surface,
+              model: result.model,
+              tokensIn: result.tokensIn,
+              tokensOut: result.tokensOut,
+              latencyMs: result.latencyMs,
+              stub: !!result.stub,
+            });
+          }
+          return result;
+        }
+      : undefined,
   };
 }
 
@@ -91,6 +115,7 @@ export type {
   GenerateChunk,
   GenerateResult,
   LLMService,
+  ExtractFromImageOptions,
 } from './types';
 
 export const llmConfig = {

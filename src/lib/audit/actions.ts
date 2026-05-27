@@ -4,9 +4,9 @@
  * AuditLog rows reference these strings.
  *
  * Unit 01 surface area:
- *   - Auth: USER_SIGNED_IN / _FAILED, MFA_VERIFIED / _FAILED, MFA_ENROLLED /
- *     _FAILED, PASSWORD_RESET_REQUESTED / _COMPLETED / _INITIATED_BY_ADMIN,
- *     MFA_RESET (admin), INVITE_SENT / _CONSUMED, USER_CREATED, USER_UPDATED,
+ *   - Auth: USER_SIGNED_IN / _FAILED, LOGIN_CODE_SENT / VERIFIED / VERIFY_FAILED,
+ *     PASSWORD_RESET_REQUESTED / _COMPLETED / _INITIATED_BY_ADMIN,
+ *     INVITE_SENT / _CONSUMED, USER_CREATED, USER_UPDATED,
  *     USER_DEACTIVATED
  *   - Owner: ORG_CREATED, ORG_BAA_UPDATED, PLATFORM_ORG_CREATED
  *   - Onboarding: ONBOARDING_COMPLETED
@@ -14,6 +14,10 @@
 export type AuditAction =
   | 'USER_SIGNED_IN'
   | 'USER_SIGNED_IN_FAILED'
+  | 'LOGIN_CODE_SENT'
+  | 'LOGIN_CODE_VERIFIED'
+  | 'LOGIN_CODE_VERIFY_FAILED'
+  /** Legacy — retained so historical audit rows resolve. No longer emitted. */
   | 'MFA_VERIFIED'
   | 'MFA_VERIFY_FAILED'
   | 'MFA_ENROLLED'
@@ -56,12 +60,23 @@ export type AuditAction =
   | 'SCHEDULE_CANCELLED'
   | 'SCHEDULE_STARTED'
   | 'ENCOUNTER_CREATED'
+  // Unit 48 PR5 — emitted by the nudge act endpoint when the clinician
+  // applies the proposed visit-type intent from an INTENT_PROPOSAL_MISSED
+  // nudge. Reconstructs the chain: Cleo proposed → clinician initially
+  // dismissed → safety-net nudge fired → clinician applied.
+  | 'ENCOUNTER_INTENT_UPDATED'
   // ---- Unit 03: Capture & Recording ----
   | 'REALTIME_KEY_ISSUED'
   | 'RECORDING_STARTED'
   | 'RECORDING_PAUSED'
   | 'RECORDING_RESUMED'
   | 'RECORDING_FINALIZED'
+  // Empty-transcript recovery (regression fix 2026-05-25): clinician
+  // chose to discard a placeholder draft and start the recording over.
+  // Audio segments are soft-deleted (rule 7) and the note transitions
+  // back to PREPARING. Metadata captures the discarded segments so a
+  // reviewer can verify nothing meaningful was lost.
+  | 'RECORDING_RESET'
   | 'AUDIO_UPLOADED'
   | 'TRANSCRIPT_PASTED'
   // ---- Unit 04: Transcription Pipeline ----
@@ -395,6 +410,47 @@ export type AuditAction =
   | 'CLEO_NUDGE_SNOOZED'
   | 'CLEO_NUDGE_ACTED'
   | 'CLEO_NUDGE_EXPIRED'
+  // ---- Sprint 0.19: Tier 12 — Care Pathway library ----
+  // CARE_PATHWAY_REFERENCED fires when Cleo cites a pathway in an
+  // answer / draft / comparison. Metadata: { pathwayId, primaryIcd,
+  // toolName, personaVersion: 'miss-cleo-v1' }. PHI-free.
+  | 'CARE_PATHWAY_REFERENCED'
+  // ---- Sprint 0.19: Tier 13 — Multimedia intake ----
+  // PATIENT_UPLOAD_CREATED fires once per row inserted into PatientUpload
+  // (independent of which clinician created the row). Metadata:
+  // { patientUploadId, kind, mimeType, byteSize }. PHI-free.
+  // PATIENT_UPLOAD_EXTRACTED fires when the vision-extract worker
+  // successfully populates extractedJson + flips status to EXTRACTED.
+  // Metadata: { patientUploadId, kind, extractedFieldsCount,
+  // extractorVersion }. PHI-free — counts only.
+  // PATIENT_UPLOAD_EXTRACTION_FAILED fires when the worker exhausts
+  // retries or hits a permanent failure (unsupported mime type, etc.).
+  // Metadata: { patientUploadId, kind, errorMessage }. errorMessage is
+  // bounded ≤600 chars + has bearer-token-shaped fragments scrubbed.
+  // PATIENT_UPLOAD_DELETED fires on soft-delete (rule 7 — never hard
+  // delete from S3, only flip isDeleted). Metadata: { patientUploadId,
+  // kind, reason }.
+  | 'PATIENT_UPLOAD_CREATED'
+  | 'PATIENT_UPLOAD_EXTRACTED'
+  | 'PATIENT_UPLOAD_EXTRACTION_FAILED'
+  | 'PATIENT_UPLOAD_DELETED'
+  // PATIENT_UPLOAD_ATTESTED — clinician Accept on review screen.
+  // Metadata: { patientUploadId, kind, attestedFieldCount, hadCaptureContext }.
+  // PATIENT_UPLOAD_REJECTED — clinician Deny. Metadata: { patientUploadId, kind,
+  // hadCaptureContext }. PHI-free.
+  | 'PATIENT_UPLOAD_ATTESTED'
+  | 'PATIENT_UPLOAD_REJECTED'
+  // ---- Sprint 0.19: Tier 14 — Internal team coordination ----
+  // INTERNAL_PATIENT_MESSAGE_SENT fires on row insert. Metadata:
+  // { messageId, recipientOrgUserId, urgency, topicLength, bodyLength,
+  //   inReplyToId? }. PHI-free — never logs topic or body content.
+  // INTERNAL_PATIENT_MESSAGE_READ fires on the read state-transition
+  // (SENT → READ). Metadata: { messageId }.
+  // INTERNAL_PATIENT_MESSAGE_ARCHIVED fires on READ → ARCHIVED.
+  // Metadata: { messageId }.
+  | 'INTERNAL_PATIENT_MESSAGE_SENT'
+  | 'INTERNAL_PATIENT_MESSAGE_READ'
+  | 'INTERNAL_PATIENT_MESSAGE_ARCHIVED'
   // ---- Unit 12: Patient detail redesign ----
   | 'SNAPSHOT_OVERRIDE_CREATED'
   | 'SNAPSHOT_OVERRIDE_SUPERSEDED'
@@ -411,6 +467,57 @@ export type AuditAction =
   | 'FLAG_RESOLVED'
   | 'FLAG_DISMISSED'
   | 'SECTION_COPIED_TO_CLIPBOARD'
+  // ---- Sprint 0 flag-analysis lockdown (Unit 14 follow-on) ----
+  // Spec: context/specs/sprint-0-flag-analysis-lockdown.md
+  //
+  // FLAGS_AUTO_ANALYZED_ON_DRAFT fires when the inline analyzer at the
+  // tail of generate-note completes successfully. Metadata: { runCount,
+  // sectionsAnalyzed, flagsCreated, carriedForwardCount }. runCount is
+  // always 1 for this action (it's the pipeline's first-and-only call).
+  // PHI-free.
+  //
+  // FLAGS_AUTO_ANALYSIS_FAILED fires when the inline analyzer throws.
+  // The pipeline still flips status → DRAFT so the clinician can land
+  // on /review with a "Flag analysis unavailable" banner; run #1 is
+  // consumed (runCount bumps to 1) so the existing retry budget logic
+  // works. Metadata: { errorClass, runCount }.
+  //
+  // FLAGS_RE_ANALYZED fires when the clinician-triggered re-analyze
+  // run #2 completes. Metadata: { runCount, sectionsAnalyzed (only the
+  // ones that weren't diff-skipped), sectionsSkippedUnchanged,
+  // flagsCreated, carriedForwardCount, abortedBySign }.
+  //
+  // FLAGS_CARRIED_FORWARD fires once per ReviewFlag row created with
+  // resolutionAction = 'CARRIED_FORWARD' (i.e. the analyzer found a
+  // claimSignature match against a prior RESOLVED/DISMISSED row and
+  // honored the prior decision). Metadata: { newFlagId, priorFlagId,
+  // priorStatus, sectionId, claimSignature }. Volume bounded by
+  // (resolved/dismissed flags × matching re-analysis runs); typically
+  // small.
+  //
+  // FLAGS_SECTION_SKIPPED_UNCHANGED fires once per section whose hash
+  // matched the prior-run hash on re-analyze (no LLM call). Metadata:
+  // { sectionId, hash }. Volume = sections-per-note × re-runs.
+  //
+  // FLAGS_ANALYSIS_CAP_REACHED fires from the /analyze-flags route
+  // when a clinician POSTs after the cap. Metadata: { runCount,
+  // attemptedBy }. Pairs with the 409 response — auditor lens can
+  // count "how often does the cap actually bite?"
+  //
+  // NOTE_SIGNED_WITH_EDITED_SINCE_ANALYSIS_ATTESTATION fires from
+  // the sign route when the clinician's request carried
+  // `editedSinceAnalysisAttested: true` AND the section hashes
+  // differed from the post-analysis snapshot. Metadata: {
+  // editedSectionIds (string[]), lastAnalyzedAt }. PHI-free. Pairs
+  // with the existing NOTE_SIGNED row to give an auditor a single
+  // query for "notes signed without a fresh AI analysis pass."
+  | 'FLAGS_AUTO_ANALYZED_ON_DRAFT'
+  | 'FLAGS_AUTO_ANALYSIS_FAILED'
+  | 'FLAGS_RE_ANALYZED'
+  | 'FLAGS_CARRIED_FORWARD'
+  | 'FLAGS_SECTION_SKIPPED_UNCHANGED'
+  | 'FLAGS_ANALYSIS_CAP_REACHED'
+  | 'NOTE_SIGNED_WITH_EDITED_SINCE_ANALYSIS_ATTESTATION'
   // ---- Unit 15: Telehealth infra + patient auth ----
   | 'TELEHEALTH_SESSION_CREATED'
   | 'TELEHEALTH_MAGIC_LINK_FAILED'
@@ -580,4 +687,50 @@ export type AuditAction =
   // errors, reachedCap, dryRun }. resourceId is the literal string
   // 'sweep' (same convention as the episodes sweep).
   | 'CASE_BACKFILLED_FROM_PENDING_ROUTER'
-  | 'CASE_BACKFILL_SWEEP_RUN';
+  | 'CASE_BACKFILL_SWEEP_RUN'
+  // ---- Tier 2: home AI command-panel telemetry ----
+  // AI_PANEL_QUERY fires once per submission to the home `<AiCommandPanel>`
+  // (mobile or desktop variant). Metadata: { pattern, commandVerb,
+  // queryLength, wordCount, surface }. The CLASSIFIER (src/lib/ai-command/
+  // classify.ts) returns ONLY structural shape labels + a closed enum of
+  // canonical command verbs — the user-typed text is NEVER persisted.
+  // Lets the admin dashboard answer "what are clinicians actually trying
+  // to do with the AI panel?" without parking PHI in the audit log.
+  | 'AI_PANEL_QUERY'
+  // ---- Single-concurrent-recording lock (anti-credential-sharing, 2026-05-25) ----
+  //
+  // RECORDING_LOCK_CLAIMED fires on first claim of a user's
+  // ActiveRecordingLock row (i.e. realtime-key issued for a note that
+  // doesn't already have an active lock for this user). Metadata:
+  // { noteId, clientNoncePrefix } where the prefix is 6 chars only —
+  // never the full nonce, so even forensic replay can't reconstruct
+  // the device id without DB access.
+  //
+  // RECORDING_LOCK_REFRESHED fires on every subsequent realtime-key
+  // re-mint from the SAME device (clientNonce matches). Volume can
+  // get high (one row per ~50s while recording); we audit so the
+  // auditor lens can prove "this device held the lock continuously"
+  // for a given recording. Metadata: { noteId, clientNoncePrefix,
+  // ageMs }.
+  //
+  // RECORDING_LOCK_TAKEOVER fires when a NEW device displaces an
+  // existing lock — either because the prior lock was stale (older
+  // than the staleness window) or because the new device sent
+  // takeover=true. Metadata: { newNoteId, previousNoteId,
+  // previousLockAgeMs, displaceReason }. Pairs with the displaced
+  // device's next request, which will see 410 + a graceful "your
+  // recording was taken over" UI.
+  //
+  // RECORDING_LOCK_REJECTED fires when a new device tried to claim
+  // but the existing lock was active (heartbeat fresh) and takeover
+  // was not requested. Metadata: { attemptedNoteId, activeNoteId,
+  // activeLockAgeMs }. The client sees 409 + offers the AlertDialog
+  // takeover prompt.
+  //
+  // RECORDING_LOCK_RELEASED fires from /complete-stream on success.
+  // Metadata: { noteId, lockHeldMs }.
+  | 'RECORDING_LOCK_CLAIMED'
+  | 'RECORDING_LOCK_REFRESHED'
+  | 'RECORDING_LOCK_TAKEOVER'
+  | 'RECORDING_LOCK_REJECTED'
+  | 'RECORDING_LOCK_RELEASED';

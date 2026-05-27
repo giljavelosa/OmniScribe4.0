@@ -47,9 +47,17 @@ export function SnapshotInlineStrip({ strip, onClick }: Props) {
         <div className="flex flex-wrap gap-x-6 gap-y-2">
           {measures.map((m) => {
             const { glyph, colorClass, label } = trendInfo(m.trend);
+            const caseSuffix = m.case ? m.case.label : null;
             return (
-              <div key={m.measureKey} className="space-y-0.5">
-                <p className="text-xs text-muted-foreground leading-none">{m.label}</p>
+              <div key={`${m.measureKey}:${m.case?.id ?? 'none'}`} className="space-y-0.5">
+                <p className="text-xs text-muted-foreground leading-none">
+                  {m.label}
+                  {caseSuffix && (
+                    <span className="ml-1 text-[10px] text-muted-foreground/80">
+                      · {caseSuffix}
+                    </span>
+                  )}
+                </p>
                 <p className="text-sm font-semibold tabular-nums leading-tight">
                   {m.value}
                   {m.unit && (

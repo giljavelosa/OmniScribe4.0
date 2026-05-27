@@ -5,7 +5,6 @@ import { prisma } from '@/lib/prisma';
 import { BrandWordmark } from '@/components/brand-wordmark';
 import { AppNav } from '@/components/app-nav';
 import { MobileBottomNav } from '@/components/navigation/mobile-bottom-nav';
-import { postSigninRedirect } from '@/lib/post-signin-redirect';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,12 +21,8 @@ export default async function ClinicalLayout({ children }: { children: ReactNode
   const session = await auth();
   if (!session?.user) redirect('/login');
 
-  // Enforce the D2 always-required MFA chain on every protected surface.
-  const target = postSigninRedirect({
-    mfaEnabled: session.user.mfaEnabled,
-    mfaVerified: session.user.mfaVerified,
-  });
-  if (target !== '/home') redirect(target);
+  // Sprint 0.20 — MFA + login-verified gates removed; only "must be signed in"
+  // is enforced at this layer. Per-route role/feature checks stay intact.
 
   // Fetch the org name once in the layout so every clinical page shows
   // the correct workspace context in the header and bottom nav — no JWT

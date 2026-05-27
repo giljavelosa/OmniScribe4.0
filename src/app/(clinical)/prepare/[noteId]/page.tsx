@@ -19,11 +19,16 @@ import { FhirWatchCards } from '@/components/copilot/cards/fhir-watch-cards';
 import { loadExternalEhrContext } from '@/lib/fhir/project-ehr-context';
 import { PrepareNudgeBlock } from '@/components/cleo/prepare-nudge-block';
 import { loadEligibleNudgesForSurface } from '@/services/copilot/load-eligible-nudges';
+// Unit 48 PR5 — visit-type intent nudge safety net. Runs before
+// loadEligibleNudgesForSurface so the lazily-upserted INTENT_PROPOSAL_MISSED
+// row is in the DB when the read happens.
+import { detectIntentMissedNudge } from '@/services/copilot/detect-intent-missed-nudge';
 import type { PriorContextBriefContent } from '@/types/brief';
 import { PasteTranscriptForm } from './_components/paste-transcript-form';
 import { UploadAudioForm } from './_components/upload-audio-form';
 import { LiveCaptureButton } from './_components/live-capture-button';
 import { VisitContextStrip } from '@/components/clinical/visit-context-strip';
+import { PrepareScanBanner } from './_components/prepare-scan-banner';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Prepare visit' };
@@ -112,6 +117,24 @@ export default async function PreparePage({ params }: { params: Promise<{ noteId
       }))
     : [];
 
+  // Unit 48 PR5 — visit-type intent safety net. Runs BEFORE
+  // loadEligibleNudgesForSurface so the lazily-upserted nudge is
+  // visible to the read. Failure-tolerant (try-catch inside the
+  // detector); never blocks /prepare render.
+  if (session.user.orgUserId && note.encounter) {
+    await detectIntentMissedNudge({
+      orgId: session.user.orgId,
+      patientId: note.patient.id,
+      clinicianOrgUserId: session.user.orgUserId,
+      division: note.division,
+      encounterId: note.encounter.id,
+      currentIntent: note.encounter.intent,
+      noteId: note.id,
+      scheduleId: note.encounter.scheduleId ?? null,
+      episodeId: note.encounter.episodeOfCareId ?? null,
+    });
+  }
+
   // Sprint 0.18 — proactive nudges for the visit-prepare surface.
   // Empty when no patterns fire OR the clinician has no orgUserId
   // (defense; the prepare gate normally ensures this is set).
@@ -134,6 +157,8 @@ export default async function PreparePage({ params }: { params: Promise<{ noteId
           highest-leverage moment for continuity-story context. The
           block renders nothing when no patterns fire — decision 10. */}
       <PrepareNudgeBlock nudges={prepareNudges} />
+
+      <PrepareScanBanner patientId={note.patient.id} />
 
       {/* HERO recording CTA — sits above brief/context so the highest-frequency
           action (live recording) is one tap away. Upload / Paste live below

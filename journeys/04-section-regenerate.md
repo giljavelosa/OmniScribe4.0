@@ -1,5 +1,8 @@
 # Journey 04 — Section Regenerate
 
+> **Sprint 0.20 — MFA removed.** Any reference to MFA, /mfa-challenge, /mfa-setup, TOTP, authenticator app setup, or login-verified gates in this document is HISTORICAL. Authentication is now password-only. See `context/specs/01-foundation-auth-tenant.md` and `progress-tracker.md`.
+
+
 > The clinician spots a section that's wrong and fixes it without losing the rest of their work. This is a small journey but it's where trust is built — or lost — on whether the AI behaves like a tool, not a tyrant.
 
 ## Who

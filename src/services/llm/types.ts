@@ -56,7 +56,37 @@ export interface GenerateChunk {
   done?: boolean;
 }
 
+/**
+ * Sprint 0.19 / Tier 13 — vision-capable extraction call.
+ *
+ * `images[]` carries one or more inline base64-encoded images that the
+ * provider attaches as image content blocks alongside the user text.
+ * Returned shape mirrors `GenerateResult`. The provider is expected to
+ * return JSON when `jsonMode: true` (same contract as `generate`).
+ *
+ * Stub mode: returns a deterministic placeholder JSON so tests +
+ * dev-without-Bedrock exercise the worker pipeline end-to-end.
+ */
+export interface ExtractFromImageOptions extends GenerateOptions {
+  images: Array<{
+    /** image/png, image/jpeg, image/webp, application/pdf */
+    mediaType: string;
+    /** Base64-encoded bytes (no `data:` prefix). */
+    base64: string;
+  }>;
+}
+
 export interface LLMService {
   generate(systemPrompt: string, userPrompt: string, opts?: GenerateOptions): Promise<GenerateResult>;
   generateStream(systemPrompt: string, userPrompt: string, opts?: GenerateOptions): AsyncIterable<GenerateChunk>;
+  /**
+   * Optional vision capability. Workers that need it should null-check
+   * the method first so older providers without vision degrade
+   * gracefully to stub output.
+   */
+  extractFromImage?(
+    systemPrompt: string,
+    userPrompt: string,
+    opts: ExtractFromImageOptions,
+  ): Promise<GenerateResult>;
 }

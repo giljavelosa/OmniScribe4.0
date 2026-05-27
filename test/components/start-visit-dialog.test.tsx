@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Division } from '@prisma/client';
 
@@ -225,5 +225,38 @@ describe('StartVisitDialog — Sprint 0.13 override paths', () => {
 
     expect(screen.getByText(/start late entry/i)).toBeInTheDocument();
     expect(submit).not.toHaveBeenCalled();
+  });
+
+  // Regression: late-entry submit was wedged disabled because the picker
+  // required caseId, but Sprint 0.13's default flow has no case-picker UI —
+  // caseId stays '' forever and Cleo routes server-side at review.
+  it('forceDatePicker submit is enabled with no forceCaseId and posts with caseManagementId=null', async () => {
+    const submit = vi.fn().mockResolvedValue({ encounterId: 'enc_late', noteId: 'note_late' });
+
+    render(
+      <StartVisitDialog
+        patientId="pat_late_submit"
+        activeCases={[]}
+        viewerDivision={Division.MEDICAL}
+        open
+        onOpenChange={() => {}}
+        onStarted={() => {}}
+        submit={submit}
+        forceDatePicker
+      />,
+    );
+
+    const button = await screen.findByRole('button', { name: /start (late entry|visit)/i });
+    expect(button).not.toBeDisabled();
+    fireEvent.click(button);
+
+    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+    expect(submit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        patientId: 'pat_late_submit',
+        caseManagementId: null,
+        source: 'auto-none',
+      }),
+    );
   });
 });

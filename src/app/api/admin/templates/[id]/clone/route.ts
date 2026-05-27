@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { prisma } from '@/lib/prisma';
 import { requireFeatureAccess } from '@/lib/authz/server';
+import { isOrgAdminRole } from '@/lib/authz/internal-authorization';
 import { writeAuditLog } from '@/lib/audit/log';
 
 export const runtime = 'nodejs';
@@ -47,6 +48,22 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     source.createdByOrgUserId !== authorizationUser.orgUserId
   ) {
     return NextResponse.json({ error: { code: 'forbidden' } }, { status: 403 });
+  }
+
+  // Option A — non-admin clones land as PERSONAL (rule: they can't
+  // publish team templates). Refuse rather than silently coerce so the
+  // UI's optimistic state stays in sync with the server response.
+  const isAdmin = isOrgAdminRole(authorizationUser.role);
+  if (!isAdmin && parsed.data.visibility !== 'PERSONAL') {
+    return NextResponse.json(
+      {
+        error: {
+          code: 'visibility_forbidden',
+          message: 'Only org admins can clone into TEAM templates. Use visibility: "PERSONAL".',
+        },
+      },
+      { status: 403 },
+    );
   }
 
   const clone = await prisma.noteTemplate.create({

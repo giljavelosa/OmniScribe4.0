@@ -1,5 +1,8 @@
 # Auth + Sign flow — Mockup Gap Analysis
 
+> **Sprint 0.20 — MFA removed.** Any reference to MFA, /mfa-challenge, /mfa-setup, TOTP, authenticator app setup, or login-verified gates in this document is HISTORICAL. Authentication is now password-only. See `context/specs/01-foundation-auth-tenant.md` and `progress-tracker.md`.
+
+
 ## At a glance
 - **Mockup file(s):** `design-mockups-2026-05/auth_flow_redesign.html` (158 lines); `design-mockups-2026-05/sign_flow_redesign.html` (219 lines)
 - **Production file(s):** `src/app/(auth)/layout.tsx` (11 lines); `src/app/(auth)/login/page.tsx` (112 lines); `src/app/(auth)/register/page.tsx` (32 lines); `src/app/(auth)/mfa/page.tsx` (85 lines); `src/app/signup/page.tsx` (210 lines); `src/app/page.tsx` (47 lines); `src/components/auth/register-form.tsx` (274 lines); `src/app/(clinical)/sign/[noteId]/page.tsx` (668 lines); related marketing: `src/components/marketing/omniscribe-ai-landing.tsx` (885+ lines); `src/app/rehab/page.tsx` (684+ lines)

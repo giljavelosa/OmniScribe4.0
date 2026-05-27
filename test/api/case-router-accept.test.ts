@@ -393,6 +393,82 @@ describe('POST /api/notes/[id]/case-router/accept', () => {
     expect(res.status).toBe(409);
   });
 
+  // Sprint 0.13 Decision 3 rescue path — a SIGNED note whose case is still
+  // PENDING_ROUTER (slipped through the pre-block era) must be resolvable
+  // post-sign. The narrow exception preserves the immutability invariant
+  // for every other signed-note case.
+  it('SIGNED + PENDING_ROUTER case: rescue path allows accept', async () => {
+    authedAsClinician();
+    noteFindFirst.mockResolvedValueOnce({
+      id: 'note_rescue',
+      orgId: 'org_1',
+      patientId: 'pat_rescue',
+      status: 'SIGNED',
+      clinicianOrgUserId: 'ou_1',
+      encounterId: 'enc_rescue',
+      encounter: {
+        id: 'enc_rescue',
+        caseManagementId: 'case_stuck',
+        caseManagement: { status: 'PENDING_ROUTER' },
+      },
+    });
+    caseRouterRunFindFirst.mockResolvedValueOnce({
+      id: 'run_rescue',
+      orgId: 'org_1',
+      noteId: 'note_rescue',
+      acceptedAction: null,
+      proposalJson: {
+        action: 'open-new',
+        newCase: { primaryIcd: 'M75.121', primaryIcdLabel: 'Right shoulder rotator cuff tendinopathy' },
+        confidence: 'low',
+        reasoning: 'Manual recoding.',
+        alternatives: [],
+      },
+    });
+
+    const tx = {
+      ...writebackOffDefaults(),
+      caseManagement: {
+        findUnique: vi.fn().mockResolvedValueOnce({ id: 'case_stuck', status: 'PENDING_ROUTER' }),
+        update: vi.fn().mockResolvedValueOnce({}),
+      },
+      encounter: { update: vi.fn().mockResolvedValueOnce({}) },
+      caseRouterRun: { update: vi.fn().mockResolvedValueOnce({}) },
+    };
+    txMock.mockImplementationOnce(async (cb: (tx: unknown) => Promise<unknown>) => cb(tx));
+
+    const res = await POST(
+      buildRequest({ caseRouterRunId: 'run_rescue', decision: { kind: 'accept' } }),
+      { params: Promise.resolve({ id: 'note_rescue' }) },
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it('SIGNED + ACTIVE case: still rejected with 409 invalid_state (immutability invariant preserved)', async () => {
+    authedAsClinician();
+    noteFindFirst.mockResolvedValueOnce({
+      id: 'note_signed_active',
+      orgId: 'org_1',
+      patientId: 'pat_sa',
+      status: 'SIGNED',
+      clinicianOrgUserId: 'ou_1',
+      encounterId: 'enc_sa',
+      encounter: {
+        id: 'enc_sa',
+        caseManagementId: 'case_sa',
+        caseManagement: { status: 'ACTIVE' },
+      },
+    });
+
+    const res = await POST(
+      buildRequest({ caseRouterRunId: 'run_sa', decision: { kind: 'accept' } }),
+      { params: Promise.resolve({ id: 'note_signed_active' }) },
+    );
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error.code).toBe('invalid_state');
+  });
+
   it('returns 403 when the caller is not the note author and not an admin', async () => {
     requireFeatureAccess.mockResolvedValueOnce({
       user: { id: 'user_other' },

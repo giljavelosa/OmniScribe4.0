@@ -244,25 +244,31 @@ function NoteTab({
 
   return (
     <Card>
-      <CardContent className="pt-6 space-y-5">
-        {sections.map((s) => {
-          const content = finalContent[s.id] ?? '';
-          return (
-            <section key={s.id} className="space-y-1.5">
-              <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                {s.label}
-              </h2>
-              {content ? (
-                <p className="text-sm whitespace-pre-wrap leading-relaxed">{content}</p>
-              ) : (
-                <p className="text-sm text-muted-foreground italic">No content</p>
-              )}
-            </section>
-          );
-        })}
+      <CardContent className="pt-6 space-y-4">
+        <div
+          className="max-h-[calc(100dvh-360px)] min-h-[280px] overflow-y-auto pr-2 space-y-5"
+          aria-label="Signed note content"
+        >
+          {sections.map((s) => {
+            const content = finalContent[s.id] ?? '';
+            return (
+              <section key={s.id} className="space-y-1.5">
+                <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  {s.label}
+                </h2>
+                {content ? (
+                  <p className="text-sm whitespace-pre-wrap leading-relaxed">{content}</p>
+                ) : (
+                  <p className="text-sm text-muted-foreground italic">No content</p>
+                )}
+              </section>
+            );
+          })}
+        </div>
 
-        {/* Signature block */}
-        <div className="border-t border-border pt-4 mt-4 space-y-1">
+        {/* Signature block — stays pinned below the scroll area so the
+            attestation is always visible regardless of note length. */}
+        <div className="border-t border-border pt-4 space-y-1">
           <p className="text-xs text-muted-foreground">
             Signed by <span className="font-medium text-foreground">{signingClinicianName}</span>
             {' · '}
@@ -313,7 +319,10 @@ function HandoutTab({
   const referral = referralLetter?.content as ReferralLetterContent | null;
 
   return (
-    <div className="space-y-4">
+    <div
+      className="space-y-4 max-h-[calc(100dvh-320px)] min-h-[280px] overflow-y-auto pr-1"
+      aria-label="Patient handout and referral letter"
+    >
       {handout && (
         <Card>
           <CardHeader>
@@ -472,23 +481,28 @@ function TranscriptTab({ noteId }: { noteId: string }) {
 
   return (
     <Card>
-      <CardContent className="pt-6 space-y-3">
-        {rows.map((row, i) => (
-          <div key={i} className="flex gap-3">
-            <span
-              className={`text-[10px] uppercase tracking-wide font-semibold shrink-0 w-20 pt-0.5 ${
-                row.speaker === 'CLINICIAN'
-                  ? 'text-[var(--speaker-1)]'
-                  : row.speaker === 'PATIENT'
-                    ? 'text-[var(--speaker-2)]'
-                    : 'text-muted-foreground'
-              }`}
-            >
-              {row.speaker === 'CLINICIAN' ? 'Clinician' : row.speaker === 'PATIENT' ? 'Patient' : 'Other'}
-            </span>
-            <p className="text-sm flex-1 leading-relaxed">{row.text}</p>
-          </div>
-        ))}
+      <CardContent className="pt-6">
+        <div
+          className="max-h-[calc(100dvh-340px)] min-h-[280px] overflow-y-auto pr-2 space-y-3"
+          aria-label={`Visit transcript, ${rows.length} turns`}
+        >
+          {rows.map((row, i) => (
+            <div key={i} className="flex gap-3">
+              <span
+                className={`text-[10px] uppercase tracking-wide font-semibold shrink-0 w-20 pt-0.5 ${
+                  row.speaker === 'CLINICIAN'
+                    ? 'text-[var(--speaker-1)]'
+                    : row.speaker === 'PATIENT'
+                      ? 'text-[var(--speaker-2)]'
+                      : 'text-muted-foreground'
+                }`}
+              >
+                {row.speaker === 'CLINICIAN' ? 'Clinician' : row.speaker === 'PATIENT' ? 'Patient' : 'Other'}
+              </span>
+              <p className="text-sm flex-1 leading-relaxed">{row.text}</p>
+            </div>
+          ))}
+        </div>
       </CardContent>
     </Card>
   );

@@ -1,5 +1,8 @@
 # Unit 05: Note Generation & Sign
 
+> **Sprint 0.20 — MFA removed.** Any reference to MFA, /mfa-challenge, /mfa-setup, TOTP, authenticator app setup, or login-verified gates in this document is HISTORICAL. Authentication is now password-only. See `context/specs/01-foundation-auth-tenant.md` and `progress-tracker.md`.
+
+
 ## Goal
 
 Build the LLM abstraction (sole AI ingress + PHI guard), the division-aware master prompts (medical/BH/rehab), the section-by-section ai-generation worker with per-section progress, the review UI with inline editing + section regenerate, the `/processing` reassurance screen, and the sign workflow that freezes `finalJson` (immutable forever after) and enqueues post-sign artifacts + next-visit brief precompute. After this unit, OmniScribe is technically a working medical AI scribe.

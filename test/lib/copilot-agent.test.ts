@@ -1,7 +1,20 @@
 import { describe, expect, it } from 'vitest';
 
-import { runAgent } from '@/services/copilot/agent';
+import { runAgent, ASK_SYSTEM_PROMPT } from '@/services/copilot/agent';
 import type { LLMService } from '@/services/llm';
+
+describe('ASK_SYSTEM_PROMPT — viewer-lens block guard', () => {
+  // Guards against a future refactor silently deleting the VIEWER LENS
+  // block. The block teaches the model to frame answers around the
+  // requesting clinician's discipline while preserving cross-discipline
+  // safety carve-outs. Removing it reverts Cleo to the older
+  // patient-centric framing without any test signal.
+  it('contains the VIEWER LENS framing block', () => {
+    expect(ASK_SYSTEM_PROMPT).toContain('VIEWER LENS');
+    expect(ASK_SYSTEM_PROMPT).toContain('viewerDivision');
+    expect(ASK_SYSTEM_PROMPT).toContain('ALWAYS SURFACE');
+  });
+});
 
 /**
  * Agent loop tests — Unit 27.

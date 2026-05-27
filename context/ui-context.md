@@ -1,5 +1,8 @@
 # OmniScribe — UI Context
 
+> **Sprint 0.20 — MFA removed.** Any reference to MFA, /mfa-challenge, /mfa-setup, TOTP, authenticator app setup, or login-verified gates in this document is HISTORICAL. Authentication is now password-only. See `context/specs/01-foundation-auth-tenant.md` and `progress-tracker.md`.
+
+
 > The visual law. Every visible decision lives in this file. Build to it. Extend it when you need a new pattern; never invent one inline.
 
 ## Theme

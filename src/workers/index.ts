@@ -11,6 +11,7 @@ import { externalContextHandler } from './external-context.worker';
 import { caseRouterHandler } from './case-router.worker';
 import { cleoStateHandler } from './cleo-state.worker';
 import { fhirWritebackHandler } from './fhir-writeback.worker';
+import { patientUploadExtractHandler } from './patient-upload-extract.worker';
 import { noteFinalizeStub } from './stubs';
 
 /**
@@ -45,6 +46,13 @@ const workers = [
   // (2) because EHR write QPS is typically vendor-gated; the spec
   // calls this out explicitly.
   new Worker(QUEUE_NAMES.fhirWriteback, fhirWritebackHandler, {
+    ...baseOptions,
+    concurrency: 2,
+  }),
+  // Sprint 0.19 / Tier 13 — patient multimedia upload extraction.
+  // Concurrency=2 (vision model latency tolerates a small fan-out;
+  // we'd bump this once we have throughput data).
+  new Worker(QUEUE_NAMES.patientUploadExtract, patientUploadExtractHandler, {
     ...baseOptions,
     concurrency: 2,
   }),

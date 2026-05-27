@@ -34,7 +34,7 @@ Measurable, verifiable, fixed for v1:
 
 ## The core user flow (in one screen-by-screen line)
 
-`/login` → `/mfa-challenge` → `/home` (pick patient) → `/prepare/[noteId]` (read brief, confirm setup) → `/capture/[noteId]` (record, mid-visit start drafting) → `/processing/[noteId]` (transient) → `/review/[noteId]` (edit + regenerate sections + close follow-ups) → `/sign/[noteId]` (MFA re-verify, sign) → `/home` (next patient).
+`/login` → `/home` (pick patient) → `/prepare/[noteId]` (read brief, confirm setup) → `/capture/[noteId]` (record, mid-visit start drafting) → `/processing/[noteId]` (transient) → `/review/[noteId]` (edit + regenerate sections + close follow-ups) → `/sign/[noteId]` (signing-PIN re-verify, sign) → `/home` (next patient). **Sprint 0.20 removed the MFA challenge step.**
 
 Detail in [`journeys/02-typical-visit.md`](../journeys/02-typical-visit.md). Variants in journeys 03–06.
 
@@ -91,7 +91,7 @@ Read [`journeys/05-copilot-ask-mode.md`](../journeys/05-copilot-ask-mode.md) for
 - **Org / Site / Room admin** — multi-site organizations, room registry, department model (org-wide, optionally per site), division assignment per org with per-episode override.
 - **Templates admin** — preset CMS templates + custom templates; section schema editor; specialty/division defaults; visibility tiers.
 - **Voice profile admin** — enrollment, BIPA consent versioning, soft-delete + 30-day hard-delete grace.
-- **Audit & compliance** — `AuditLog` (org/user/patient/note scope) + `PlatformAuditLog` (cross-org owner scope). Append-only. PHI-free metadata. Reconstructable state on important mutations (sign, BAA acceptance, MFA reset, sensitive-tier change).
+- **Audit & compliance** — `AuditLog` (org/user/patient/note scope) + `PlatformAuditLog` (cross-org owner scope). Append-only. PHI-free metadata. Reconstructable state on important mutations (sign, BAA acceptance, password reset, sensitive-tier change).
 - **Billing & seats** — Stripe integration, seat tiers (`SOLO` / `TEAM` / `ENTERPRISE`), per-user seat assignment, expirations, transfers. **Canonical wave: Wave 7** (units §01, §09, 38–41 in [`context/specs/00-build-plan.md`](specs/00-build-plan.md)).
 - **Telehealth** — Daily.co video room, magic-link patient join with DOB verification, browser-side audio tap integrating with the same transcription pipeline. Audio processed + audio discarded after note signing; the *note* is the artifact of record, NOT the video.
 - **EHR / FHIR integration** (Wave 4) — SMART-on-FHIR OAuth2, cached resource reads via worker, brief-generator enrichment, provenance UI with source pills + staleness chips. NextGen first, then Epic + Cerner. v1 is provider-launched, **read-only** — no write-back.
@@ -99,7 +99,7 @@ Read [`journeys/05-copilot-ask-mode.md`](../journeys/05-copilot-ask-mode.md) for
 
 ## In Scope (v1 — first paying customer)
 
-- Sign-in, MFA TOTP, password reset, MFA reset (admin-initiated, audited).
+- Sign-in (password-only; **Sprint 0.20 removed MFA**), password reset (user- and admin-initiated, audited).
 - Multi-tenant org/site/room with BAA fields on `Organization` (BH compliance profile = `BH_42CFR2`).
 - Patient + Encounter + Schedule + Episode of Care + Goal + Follow-up models.
 - Live + Upload + Paste capture modes; Soniox real-time transcription with diarization; voice-ID enrollment + matching.
@@ -108,7 +108,7 @@ Read [`journeys/05-copilot-ask-mode.md`](../journeys/05-copilot-ask-mode.md) for
 - Patient detail division-keyed snapshot.
 - Audit logging end-to-end; three-lens evaluation as a merge gate.
 - Encounter copilot Watch v0 (open-follow-ups + plan-for-today cards) + beacon placeholder (Ask mode placeholder shows "coming soon").
-- Admin: users, seats, billing, templates, voice profiles, announcements, audit, org settings; Sites + Rooms CRUD; MFA + password reset surfaces; customer self-onboarding wizard.
+- Admin: users, seats, billing, templates, voice profiles, announcements, audit, org settings; Sites + Rooms CRUD; password reset surfaces; customer self-onboarding wizard.
 - Owner console: org provisioning + BAA tracking; usage; subscriptions; templates; health; audit.
 
 ## Out of Scope (v1)
@@ -123,7 +123,7 @@ Read [`journeys/05-copilot-ask-mode.md`](../journeys/05-copilot-ask-mode.md) for
 - **Real-time co-editing of notes** — single-clinician edits only; no multi-cursor.
 - **Patient portal / patient-facing app** — v1 is clinician-facing only; patient touchpoints limited to magic-link telehealth.
 - **In-app clinical billing** — Stripe handles subscription billing; CPT capture / claim generation deferred.
-- **WebAuthn / hardware-key MFA** — TOTP only in v1.
+- **MFA / WebAuthn / hardware-key second factor** — **Sprint 0.20 removed MFA entirely; auth is password-only.** Future MFA is a re-introduction decision, not a v1 feature.
 - **Public signup / self-serve org creation** — v1 onboarding is invite-only via platform-owner provisioning.
 - **Copilot action tools that auto-mutate clinical records** — every action requires clinician initiation + confirmation; no autonomous writes.
 - **Cross-patient copilot queries** — copilot is patient-scoped when invoked from a clinical surface.
@@ -132,8 +132,8 @@ Read [`journeys/05-copilot-ask-mode.md`](../journeys/05-copilot-ask-mode.md) for
 
 Verifiable when all of the following are true on production with a real customer:
 
-1. **Onboarding** — a platform owner can provision a new Organization with BAA fields, invite a first ORG_ADMIN, and that admin can accept the invite, set a password, and enroll TOTP MFA without leaving the product. (Journey 07 + 01)
-2. **Auth resilience** — a clinician can complete password reset and MFA reset via in-product workflows; admin-initiated MFA reset is audited.
+1. **Onboarding** — a platform owner can provision a new Organization with BAA fields, invite a first ORG_ADMIN, and that admin can accept the invite + set a password without leaving the product. (Journey 07 + 01)
+2. **Auth resilience** — a clinician can complete password reset via in-product workflows; admin-initiated password reset is audited.
 3. **End-to-end recording → signed note** — a signed-in clinician can pick a scheduled patient, record a live 5-minute encounter, see live diarized transcript + section progress strip, transition to `/review`, edit one section + regenerate another, sweep open follow-ups, and sign the note in ≤ 5 minutes of clinician interaction time. (Journey 02)
 4. **`finalJson` immutability verified** — automated test asserts that no code path mutates `Note.finalJson` after `Note.status === SIGNED`.
 5. **Prior-context brief works on a returning patient** — for a patient with ≥ 1 prior signed note, opening `/prepare/[noteId]` renders a structured brief in < 1 second; brief content traces 100% to source notes. (Journey 03)

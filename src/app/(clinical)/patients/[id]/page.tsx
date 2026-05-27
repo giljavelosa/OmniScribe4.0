@@ -14,7 +14,7 @@ import { loadEligibleNudgesForSurface } from '@/services/copilot/load-eligible-n
 import { PatientChartTabs } from './_components/patient-chart-tabs';
 import type { FollowUpSummary } from './_components/follow-ups-sheet';
 import type { CasePanelData } from './_components/cases-panel';
-import type { CleoReadCardData } from './_components/cleo-read-card';
+import type { CleoReadCardData, ObservedPatternSummary } from './_components/cleo-read-card';
 import type { Division, Prisma } from '@prisma/client';
 
 export const dynamic = 'force-dynamic';
@@ -79,12 +79,21 @@ export default async function PatientDetailPage({
   });
   if (!patient) notFound();
 
+  const viewerDivision = divisionForProfession(session.user.professionType ?? null);
+
   // Unit 12 — snapshot strip + visit history with snippets, server-fetched
   // so the first paint has real content. Cross-division stratification:
   // fetch up to 50 most-recent signed visits including clinician identity
   // and episode-of-care (powers the by-episode / by-clinician views).
   const [snapshotStrip, recentVisits, externalContexts, openFollowUps] = await Promise.all([
-    buildSnapshotStrip({ orgId: session.user.orgId, patientId: patient.id }),
+    buildSnapshotStrip({
+      orgId: session.user.orgId,
+      patientId: patient.id,
+      // Snapshot follows the viewer's clinical lens — a MEDICAL clinician
+      // sees vitals, a PT sees pain/ROM/strength — regardless of the
+      // patient's site default.
+      viewerDivision,
+    }),
     prisma.note.findMany({
       where: {
         patientId: patient.id,
@@ -245,7 +254,6 @@ export default async function PatientDetailPage({
   // in-memory (max 10s of episodes per patient — no real cost).
   const orgId = session.user.orgId;
   const viewerOrgUserId = session.user.orgUserId ?? null;
-  const viewerDivision = divisionForProfession(session.user.professionType ?? null);
 
   const activeCasesRaw = patient.caseManagements.filter((c) => c.status === 'ACTIVE');
   const caseIds = patient.caseManagements.map((c) => c.id);
@@ -447,6 +455,29 @@ export default async function PatientDetailPage({
   // fetched so the chart's first paint has the card ready. Null when
   // the viewer hasn't generated state yet (lazy-built on first Ask
   // interaction); the card renders an empty-state stub.
+  // Phase C — counts for the Scans Overview tile + tab badge. Single
+  // groupBy keeps it cheap; "needs review" rolls up the three statuses
+  // where Accept / Deny is the next clinician action.
+  const uploadStatusCounts = await prisma.patientUpload.groupBy({
+    by: ['status'],
+    where: {
+      patientId: patient.id,
+      orgId,
+      isDeleted: false,
+    },
+    _count: { _all: true },
+  });
+  const attestedScanCount =
+    uploadStatusCounts.find((r) => r.status === 'ATTESTED')?._count._all ?? 0;
+  const needsReviewCount = uploadStatusCounts
+    .filter(
+      (r) =>
+        r.status === 'EXTRACTED' ||
+        r.status === 'MANUAL_ONLY' ||
+        r.status === 'EXTRACTION_FAILED',
+    )
+    .reduce((acc, r) => acc + r._count._all, 0);
+
   const cleoStateRow = viewerOrgUserId
     ? await prisma.copilotPatientState.findUnique({
         where: {
@@ -475,6 +506,7 @@ export default async function PatientDetailPage({
         observedPatternsJson: cleoStateRow.observedPatternsJson,
         lastRebuiltAt: cleoStateRow.lastRebuiltAt,
         openFollowUpCount: followUpItems.filter((f) => f.status === 'OPEN').length,
+        attestedScanCount,
         viewerOrgUserId,
       })
     : null;
@@ -551,6 +583,7 @@ export default async function PatientDetailPage({
         }
         cleoRead={cleoReadData}
         chartNudges={chartNudges}
+        scanCounts={{ attestedCount: attestedScanCount, needsReviewCount }}
       />
       {lastSignedNoteId && (
         <CopilotShell
@@ -576,6 +609,7 @@ type ProjectCleoReadArgs = {
   observedPatternsJson: Prisma.JsonValue;
   lastRebuiltAt: Date;
   openFollowUpCount: number;
+  attestedScanCount: number;
   viewerOrgUserId: string;
 };
 
@@ -602,11 +636,12 @@ function projectCleoReadCard(args: ProjectCleoReadArgs): CleoReadCardData {
 
   const patterns = Array.isArray(op?.patterns)
     ? op!.patterns.filter(
-        (p): p is { kind: 'topic_mentioned_unaddressed' | 'measure_trend' | 'recert_due_soon' | 'goal_stalled'; label: string } =>
+        (p): p is ObservedPatternSummary =>
           (p?.kind === 'topic_mentioned_unaddressed' ||
             p?.kind === 'measure_trend' ||
             p?.kind === 'recert_due_soon' ||
-            p?.kind === 'goal_stalled') &&
+            p?.kind === 'goal_stalled' ||
+            p?.kind === 'attested_scan_on_file') &&
           typeof p?.label === 'string',
       )
     : [];
@@ -618,6 +653,7 @@ function projectCleoReadCard(args: ProjectCleoReadArgs): CleoReadCardData {
     },
     patterns: patterns.map((p) => ({ kind: p.kind, label: p.label })),
     openFollowUpCount: args.openFollowUpCount,
+    attestedScanCount: args.attestedScanCount,
     lastRebuiltAt: args.lastRebuiltAt.toISOString(),
   };
 }

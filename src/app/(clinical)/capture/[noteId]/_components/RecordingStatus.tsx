@@ -62,6 +62,13 @@ function computeVisual(state: ReturnType<typeof useRecordingState>) {
       return { Icon: CheckCircle2, label: 'Complete', secondary: null, iconClass: 'text-[var(--status-success-fg)]' };
     case 'error':
       return { Icon: AlertCircle, label: 'Error', secondary: state.reason, iconClass: 'text-[var(--status-danger-fg)]' };
+    case 'lock-conflict':
+      return {
+        Icon: AlertCircle,
+        label: 'Recording on another device',
+        secondary: 'Take over from this device or end on the other',
+        iconClass: 'text-[var(--status-warning-fg)]',
+      };
     default: {
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const _exhaustive: never = state;

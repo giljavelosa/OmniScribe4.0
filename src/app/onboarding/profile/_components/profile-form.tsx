@@ -78,7 +78,16 @@ export function ProfileForm({
       // Trigger a JWT refresh so the updated professionType/division reach
       // the server before the next page render. The trigger:'update' path in
       // auth.config.ts re-fetches the OrgUser row from DB automatically.
-      await update();
+      //
+      // IMPORTANT: pass a payload (any non-undefined value) so next-auth v5
+      // sends a POST with body. Calling `update()` with NO args sends a GET,
+      // which does NOT set `isUpdate=true` server-side, which means the jwt
+      // callback never receives `trigger: 'update'` and the cookie keeps the
+      // pre-save values — producing a /prepare → /onboarding/profile loop on
+      // the next click. The payload itself is ignored by our jwt callback
+      // (it always re-fetches OrgUser from DB on `trigger === 'update'`),
+      // so this is just a "please do the POST" sentinel.
+      await update({ profileCompleted: true });
       window.location.assign('/home');
     });
   }

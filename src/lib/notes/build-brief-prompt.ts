@@ -87,6 +87,17 @@ export type BuildBriefPromptInput = {
   externalEhrContext?: ExternalEhrContext | null;
   /** External-context — most recent first; max 5; dateOfRecord ≤ today. */
   externalContexts?: BriefExternalContextProjection[];
+  /** Clinician-attested scanned documents (PatientUpload ATTESTED). */
+  attestedUploads?: BriefAttestedUploadProjection[];
+};
+
+/** Sprint 0 — attested scan projection for brief prompts. */
+export type BriefAttestedUploadProjection = {
+  uploadId: string;
+  kindLabel: string;
+  attestedAtIso: string;
+  captureContext: string | null;
+  findingsSummary: string;
 };
 
 const SYSTEM_HEAD = `
@@ -310,11 +321,33 @@ NEVER invent. If external context is empty, the brief omits any
 mention of it.
 `.trim();
 
+const SCANNED_DOCUMENTS_BLOCK = `
+═══ ATTESTED SCANNED DOCUMENTS (optional) ═══
+
+An <attested_scanned_documents> block, when present, carries up to 5
+paper/PDF artifacts the clinician photographed and explicitly ACCEPTED
+into the chart. These are HIGHER-CONFIDENCE than external context and
+LOWER-CONFIDENCE than signed visit notes:
+
+  • You MAY use them for \`watch.recentMedChanges\` (med lists),
+    \`watch.recentResults\` (labs), and thin \`chiefConcern\` / narrative
+    context when signed notes lack the fact.
+  • You MUST NOT invent plan items or goals from scans alone.
+  • Cite scans in prose as "per accepted scan dated YYYY-MM-DD" — never
+    as "last visit".
+  • Include every upload id you drew from in top-level
+    \`sourcePatientUploadIds\` (array of strings, may be empty).
+  • If a scan contradicts a signed note, prefer the signed note.
+
+NEVER invent. If the block is empty, omit \`sourcePatientUploadIds\`.
+`.trim();
+
 export const BRIEF_SYSTEM_PROMPT = [
   SYSTEM_HEAD,
   MEASURE_KEY_BLOCK,
   EHR_CONTEXT_BLOCK,
   EXTERNAL_CONTEXT_BLOCK,
+  SCANNED_DOCUMENTS_BLOCK,
   SYSTEM_TAIL,
 ].join('\n\n');
 
@@ -369,10 +402,32 @@ export function buildBriefUserMessage(input: BuildBriefPromptInput): string {
     '',
     renderExternalContexts(input.externalContexts ?? []),
     '',
+    renderAttestedUploads(input.attestedUploads ?? []),
+    '',
     renderExternalEhrContext(input.externalEhrContext ?? null),
     '',
     'Now produce the brief JSON object. Output JSON only.',
   ].join('\n');
+}
+
+function renderAttestedUploads(items: BriefAttestedUploadProjection[]): string {
+  if (items.length === 0) {
+    return '<attested_scanned_documents>\n  (no attested scans on file)\n</attested_scanned_documents>';
+  }
+  const lines: string[] = [`<attested_scanned_documents count="${items.length}">`];
+  for (const item of items) {
+    const dateOnly = item.attestedAtIso.slice(0, 10);
+    lines.push(
+      `  <scan id="${item.uploadId}" attestedAt="${dateOnly}" kind="${escapeAttr(item.kindLabel)}">`,
+    );
+    if (item.captureContext) {
+      lines.push(`    <context>${escapeAttr(item.captureContext)}</context>`);
+    }
+    lines.push(`    <findings>${escapeAttr(item.findingsSummary)}</findings>`);
+    lines.push('  </scan>');
+  }
+  lines.push('</attested_scanned_documents>');
+  return lines.join('\n');
 }
 
 /**

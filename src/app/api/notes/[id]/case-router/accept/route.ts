@@ -135,7 +135,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       status: true,
       clinicianOrgUserId: true,
       encounterId: true,
-      encounter: { select: { id: true, caseManagementId: true } },
+      encounter: {
+        select: {
+          id: true,
+          caseManagementId: true,
+          // Sprint 0.13 Decision 3 rescue path — see SIGNED guard below.
+          caseManagement: { select: { status: true } },
+        },
+      },
     },
   });
   if (!note) return NextResponse.json({ error: { code: 'not_found' } }, { status: 404 });
@@ -147,10 +154,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: { code: 'forbidden' } }, { status: 403 });
   }
   if (note.status === 'SIGNED' || note.status === 'TRANSFERRED') {
-    return NextResponse.json(
-      { error: { code: 'invalid_state', message: 'Routing is locked after sign.' } },
-      { status: 409 },
-    );
+    // Narrow rescue path: a signed note whose case is STILL PENDING_ROUTER
+    // means routing was never resolved pre-sign (the Cleo fallback bug, now
+    // fixed, was the historical source). Allow the clinician to resolve it
+    // post-sign — this is the same routing decision they would have made
+    // pre-sign, not a re-route of an already-decided chart. Any other
+    // signed-note accept attempt is still locked.
+    const isPendingRouterRescue =
+      note.encounter?.caseManagement?.status === 'PENDING_ROUTER';
+    if (!isPendingRouterRescue) {
+      return NextResponse.json(
+        { error: { code: 'invalid_state', message: 'Routing is locked after sign.' } },
+        { status: 409 },
+      );
+    }
   }
   if (!note.encounter) {
     return NextResponse.json(
@@ -788,8 +805,8 @@ function resolveDecision(
           kind: 'open-new',
           primaryIcd: proposal.newCase.primaryIcd,
           primaryIcdLabel: proposal.newCase.primaryIcdLabel,
-          secondaryIcd: proposal.newCase.secondaryIcd,
-          secondaryIcdLabel: proposal.newCase.secondaryIcdLabel,
+          secondaryIcd: proposal.newCase.secondaryIcd ?? undefined,
+          secondaryIcdLabel: proposal.newCase.secondaryIcdLabel ?? undefined,
         },
       };
     }

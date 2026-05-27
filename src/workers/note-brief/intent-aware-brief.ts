@@ -45,6 +45,7 @@ import {
 import { loadExternalEhrContext } from '@/lib/fhir/project-ehr-context';
 import { hydrateEhrEnrichment } from '@/lib/notes/hydrate-ehr-enrichment';
 import { loadExternalContextsForBrief } from '@/lib/brief/load-external-contexts';
+import { loadAttestedUploadsForBrief } from '@/lib/brief/load-attested-uploads';
 import type {
   PriorContextBriefContent,
   FollowUpPreview,
@@ -180,6 +181,16 @@ export async function runIntentAwareBrief(
     );
   }
 
+  let attestedUploads: Awaited<ReturnType<typeof loadAttestedUploadsForBrief>> = [];
+  try {
+    attestedUploads = await loadAttestedUploadsForBrief({
+      patientId: note.patientId,
+      orgId,
+    });
+  } catch (err) {
+    console.warn('[note-brief intent-aware] loadAttestedUploadsForBrief failed; continuing:', err);
+  }
+
   const briefInput = {
     division: note.division,
     todayIso,
@@ -191,6 +202,7 @@ export async function runIntentAwareBrief(
     topActiveGoals: topGoals.map(projectGoalForBrief),
     externalEhrContext,
     externalContexts,
+    attestedUploads,
   };
 
   let briefResult;

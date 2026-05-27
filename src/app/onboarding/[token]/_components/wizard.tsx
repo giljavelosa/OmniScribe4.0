@@ -41,8 +41,7 @@ export function OnboardingWizard({ token, email }: { token: string; email: strin
         return;
       }
       setStage('signing-in');
-      // Auto sign-in. The clinical layout's D2 redirect chain will route the
-      // user to /mfa-setup since their fresh account has mfaEnabled=false.
+      // Auto sign-in, then land at home.
       const signinRes = await signIn('credentials', {
         email,
         password: pw,
@@ -52,8 +51,8 @@ export function OnboardingWizard({ token, email }: { token: string; email: strin
         setError('Account created but auto sign-in failed. Please sign in from /login.');
         return;
       }
-      router.push('/mfa-setup');
-      router.refresh();
+      // Sprint 0.20 — password-only auth; hard-nav so the JWT cookie is readable.
+      window.location.assign('/home');
     });
   }
 
@@ -64,7 +63,7 @@ export function OnboardingWizard({ token, email }: { token: string; email: strin
   return (
     <form onSubmit={setPassword} className="space-y-4">
       <p className="text-sm text-muted-foreground">
-        Step 1 of 2 — choose a password. (Step 2 sets up multi-factor authentication.)
+        Step 1 of 1 — choose a password for {email}.
       </p>
       <div className="space-y-2">
         <Label htmlFor="pw">Password for {email}</Label>

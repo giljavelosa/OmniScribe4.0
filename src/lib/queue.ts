@@ -57,6 +57,12 @@ export const QUEUE_NAMES = {
    *  TRANSIENT failures throw inside the handler (PERMANENT +
    *  CONFLICT fail-closed by design — decision 7). */
   fhirWriteback: 'fhir-writeback',
+  /** Sprint 0.19 / Tier 13 — Patient multimedia upload extraction
+   *  (OCR + structured-field extraction for med lists, lab reports,
+   *  imaging reports, insurance/ID cards, outside records). Enqueued
+   *  by `POST /api/patients/[id]/uploads` after the row + S3 object
+   *  land. Idempotent on uploadId; standard rule-10 retry semantics. */
+  patientUploadExtract: 'patient-upload-extract',
 } as const;
 
 export const transcriptionQueue = new Queue(QUEUE_NAMES.transcription, defaultOptions);
@@ -72,12 +78,19 @@ export const externalContextTranscriptionQueue = new Queue(
 export const caseRouterQueue = new Queue(QUEUE_NAMES.caseRouter, defaultOptions);
 export const cleoStateQueue = new Queue(QUEUE_NAMES.cleoState, defaultOptions);
 export const fhirWritebackQueue = new Queue(QUEUE_NAMES.fhirWriteback, defaultOptions);
+export const patientUploadExtractQueue = new Queue(QUEUE_NAMES.patientUploadExtract, defaultOptions);
 
 // ---------------------------------------------------------------------------
 // Enqueue helpers — keep the call sites typed + idempotent.
 // ---------------------------------------------------------------------------
 
 export type TranscriptionJobType = 'finalize-realtime-transcript' | 'transcribe-uploaded-audio' | 'cleanup-pasted-transcript';
+
+// BullMQ 5.76+ rejects custom jobIds containing ':' unless the id splits
+// into exactly 3 parts. Several of our patterns need 4+ parts (sectionId,
+// type, bucket), and singletons like note-brief need 2 parts. Standardize
+// on '-' as the delimiter across every helper so the validation never trips.
+// Stability semantics are unchanged: same payload → same jobId.
 
 export function enqueueTranscriptionJob(payload: {
   noteId: string;
@@ -86,7 +99,7 @@ export function enqueueTranscriptionJob(payload: {
   requestId: string;
 }) {
   return transcriptionQueue.add(payload.type, payload, {
-    jobId: `transcription:${payload.noteId}:${payload.requestId}`,
+    jobId: `transcription-${payload.noteId}-${payload.requestId}`,
   });
 }
 
@@ -100,14 +113,14 @@ export function enqueueAiGenerationJob(payload: {
   sectionId?: string;
 }) {
   const id = payload.sectionId
-    ? `ai-generation:${payload.noteId}:${payload.sectionId}:${payload.requestId}`
-    : `ai-generation:${payload.noteId}:${payload.requestId}`;
+    ? `ai-generation-${payload.noteId}-${payload.sectionId}-${payload.requestId}`
+    : `ai-generation-${payload.noteId}-${payload.requestId}`;
   return aiGenerationQueue.add(payload.type, payload, { jobId: id });
 }
 
 export function enqueueNoteFinalizeJob(payload: { noteId: string; orgId: string; requestId: string }) {
   return noteFinalizeQueue.add('finalize-note', payload, {
-    jobId: `note-finalize:${payload.noteId}:${payload.requestId}`,
+    jobId: `note-finalize-${payload.noteId}-${payload.requestId}`,
   });
 }
 
@@ -121,14 +134,14 @@ export function enqueueVoiceIdJob(payload: {
 }) {
   const type = payload.type ?? 'match-speakers';
   return voiceIdQueue.add(type, { ...payload, type }, {
-    jobId: `voice-id:${payload.noteId}:${type}:${payload.requestId}`,
+    jobId: `voice-id-${payload.noteId}-${type}-${payload.requestId}`,
   });
 }
 
 export function enqueueNoteBriefJob(payload: { noteId: string; orgId: string }) {
   // Idempotent on noteId — only one brief per signed note (spec rule).
   return noteBriefQueue.add('precompute-brief', payload, {
-    jobId: `note-brief:${payload.noteId}`,
+    jobId: `note-brief-${payload.noteId}`,
   });
 }
 
@@ -141,7 +154,7 @@ export function enqueuePostSignArtifactJob(payload: {
   requestId: string;
 }) {
   return postSignArtifactsQueue.add(payload.type, payload, {
-    jobId: `post-sign:${payload.noteId}:${payload.type}:${payload.requestId}`,
+    jobId: `post-sign-${payload.noteId}-${payload.type}-${payload.requestId}`,
   });
 }
 
@@ -157,7 +170,7 @@ export function enqueueExternalContextTranscriptionJob(payload: {
   requestId: string;
 }) {
   return externalContextTranscriptionQueue.add('transcribe-external-context', payload, {
-    jobId: `external-ctx:${payload.externalContextId}:${payload.requestId}`,
+    jobId: `external-ctx-${payload.externalContextId}-${payload.requestId}`,
   });
 }
 
@@ -168,7 +181,7 @@ export function enqueueExternalContextTranscriptionJob(payload: {
  */
 export function enqueueCaseRouterJob(payload: { noteId: string; orgId: string }) {
   return caseRouterQueue.add('propose-case-routing', payload, {
-    jobId: `case-router:${payload.noteId}`,
+    jobId: `case-router-${payload.noteId}`,
   });
 }
 
@@ -188,8 +201,23 @@ export function enqueueCleoStateRefresh(payload: {
   clinicianOrgUserId: string;
 }) {
   const bucket = Math.floor(Date.now() / (5 * 60 * 1000));
-  const jobId = `cleo-state:${payload.orgId}:${payload.patientId}:${payload.clinicianOrgUserId}:${bucket}`;
+  const jobId = `cleo-state-${payload.orgId}-${payload.patientId}-${payload.clinicianOrgUserId}-${bucket}`;
   return cleoStateQueue.add('refresh-cleo-state', payload, { jobId });
+}
+
+/**
+ * Sprint 0.19 / Tier 13 — fired by the patient-uploads create route.
+ * Idempotent on uploadId; the unique constraint on PatientUpload.id
+ * already prevents row duplicates, and the worker re-reads the row
+ * + skips if status !== PENDING_EXTRACTION.
+ */
+export function enqueuePatientUploadExtract(payload: {
+  orgId: string;
+  uploadId: string;
+}) {
+  return patientUploadExtractQueue.add('extract-patient-upload', payload, {
+    jobId: `patient-upload-extract-${payload.uploadId}`,
+  });
 }
 
 /**
@@ -208,6 +236,6 @@ export function enqueueCleoStateRefresh(payload: {
  */
 export function enqueueFhirWriteback(payload: { proposalId: string }) {
   return fhirWritebackQueue.add('writeback', payload, {
-    jobId: `writeback:${payload.proposalId}`,
+    jobId: `writeback-${payload.proposalId}`,
   });
 }

@@ -1,7 +1,8 @@
 'use client';
 
-import React, { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import React, { useEffect, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { Camera } from 'lucide-react';
 import type { PatientSex } from '@prisma/client';
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -38,6 +39,7 @@ import { SnapshotDetailSheet } from './snapshot-detail-sheet';
 import { PriorRecordsSheet } from './prior-records-sheet';
 import { ProblemsSheet } from './problems-sheet';
 import { SnapshotInlineStrip } from './snapshot-inline-strip';
+import { ScannedDocumentsSection } from './scanned-documents-section';
 
 // ---------------------------------------------------------------------------
 // Local prop types — mirror the Prisma shapes but with ISO strings so the
@@ -114,6 +116,10 @@ type Props = {
    *  renders nothing (decision 10, backward compat for clinicians
    *  whose state-rebuild hasn't yet seeded a candidate). */
   chartNudges: NudgeCardData[];
+  /** Phase C — counts for the Scans Overview tile + tab badge.
+   *  attestedCount = ATTESTED rows; needsReviewCount = EXTRACTED /
+   *  MANUAL_ONLY / EXTRACTION_FAILED rows awaiting Accept / Deny. */
+  scanCounts: { attestedCount: number; needsReviewCount: number };
 };
 
 const DIVISION_DISPLAY = [
@@ -180,11 +186,34 @@ export function PatientChartTabs({
   ehrPanel,
   cleoRead,
   chartNudges,
+  scanCounts,
 }: Props) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const age = computeAge(patient.dobIso);
   const totalVisits = visits.length;
   const [openSheet, setOpenSheet] = useState<OpenSheet>(null);
+
+  // Phase C — controlled tabs so the Overview "Scans" tile can switch
+  // to the Scans tab and the prepare banner can deep-link via
+  // ?tab=scans (with ?openScan=1 implying the same). After consuming
+  // the URL hint we strip it so reloads don't keep re-selecting.
+  const [activeTab, setActiveTab] = useState<string>(() => {
+    const t = searchParams.get('tab');
+    if (t === 'scans' || t === 'cases' || t === 'visits' || t === 'profile') return t;
+    if (searchParams.get('openScan') === '1') return 'scans';
+    return 'overview';
+  });
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    if (url.searchParams.has('tab')) {
+      url.searchParams.delete('tab');
+      window.history.replaceState(null, '', url.pathname + url.search);
+    }
+    // openScan is consumed by ScannedDocumentsSection; that effect
+    // clears it itself so the dialog only fires on the deep link.
+  }, []);
   /** Set to a case id when the Cases-tab hero's "Continue this case" button
    *  is tapped. Mounts a scoped StartVisitDialog (activeCases = [thatCase])
    *  so the dialog treats it as the 1-case path and skips the picker. */
@@ -236,6 +265,17 @@ export function PatientChartTabs({
     externalContextItems.length > 0
       ? `Prior records (${externalContextItems.length})`
       : 'None on file';
+
+  // Phase C — Scans tile headline. Prioritizes "needs review" (the
+  // actionable state) over the accepted count; both zero ⇒ empty.
+  const scansHeadline = (() => {
+    const needs = scanCounts.needsReviewCount;
+    const ok = scanCounts.attestedCount;
+    if (needs > 0 && ok > 0) return `${needs} need review · ${ok} accepted`;
+    if (needs > 0) return `${needs} need review`;
+    if (ok > 0) return `${ok} accepted`;
+    return 'No scans yet — tap to scan';
+  })();
 
   function closeSheet() {
     setOpenSheet(null);
@@ -356,7 +396,7 @@ export function PatientChartTabs({
             </StatusBanner>
           )}
 
-          <Tabs defaultValue="overview" className="space-y-6">
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
             <TabsList>
               <TabsTrigger value="overview">Overview</TabsTrigger>
               {casesForPanel.length > 0 && (
@@ -366,6 +406,14 @@ export function PatientChartTabs({
               )}
               <TabsTrigger value="visits">
                 Visits{totalVisits > 0 ? ` (${totalVisits})` : ''}
+              </TabsTrigger>
+              <TabsTrigger value="scans">
+                Scans
+                {scanCounts.needsReviewCount > 0
+                  ? ` (${scanCounts.needsReviewCount})`
+                  : scanCounts.attestedCount > 0
+                    ? ` (${scanCounts.attestedCount})`
+                    : ''}
               </TabsTrigger>
               <TabsTrigger value="profile">Profile</TabsTrigger>
             </TabsList>
@@ -412,8 +460,40 @@ export function PatientChartTabs({
                 onClick={() => setOpenSheet('snapshot')}
               />
 
-              {/* Remaining 4 tiles — clean 2×2 grid */}
+              {/* Remaining tiles — clean 2-column grid. Scans is its own
+                  tile that switches to the Scans tab (Phase C). The
+                  inset Camera button is a one-tap shortcut that switches
+                  tabs AND opens the scan dialog so users don't lose the
+                  pre-Phase-C "tap Scan to scan" muscle memory. */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                <div className="relative">
+                  <CockpitTile
+                    label="Scans"
+                    headline={scansHeadline}
+                    onClick={() => setActiveTab('scans')}
+                  />
+                  <button
+                    type="button"
+                    aria-label="Scan a document"
+                    title="Scan a document"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setActiveTab('scans');
+                      if (typeof window !== 'undefined') {
+                        // Dispatch on a microtask so the tab content has
+                        // mounted before ScannedDocumentsSection's
+                        // listener fires.
+                        queueMicrotask(() =>
+                          window.dispatchEvent(new CustomEvent('scans:open-dialog')),
+                        );
+                      }
+                    }}
+                    className="absolute right-10 top-1/2 -translate-y-1/2 inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-xs font-medium text-foreground hover:bg-muted shadow-sm"
+                  >
+                    <Camera className="size-3.5" aria-hidden />
+                    Scan
+                  </button>
+                </div>
                 <CockpitTile
                   label="Medications"
                   headline="Not recorded — connect an EHR"
@@ -435,6 +515,11 @@ export function PatientChartTabs({
                   onClick={() => setOpenSheet('priorRecords')}
                 />
               </div>
+            </TabsContent>
+
+            {/* ── Scans (Phase C) ──────────────────────────────────────── */}
+            <TabsContent value="scans" className="space-y-3">
+              <ScannedDocumentsSection patientId={patient.id} />
             </TabsContent>
 
             {casesForPanel.length > 0 && (

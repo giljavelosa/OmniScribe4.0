@@ -12,7 +12,6 @@ type OwnerUser = {
   id: string;
   email: string;
   name: string | null;
-  mfaEnabled: boolean;
   platformRole: string;
   createdAt: string;
   orgs: Array<{
@@ -96,7 +95,6 @@ export function UsersSearch() {
                 <th className="text-left px-3 py-2 font-medium">Email</th>
                 <th className="text-left px-3 py-2 font-medium">Name</th>
                 <th className="text-left px-3 py-2 font-medium">Orgs</th>
-                <th className="text-left px-3 py-2 font-medium">Authenticator</th>
                 <th className="text-left px-3 py-2 font-medium">Platform</th>
                 <th className="text-left px-3 py-2 font-medium">Created</th>
               </tr>
@@ -104,7 +102,7 @@ export function UsersSearch() {
             <tbody>
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-3 py-6 text-center text-muted-foreground">
+                  <td colSpan={5} className="px-3 py-6 text-center text-muted-foreground">
                     {loading ? 'Loading…' : 'No users match.'}
                   </td>
                 </tr>
@@ -128,11 +126,6 @@ export function UsersSearch() {
                           </div>
                         ))
                       )}
-                    </td>
-                    <td className="px-3 py-2">
-                      <StatusBadge variant={u.mfaEnabled ? 'success' : 'warning'} noIcon>
-                        {u.mfaEnabled ? 'enrolled' : 'not enrolled'}
-                      </StatusBadge>
                     </td>
                     <td className="px-3 py-2">
                       {u.platformRole === 'PLATFORM_OWNER' ? (

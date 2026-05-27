@@ -77,6 +77,9 @@ const AFFORDANCE_LABELS: Record<string, string> = {
   'open-plan-editor': "Open today's plan",
   'review-failed-writeback': 'Review failed write',
   'reevaluate-goal': 'Re-evaluate goal',
+  // Unit 48 PR5 — in-place server action (no navigation). The act
+  // endpoint updates Encounter.intent + flips the nudge to ACTED.
+  'apply-intent-proposal': 'Apply',
 };
 
 function priorityToVariant(priority: CleoNudgePriority):

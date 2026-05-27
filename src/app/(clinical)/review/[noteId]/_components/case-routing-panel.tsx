@@ -634,7 +634,7 @@ function ReconcileCard({
 }) {
   const options = reconcileProposal.resolutionOptions;
   const initialIndex =
-    reconcileProposal.recommendedOptionIndex !== undefined &&
+    reconcileProposal.recommendedOptionIndex != null &&
     reconcileProposal.recommendedOptionIndex < options.length
       ? reconcileProposal.recommendedOptionIndex
       : 0;

@@ -8,6 +8,7 @@ import { assertOrgScoped } from '@/lib/phi-access';
 import { isValidPersonName } from '@/lib/patient/name-validator';
 import { PatientSex } from '@prisma/client';
 import { buildSnapshotStrip } from '@/lib/snapshots/build-snapshot-strip';
+import { divisionForProfession } from '@/lib/professions';
 import { deriveAssessmentSnippet } from '@/lib/notes/note-text';
 import type { FinalJsonShape } from '@/lib/notes/build-artifact-prompt';
 
@@ -38,7 +39,7 @@ const patchSchema = z
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const guard = await requireFeatureAccess('PATIENT_MANAGEMENT');
   if ('error' in guard) return guard.error;
-  const { user, authorizationUser } = guard;
+  const { user, authorizationUser, orgUser } = guard;
 
   const { id } = await params;
   const patient = await prisma.patient.findFirst({
@@ -61,8 +62,14 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   assertOrgScoped(patient.orgId, authorizationUser.orgId);
 
   // Unit 12: compute snapshot strip + recent visits with assessment snippets.
+  // Snapshot follows the viewer's clinical lens — a MEDICAL clinician sees
+  // vitals, a PT sees pain/ROM/strength.
   const [snapshotStrip, recentVisits] = await Promise.all([
-    buildSnapshotStrip({ orgId: authorizationUser.orgId, patientId: patient.id }),
+    buildSnapshotStrip({
+      orgId: authorizationUser.orgId,
+      patientId: patient.id,
+      viewerDivision: divisionForProfession(orgUser.professionType),
+    }),
     prisma.note.findMany({
       where: {
         patientId: patient.id,

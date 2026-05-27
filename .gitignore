@@ -44,6 +44,15 @@ pnpm-debug.log*
 .turbo/
 .eslintcache
 tsconfig.tsbuildinfo
+tmp/
 
 # Claude Code workspace state (worktree mirrors + local IDE settings)
 .claude/
+
+# Playwright e2e artifacts
+test-results/
+playwright-report/
+playwright/.cache/
+e2e/.auth/
+e2e/screenshots/
+*.zip

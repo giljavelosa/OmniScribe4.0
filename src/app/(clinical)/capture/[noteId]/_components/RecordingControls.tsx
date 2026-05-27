@@ -5,8 +5,28 @@ import { useRouter } from 'next/navigation';
 import { Pause, Play, Mic, ArrowRight, RotateCcw, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { StatusBanner } from '@/components/ui/status-banner';
-import { useCaptureControls, useRecordingState } from '../_hooks/capture-state';
+import {
+  useCaptureControls,
+  useRecordingLimitState,
+  useRecordingState,
+} from '../_hooks/capture-state';
 import { LeaveConfirmDialog } from './LeaveConfirmDialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
+  MAX_RECORDING_BYTES,
+  MAX_RECORDING_MS,
+  deriveWarning,
+  formatTimeRemaining,
+} from '@/lib/audio/recording-limits';
 
 type Props = {
   noteId: string;
@@ -16,13 +36,12 @@ type Props = {
   autostart?: boolean;
 };
 
-/** ~32-minute hard cap in complete-stream (32 * 60 * 16000 * 2 bytes).
- *  Surface a warning at 28 minutes so the clinician can finish before hitting it. */
-const MAX_RECORDING_MS = 32 * 60 * 1000;
-const WARN_AT_MS = 28 * 60 * 1000;
 /** Auto-start countdown duration (ms). Long enough for the clinician to abort
  *  if they landed here by accident; short enough that it feels like one-tap. */
 const AUTOSTART_COUNTDOWN_MS = 1500;
+
+const MAX_RECORDING_MIN = Math.floor(MAX_RECORDING_MS / 60_000);
+const MAX_RECORDING_MB = Math.round(MAX_RECORDING_BYTES / (1024 * 1024));
 
 /**
  * RecordingControls — button bar for the capture surface.
@@ -38,22 +57,27 @@ const AUTOSTART_COUNTDOWN_MS = 1500;
  */
 export function RecordingControls({ noteId, autostart = false }: Props) {
   const state = useRecordingState();
-  const { start, pause, resume, finish, reset } = useCaptureControls();
+  const { accumulatedBytes } = useRecordingLimitState();
+  const { start, pause, resume, finish, reset, confirmTakeover } =
+    useCaptureControls();
   const router = useRouter();
   const [leaveOpen, setLeaveOpen] = useState(false);
+  const [takeoverPending, setTakeoverPending] = useState(false);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [autostartMs, setAutostartMs] = useState(AUTOSTART_COUNTDOWN_MS);
   const [autostartActive, setAutostartActive] = useState(autostart);
   const autostartFiredRef = useRef(false);
 
   // Track elapsed time independently so we can show a max-duration warning
-  // without depending on RecordingStatus (single-source rule).
+  // without depending on RecordingStatus (single-source rule). Tick every
+  // second so the "less than 1 min remaining" countdown stays current; the
+  // auto-stop guard inside CaptureStateProvider polls on the same cadence.
   useEffect(() => {
     if (state.kind !== 'recording') return;
     const startedAt = state.startedAt;
-    const t = setInterval(() => setElapsedMs(Date.now() - startedAt), 5_000);
+    const t = setInterval(() => setElapsedMs(Date.now() - startedAt), 1_000);
     // Initial tick — intentional immediate state set so the UI doesn't show
-    // 0 for the first 5s after the effect runs.
+    // 0 for the first second after the effect runs.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setElapsedMs(Date.now() - startedAt);
     return () => clearInterval(t);
@@ -65,9 +89,11 @@ export function RecordingControls({ noteId, autostart = false }: Props) {
     }
   }, [state.kind, noteId, router]);
 
-  // Auto-start countdown — only runs once when the page mounts in idle.
-  // Cancels if the clinician taps Cancel or the state moves out of idle for
-  // any other reason. Fires `start()` exactly once.
+  // Auto-start countdown — only runs while the page is mounted in idle and
+  // autostart is active. Tick the remaining time only; the actual `start()`
+  // trigger lives in a separate effect so we never call a parent-component
+  // setter from inside a state updater (React forbids cross-component
+  // setState during render, including via batched updater callbacks).
   useEffect(() => {
     if (!autostartActive) return;
     if (state.kind !== 'idle') return;
@@ -75,31 +101,100 @@ export function RecordingControls({ noteId, autostart = false }: Props) {
 
     const tickMs = 100;
     const interval = setInterval(() => {
-      setAutostartMs((prev) => {
-        const next = prev - tickMs;
-        if (next <= 0) {
-          clearInterval(interval);
-          if (!autostartFiredRef.current) {
-            autostartFiredRef.current = true;
-            setAutostartActive(false);
-            void start();
-          }
-          return 0;
-        }
-        return next;
-      });
+      setAutostartMs((prev) => Math.max(0, prev - tickMs));
     }, tickMs);
 
     return () => clearInterval(interval);
-  }, [autostartActive, state.kind, start]);
+  }, [autostartActive, state.kind]);
+
+  // Fire `start()` exactly once when the countdown reaches zero. Runs as a
+  // post-commit effect so the cross-component setState inside `start` is
+  // performed outside any render / state-updater path.
+  useEffect(() => {
+    if (!autostartActive) return;
+    if (state.kind !== 'idle') return;
+    if (autostartMs > 0) return;
+    if (autostartFiredRef.current) return;
+    autostartFiredRef.current = true;
+    setAutostartActive(false);
+    void start();
+  }, [autostartActive, autostartMs, state.kind, start]);
 
   const isIdle = state.kind === 'idle';
   const isError = state.kind === 'error';
   const isRecording = state.kind === 'recording' || state.kind === 'reconnecting';
   const isPaused = state.kind === 'paused';
   const isBusy = state.kind === 'requesting-mic' || state.kind === 'finalizing';
-  const showMaxWarning = (isRecording || isPaused) && elapsedMs >= WARN_AT_MS;
-  const nearMax = elapsedMs >= MAX_RECORDING_MS - 60_000; // 1 min before cap
+  const warning =
+    isRecording || isPaused
+      ? deriveWarning({ elapsedMs, accumulatedBytes })
+      : 'none';
+  const showMaxWarning = warning !== 'none';
+  const isCritical = warning === 'time_critical' || warning === 'size_critical';
+
+  if (state.kind === 'lock-conflict') {
+    // Anti-credential-sharing defense: another device on this account
+    // is currently recording. Surface as a warning banner + an explicit
+    // takeover AlertDialog. Rule 22: no native confirm() in clinical
+    // surfaces — AlertDialog is required.
+    const ageSec = Math.max(1, Math.round(state.activeLockAgeMs / 1000));
+    const ageLabel =
+      ageSec < 60
+        ? `${ageSec} second${ageSec === 1 ? '' : 's'} ago`
+        : `${Math.round(ageSec / 60)} minute${Math.round(ageSec / 60) === 1 ? '' : 's'} ago`;
+
+    return (
+      <div className="space-y-2 w-full">
+        <StatusBanner variant="warning">
+          Another device on this account started a recording {ageLabel} and is
+          still active. Two devices can&apos;t record at once on the same
+          account.
+        </StatusBanner>
+        <div className="flex items-center gap-3">
+          <AlertDialog open={takeoverPending} onOpenChange={setTakeoverPending}>
+            <Button onClick={() => setTakeoverPending(true)} className="gap-2">
+              <Mic className="h-4 w-4" aria-hidden />
+              Take over from this device
+            </Button>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>
+                  Take over the recording on this device?
+                </AlertDialogTitle>
+                <AlertDialogDescription>
+                  The other device&apos;s active recording will be stopped
+                  immediately. Any audio it has captured but not yet uploaded
+                  may be lost. The clinician using that device will see a
+                  &ldquo;recording was taken over&rdquo; message. Only do this
+                  if you know the other recording isn&apos;t a real visit
+                  in progress.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={() => {
+                    setTakeoverPending(false);
+                    void confirmTakeover();
+                  }}
+                >
+                  Take over
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+          <Button variant="outline" onClick={() => setLeaveOpen(true)}>
+            Leave
+          </Button>
+          <LeaveConfirmDialog
+            open={leaveOpen}
+            onOpenChange={setLeaveOpen}
+            onConfirm={() => router.push('/home')}
+          />
+        </div>
+      </div>
+    );
+  }
 
   if (isError) {
     const reason = (state as { reason: string }).reason;
@@ -182,10 +277,8 @@ export function RecordingControls({ noteId, autostart = false }: Props) {
   return (
     <div className="w-full space-y-2">
       {showMaxWarning && (
-        <StatusBanner variant={nearMax ? 'danger' : 'warning'}>
-          {nearMax
-            ? 'Recording limit almost reached — tap Finish & Review now.'
-            : `Recording will stop automatically at 32 minutes. Finish soon.`}
+        <StatusBanner variant={isCritical ? 'danger' : 'warning'}>
+          {warningMessage(warning, elapsedMs, accumulatedBytes)}
         </StatusBanner>
       )}
 
@@ -229,4 +322,26 @@ export function RecordingControls({ noteId, autostart = false }: Props) {
       </div>
     </div>
   );
+}
+
+function warningMessage(
+  level: 'time_warning' | 'time_critical' | 'size_warning' | 'size_critical' | 'none',
+  elapsedMs: number,
+  accumulatedBytes: number,
+): string {
+  if (level === 'time_critical') {
+    return `Recording will auto-stop in ${formatTimeRemaining(elapsedMs)} — tap Finish & Review now.`;
+  }
+  if (level === 'time_warning') {
+    return `Recording will auto-stop at the ${MAX_RECORDING_MIN}-minute limit (${formatTimeRemaining(elapsedMs)} left). Finish soon.`;
+  }
+  if (level === 'size_critical') {
+    const mb = Math.round(accumulatedBytes / (1024 * 1024));
+    return `Recording is approaching the ${MAX_RECORDING_MB} MB upload limit (${mb} MB used) — tap Finish & Review now.`;
+  }
+  if (level === 'size_warning') {
+    const mb = Math.round(accumulatedBytes / (1024 * 1024));
+    return `Recording will auto-stop at ${MAX_RECORDING_MB} MB (${mb} MB used). Finish soon.`;
+  }
+  return '';
 }

@@ -75,7 +75,6 @@ export default async function AdminUsersPage() {
                 <th className="text-left px-4 py-2 font-medium">Role</th>
                 <th className="text-left px-4 py-2 font-medium">Division</th>
                 <th className="text-left px-4 py-2 font-medium">Sites</th>
-                <th className="text-left px-4 py-2 font-medium">Authenticator</th>
                 <th className="text-left px-4 py-2 font-medium">Status</th>
                 <th className="text-left px-4 py-2 font-medium">Seat</th>
                 <th className="px-4 py-2" />
@@ -86,7 +85,14 @@ export default async function AdminUsersPage() {
                 const isAllSitesRole = ou.role === 'ORG_ADMIN';
                 const enrolled = ou.siteEnrollments;
                 return (
-                  <tr key={ou.id} className="border-b border-border last:border-b-0">
+                  <tr
+                    key={ou.id}
+                    data-testid="admin-user-row"
+                    data-userid={ou.user.id}
+                    data-orguserid={ou.id}
+                    data-email={ou.user.email}
+                    className="border-b border-border last:border-b-0"
+                  >
                     <td className="px-4 py-3 font-mono">{ou.user.email}</td>
                     <td className="px-4 py-3">{ou.role}</td>
                     <td className="px-4 py-3">{ou.division}</td>
@@ -104,11 +110,6 @@ export default async function AdminUsersPage() {
                           {enrolled.length > 2 ? ` +${enrolled.length - 2}` : ''}
                         </span>
                       )}
-                    </td>
-                    <td className="px-4 py-3">
-                      <StatusBadge variant={ou.user.mfaEnabled ? 'success' : 'warning'}>
-                        {ou.user.mfaEnabled ? 'enrolled' : 'not enrolled'}
-                      </StatusBadge>
                     </td>
                     <td className="px-4 py-3">
                       <StatusBadge variant={ou.isActive ? 'success' : 'neutral'}>

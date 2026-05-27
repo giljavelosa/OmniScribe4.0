@@ -41,16 +41,33 @@ export async function GET(req: Request) {
     );
   }
 
-  const conversation = await prisma.copilotConversation.findUnique({
-    where: {
-      orgId_patientId_clinicianOrgUserId_mode: {
-        orgId: authorizationUser.orgId,
-        patientId: (mode === 'CHART' ? patientId! : null) as string,
-        clinicianOrgUserId: authorizationUser.orgUserId,
-        mode,
-      },
-    },
-  });
+  // Prisma's `findUnique` on a compound key rejects `patientId: null` at
+  // its validation layer ("Argument `patientId` must not be null"), even
+  // though Postgres accepts the row with NULL. For research-mode threads
+  // (patientId = null) we use `findFirst` with explicit equality;
+  // uniqueness is still enforced by the partial unique index
+  // `CopilotConversation_research_singleton_idx`. Mirrors the fix in
+  // `src/services/copilot/conversation-store.ts`.
+  const conversation =
+    mode === 'RESEARCH'
+      ? await prisma.copilotConversation.findFirst({
+          where: {
+            orgId: authorizationUser.orgId,
+            patientId: null,
+            clinicianOrgUserId: authorizationUser.orgUserId,
+            mode,
+          },
+        })
+      : await prisma.copilotConversation.findUnique({
+          where: {
+            orgId_patientId_clinicianOrgUserId_mode: {
+              orgId: authorizationUser.orgId,
+              patientId: patientId!,
+              clinicianOrgUserId: authorizationUser.orgUserId,
+              mode,
+            },
+          },
+        });
 
   if (!conversation) {
     return NextResponse.json({

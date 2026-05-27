@@ -1,4 +1,5 @@
 import { getLLMService, type LLMService } from '@/services/llm';
+import { stripJsonFence } from '@/lib/llm/strip-json-fence';
 import {
   FLAG_ANALYZER_SYSTEM_PROMPT,
   FlagAnalyzerOutputSchema,
@@ -30,11 +31,16 @@ export class FlagAnalyzer {
     requestId?: string;
   }): Promise<FlagAnalyzerOutput> {
     const user = buildFlagAnalyzerUserMessage(input);
+    // Sprint 0 lockdown — analyzer runs on Haiku (fast + cheap; ~3x
+    // cheaper, ~2x faster than Sonnet). Draft generation stays on Sonnet
+    // (see workers/ai-generation/handler.ts). Stub mode in
+    // bedrock.ts is identical for both models, so dev exercises this
+    // path end-to-end without an env change.
     const result = await this.llm.generate(FLAG_ANALYZER_SYSTEM_PROMPT, user, {
       phi: true,
       temperature: 0,
       jsonMode: true,
-      model: 'sonnet',
+      model: 'haiku',
       maxTokens: 6000,
       requestId: input.requestId,
     });
@@ -43,15 +49,7 @@ export class FlagAnalyzer {
 }
 
 function parseAnalyzerOutput(rawText: string, sectionLabel?: string): FlagAnalyzerOutput {
-  // Strip ```json … ``` (or bare ``` … ```) fences. Sonnet 4.5 wraps in
-  // fences habitually even with jsonMode + an explicit "no markdown fences"
-  // instruction; without this strip, every fenced response silently
-  // becomes { flags: [] } and the entire feature returns no flags.
-  const stripped = rawText
-    .trim()
-    .replace(/^```(?:json)?\s*\n?/i, '')
-    .replace(/\n?```\s*$/i, '')
-    .trim();
+  const stripped = stripJsonFence(rawText);
   let parsed: unknown;
   try {
     parsed = JSON.parse(stripped);

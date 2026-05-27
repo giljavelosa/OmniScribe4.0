@@ -1,5 +1,8 @@
 # Admin State-of-Play Audit
 
+> **Sprint 0.20 — MFA removed.** Any reference to MFA, /mfa-challenge, /mfa-setup, TOTP, authenticator app setup, or login-verified gates in this document is HISTORICAL. Authentication is now password-only. See `context/specs/01-foundation-auth-tenant.md` and `progress-tracker.md`.
+
+
 **Date:** 2026-05-05
 **Scope:** Team admin (customer-side) + platform admin (operator-side) readiness for shipping the scribe portion of OmniScribe commercially.
 **TL;DR:** Both admin tiers are **far more developed than I expected coming in.** Platform admin is genuinely close to launch-ready. Team admin has real CRUD across most surfaces but is missing two operational must-haves (MFA reset, password reset) and one regulatory must-have (BAA tracking — schema-level, not UI). Sites is a stub. Plan a 3-4 week commercial-readiness phase, not a 3-month rebuild.

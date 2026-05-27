@@ -27,7 +27,7 @@ export function MfaChallengeForm() {
       });
       if (!res.ok) {
         setError(useRecovery ? 'Invalid recovery code.' : 'Invalid 6-digit code.');
-        return;
+        return;ttt
       }
       await completeMfaNavigation(update, { mfaVerified: true }, '/home');
     });

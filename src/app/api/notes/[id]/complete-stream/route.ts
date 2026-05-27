@@ -8,15 +8,23 @@ import { enqueueTranscriptionJob } from '@/lib/queue';
 import { NoteStatus } from '@prisma/client';
 import { randomBytes } from 'node:crypto';
 
+import {
+  MAX_RECORDING_BYTES,
+  WAV_HEADER_BYTES,
+  type AutoStopReason,
+} from '@/lib/audio/recording-limits';
+import {
+  releaseRecordingLock,
+  validateRecordingLock,
+} from '@/lib/recording-lock/claim';
+
 export const runtime = 'nodejs';
 
-// 30 minutes of 16-bit 16 kHz mono audio plus a healthy fudge factor.
-const MAX_AUDIO_BYTES = 32 * 60 * 16_000 * 2; // ~60 MB
-
-// A RIFF/WAVE header is 44 bytes. encodeWavBlob([]) (no PCM chunks) returns
-// exactly a 44-byte header-only blob — so "no audio" presents as size ≤ 44,
-// not size 0. Anything at/below this carries zero samples.
-const WAV_HEADER_BYTES = 44;
+// Hard server cap. Mirrors the client-side auto-stop ceiling
+// (src/lib/audio/recording-limits.ts) and the proxy buffer
+// (next.config.ts `proxyClientMaxBodySize`). 200 MB ≈ 173 min of
+// 16 kHz 16-bit mono PCM with WAV header + multipart overhead.
+const MAX_AUDIO_BYTES = MAX_RECORDING_BYTES;
 
 /**
  * POST /api/notes/[id]/complete-stream
@@ -54,9 +62,94 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: { code: 'invalid_state' } }, { status: 409 });
   }
 
-  const form = await req.formData();
+  // Body parse: when the proxy buffer truncates the multipart body
+  // (e.g. recording exceeds `experimental.proxyClientMaxBodySize` set
+  // in next.config.ts), the boundary line is cut and `formData()`
+  // throws "expected boundary after body". Without this catch the
+  // route 500s with an opaque "Failed to parse body as FormData" —
+  // the clinician sees "Couldn't finalize the recording (500)" and
+  // assumes the system is broken. Map that case to a clear 413 so
+  // the client surface can render a real "recording too large"
+  // message + audit the event.
+  let form: FormData;
+  try {
+    form = await req.formData();
+  } catch (err) {
+    await writeAuditLog({
+      userId: user.id,
+      orgId: orgUser.orgId,
+      action: 'RECORDING_FINALIZED',
+      resourceType: 'Note',
+      resourceId: noteId,
+      metadata: {
+        outcome: 'body_parse_failed',
+        message: err instanceof Error ? err.message : 'unknown',
+      },
+    });
+    return NextResponse.json(
+      {
+        error: {
+          code: 'audio_too_large',
+          message:
+            'Recording is too large to upload in one request. Stop the recording sooner or contact support if this keeps happening.',
+        },
+      },
+      { status: 413 },
+    );
+  }
   const audioFile = form.get('audio');
   const finalTranscriptRaw = form.get('finalTranscript');
+  // Auto-stop reason: the capture-state machine sets this when it
+  // hit the 90-min OR 200-MB cap and force-completed the recording.
+  // Forwarded into RECORDING_FINALIZED audit metadata so a reviewer
+  // can quantify forgotten-recording recovery + tell apart a normal
+  // clinician finish from a defensive stop.
+  const autoStopRaw = form.get('autoStopReason');
+  const autoStopReason: AutoStopReason | null =
+    autoStopRaw === 'time_limit' || autoStopRaw === 'size_limit'
+      ? autoStopRaw
+      : null;
+
+  // Single-concurrent-recording lock (2026-05-25): if the caller's
+  // device no longer holds the lock (a takeover happened on another
+  // device while this finalize was in flight), refuse the upload.
+  // Their audio belongs to a recording another device is now driving;
+  // accepting it would scramble the clinical record.
+  //
+  // The clientNonce is passed via the multipart form — same channel
+  // as autoStopReason. Legacy clients that don't pass the nonce skip
+  // this check (they hold a server-generated nonce; we can't validate).
+  const callerNonceRaw = form.get('clientNonce');
+  const callerNonce =
+    typeof callerNonceRaw === 'string' && callerNonceRaw.length >= 8
+      ? callerNonceRaw
+      : null;
+  if (callerNonce) {
+    const lock = await validateRecordingLock({
+      userId: user.id,
+      clientNonce: callerNonce,
+    });
+    if (!lock) {
+      await writeAuditLog({
+        userId: user.id,
+        orgId: orgUser.orgId,
+        action: 'RECORDING_FINALIZED',
+        resourceType: 'Note',
+        resourceId: noteId,
+        metadata: { outcome: 'lock_lost' },
+      });
+      return NextResponse.json(
+        {
+          error: {
+            code: 'recording_lock_lost',
+            message:
+              'Recording was taken over on another device. The audio from this device is no longer the active recording for this note.',
+          },
+        },
+        { status: 410 },
+      );
+    }
+  }
 
   const audioBlob = audioFile instanceof Blob ? audioFile : null;
   // "No audio" = field missing, 0 bytes, or a header-only WAV. A real
@@ -164,8 +257,31 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       byteSize,
       captureMode: note.captureMode,
       audioMissing,
+      autoStopReason,
     },
   });
+
+  // Release the recording lock now that the audio is safely durable.
+  // Legacy clients without a clientNonce skip this — their lock will
+  // age out naturally after the 60s staleness window. New clients
+  // get an immediate release so the clinician can start a fresh
+  // recording without waiting.
+  if (callerNonce) {
+    const release = await releaseRecordingLock({
+      userId: user.id,
+      clientNonce: callerNonce,
+    });
+    if (release.released) {
+      await writeAuditLog({
+        userId: user.id,
+        orgId: orgUser.orgId,
+        action: 'RECORDING_LOCK_RELEASED',
+        resourceType: 'Note',
+        resourceId: noteId,
+        metadata: { noteId, lockHeldMs: release.lockHeldMs },
+      });
+    }
+  }
 
   // Unit 04 hand-off: the transcription worker picks up TRANSCRIBING notes
   // and cleans transcriptRaw → transcriptClean, then enqueues ai-generation.

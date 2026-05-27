@@ -112,3 +112,75 @@ export function externalContextAudioKeyFor(externalContextId: string, ext: strin
 }
 
 export const isS3StubMode = !BUCKET;
+
+// ---------------------------------------------------------------------
+// Sprint 0.19 / Tier 13 — Patient multimedia uploads.
+//
+// Uses a dedicated bucket (S3_PATIENT_UPLOADS_BUCKET) so lifecycle +
+// IAM policies can be scoped separately from the visit-audio bucket.
+// Same stub-mode contract: when the bucket env is unset, writes to
+// ./tmp/patient-uploads/.
+// ---------------------------------------------------------------------
+
+const UPLOADS_BUCKET = process.env.S3_PATIENT_UPLOADS_BUCKET ?? '';
+const UPLOADS_LOCAL_STUB_ROOT = path.join(process.cwd(), 'tmp', 'patient-uploads');
+
+let cachedUploadsClient: S3Client | null = null;
+function getUploadsClient() {
+  if (!UPLOADS_BUCKET) return null;
+  if (!cachedUploadsClient) {
+    cachedUploadsClient = new S3Client({ region: REGION });
+  }
+  return cachedUploadsClient;
+}
+
+export const isUploadsStubMode = !UPLOADS_BUCKET;
+export const PATIENT_UPLOADS_BUCKET = UPLOADS_BUCKET || 'patient-uploads-stub';
+
+export function patientUploadKeyFor(uploadId: string, ext: string): string {
+  const safeExt = ext.replace(/[^a-z0-9]/gi, '').toLowerCase() || 'bin';
+  return `patient-uploads/${uploadId}.${safeExt}`;
+}
+
+export async function putPatientUpload(input: { key: string; body: Buffer | Uint8Array; contentType: string }) {
+  const client = getUploadsClient();
+  if (!client) {
+    const full = path.join(UPLOADS_LOCAL_STUB_ROOT, input.key);
+    const dir = path.dirname(full);
+    if (!existsSync(dir)) await mkdir(dir, { recursive: true });
+    await writeFile(full, input.body);
+    console.log(`[s3 uploads stub] wrote ${full} (${input.body.byteLength} bytes)`);
+    return;
+  }
+  await client.send(
+    new PutObjectCommand({
+      Bucket: UPLOADS_BUCKET,
+      Key: input.key,
+      Body: input.body,
+      ContentType: input.contentType,
+    }),
+  );
+}
+
+export async function getPatientUploadBytes(key: string): Promise<Buffer> {
+  const client = getUploadsClient();
+  if (!client) {
+    const full = path.join(UPLOADS_LOCAL_STUB_ROOT, key);
+    return readFile(full);
+  }
+  const res = await client.send(new GetObjectCommand({ Bucket: UPLOADS_BUCKET, Key: key }));
+  const body = res.Body;
+  if (!body) throw new Error(`S3 GetObject returned no body for key ${key}`);
+  const bytes = await (body as unknown as { transformToByteArray: () => Promise<Uint8Array> }).transformToByteArray();
+  return Buffer.from(bytes);
+}
+
+export async function getPresignedPatientUploadUrl(key: string, ttlSeconds = 300) {
+  const client = getUploadsClient();
+  if (!client) {
+    return `file://${path.join(UPLOADS_LOCAL_STUB_ROOT, key)}`;
+  }
+  return getSignedUrl(client, new GetObjectCommand({ Bucket: UPLOADS_BUCKET, Key: key }), {
+    expiresIn: ttlSeconds,
+  });
+}

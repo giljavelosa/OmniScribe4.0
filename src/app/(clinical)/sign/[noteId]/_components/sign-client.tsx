@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { KeyRound, ShieldCheck, Unlock } from 'lucide-react';
+import { KeyRound, Unlock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -33,10 +33,7 @@ type PinState = { hasPin: boolean; unlockedUntil: string | null } | null;
  * Auth mode is chosen by the user's signing-PIN setup:
  *   - unlocked window active (PIN verified in last 30 min)  → just "Sign note"
  *   - PIN set but locked                                    → 4-digit PIN input
- *   - no PIN set                                            → 6-digit TOTP input
- *                                                            with a one-time
- *                                                            "Set up signing PIN"
- *                                                            offer.
+ *   - no PIN set                                            → inline PIN setup (required)
  */
 export function SignClient({
   noteId,
@@ -50,12 +47,19 @@ export function SignClient({
 }: Props) {
   const router = useRouter();
   const [pinState, setPinState] = useState<PinState>(null);
-  const [authValue, setAuthValue] = useState(''); // 6-digit TOTP or 4-digit PIN
+  const [authValue, setAuthValue] = useState(''); // 4-digit signing PIN
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const [sweepOpen, setSweepOpen] = useState(false);
   const [sweepFollowUps, setSweepFollowUps] = useState<SweepFollowUp[]>([]);
   const [showPinSetup, setShowPinSetup] = useState(false);
+  // Sprint 0 flag-analysis lockdown — surfaced when the sign route
+  // returns 409 `edited_since_analysis_unattested`. The list of
+  // edited section ids comes back in `body.data.editedSectionIds` so
+  // the panel can name them. The tick is sent on the NEXT sign POST
+  // and audited server-side as NOTE_SIGNED_WITH_EDITED_SINCE_ANALYSIS_ATTESTATION.
+  const [editedSectionIds, setEditedSectionIds] = useState<string[] | null>(null);
+  const [editedAttested, setEditedAttested] = useState(false);
   const lastAuthValueRef = useRef<string>('');
 
   useEffect(() => {
@@ -68,13 +72,18 @@ export function SignClient({
   const isUnlocked = !!pinState?.unlockedUntil;
   const hasPin = !!pinState?.hasPin;
 
-  function postSign(opts: { sweepAcknowledged: boolean; mfaToken?: string }) {
+  function postSign(opts: {
+    sweepAcknowledged: boolean;
+    signPin?: string;
+    editedSinceAnalysisAttested?: boolean;
+  }) {
     return fetch(`/api/notes/${noteId}/sign`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        mfaToken: opts.mfaToken,
+        signPin: opts.signPin,
         sweepAcknowledged: opts.sweepAcknowledged,
+        editedSinceAnalysisAttested: opts.editedSinceAnalysisAttested,
       }),
     });
   }
@@ -95,11 +104,19 @@ export function SignClient({
 
   function sign() {
     setError(null);
+    // If we've already surfaced the attestation panel, require the tick
+    // before we POST again — server will refuse a second time
+    // otherwise, and we don't want to waste a PIN verify on it.
+    if (editedSectionIds && !editedAttested) {
+      setError('Tick the attestation below to confirm you reviewed your edits.');
+      return;
+    }
     startTransition(async () => {
       try {
+        const editedSinceAnalysisAttested = editedSectionIds ? editedAttested : undefined;
         if (isUnlocked) {
           // No input required — server honors the unlock window.
-          const res = await postSign({ sweepAcknowledged: false });
+          const res = await postSign({ sweepAcknowledged: false, editedSinceAnalysisAttested });
           return handleSignResponse(res);
         }
         if (hasPin) {
@@ -109,17 +126,11 @@ export function SignClient({
           }
           await unlockWithPin(authValue);
           lastAuthValueRef.current = authValue;
-          const res = await postSign({ sweepAcknowledged: false });
+          const res = await postSign({ sweepAcknowledged: false, editedSinceAnalysisAttested });
           return handleSignResponse(res);
         }
-        // No PIN set — fall back to TOTP.
-        if (!/^\d{6}$/.test(authValue)) {
-          setError('Enter the 6-digit code from your authenticator.');
-          return;
-        }
-        lastAuthValueRef.current = authValue;
-        const res = await postSign({ sweepAcknowledged: false, mfaToken: authValue });
-        return handleSignResponse(res);
+        setShowPinSetup(true);
+        setError('Set up a signing PIN before you can sign notes.');
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       }
@@ -139,11 +150,47 @@ export function SignClient({
       setSweepOpen(true);
       return;
     }
-    if (code === 'invalid_mfa') setError('Invalid 6-digit code.');
-    else if (code === 'invalid_pin') setError('Wrong PIN.');
+    if (code === 'invalid_pin') setError('Wrong PIN.');
+    else if (code === 'pin_not_set') {
+      setShowPinSetup(true);
+      setError('Set up a signing PIN before you can sign notes.');
+    }
     else if (code === 'auth_required') setError(body?.error?.message ?? 'Authorization required.');
     else if (code === 'not_ready') setError('Required sections still need attention — return to review.');
     else if (code === 'already_signed') setError('This note is already signed.');
+    else if (code === 'flag_analysis_pending') {
+      // Flag analyzer is still running. Tell the user clearly so they
+      // don't guess; the analyzer typically completes in well under a
+      // minute and re-clicking Sign will succeed.
+      setError(
+        body?.error?.message ??
+          'AI is still analyzing this note for compliance flags. Wait a few seconds, then try again.',
+      );
+    }
+    else if (code === 'open_red_flags') {
+      // Hard block: at least one RED flag is unresolved. Send the
+      // clinician back to /review to address them — they cannot be
+      // bypassed at sign time.
+      const count = (body?.data?.openRedCount as number | undefined) ?? null;
+      setError(
+        body?.error?.message ??
+          `Resolve ${count ?? 'all'} RED flag${count === 1 ? '' : 's'} before signing — return to review.`,
+      );
+    }
+    else if (code === 'edited_since_analysis_unattested') {
+      // Sprint 0 lockdown — surface the attestation panel inline.
+      // The clinician edited section content after the last AI
+      // analysis pass; we need their explicit confirmation OR they
+      // can go back and Re-analyze. The list of edited sections is
+      // shown so they know which paragraphs changed.
+      const list = (body?.data?.editedSectionIds as string[] | undefined) ?? [];
+      setEditedSectionIds(list);
+      setEditedAttested(false);
+      setError(
+        body?.error?.message ??
+          "You've edited the note since the last AI analysis. Re-analyze for flags or confirm you've reviewed your edits.",
+      );
+    }
     else setError(body?.error?.message ?? `Sign failed (${res.status}).`);
   }
 
@@ -153,7 +200,11 @@ export function SignClient({
     startTransition(async () => {
       const res = await postSign({
         sweepAcknowledged: true,
-        mfaToken: !isUnlocked && !hasPin ? lastAuthValueRef.current : undefined,
+        signPin: !isUnlocked && hasPin ? lastAuthValueRef.current : undefined,
+        // Carry the attestation forward through the sweep flow if it
+        // was already ticked — otherwise the gate would fire again on
+        // the post-sweep resubmit.
+        editedSinceAnalysisAttested: editedSectionIds ? editedAttested : undefined,
       });
       await handleSignResponse(res);
     });
@@ -214,8 +265,8 @@ export function SignClient({
               </>
             ) : (
               <>
-                <ShieldCheck className="size-4" aria-hidden />
-                Attest + sign — enter authenticator code
+                <KeyRound className="size-4" aria-hidden />
+                Attest + sign — set up signing PIN
               </>
             )}
           </CardTitle>
@@ -255,25 +306,16 @@ export function SignClient({
             </div>
           )}
           {!isUnlocked && !hasPin && (
-            <div className="space-y-2">
-              <Label htmlFor="sign-mfa">6-digit authenticator code</Label>
-              <Input
-                id="sign-mfa"
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                maxLength={6}
-                value={authValue}
-                onChange={(e) => setAuthValue(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                disabled={pending}
-              />
+            <p className="text-sm text-muted-foreground">
+              You need a 4-digit signing PIN before your first signature.{' '}
               <button
                 type="button"
-                className="text-xs underline text-muted-foreground hover:text-foreground"
+                className="underline underline-offset-4 hover:text-foreground"
                 onClick={() => setShowPinSetup(true)}
               >
-                Set up a 4-digit signing PIN so you don&apos;t have to type the authenticator code each time
+                Set up signing PIN
               </button>
-            </div>
+            </p>
           )}
           {isUnlocked && (
             <p className="text-sm text-muted-foreground">
@@ -281,13 +323,46 @@ export function SignClient({
             </p>
           )}
           {error && <StatusBanner variant="danger">{error}</StatusBanner>}
+
+          {editedSectionIds && (
+            <div className="rounded-md border border-[var(--status-warning-border)] bg-[var(--status-warning-bg)]/30 p-3 space-y-2">
+              <p className="text-sm font-medium">
+                You&apos;ve edited the note since the last AI analysis pass.
+              </p>
+              {editedSectionIds.length > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  Edited section{editedSectionIds.length === 1 ? '' : 's'}:{' '}
+                  <span className="font-mono">{editedSectionIds.join(', ')}</span>
+                </p>
+              )}
+              <p className="text-xs text-muted-foreground">
+                You can either return to review and re-analyze, or attest that
+                you&apos;ve reviewed your edits and want to sign as-is.
+              </p>
+              <label className="flex items-start gap-2 text-sm cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 size-4 rounded border-border"
+                  checked={editedAttested}
+                  onChange={(e) => setEditedAttested(e.target.checked)}
+                  disabled={pending}
+                />
+                <span>
+                  I&apos;ve reviewed my edits since the last AI analysis and accept
+                  them without re-analysis. This decision is audit-logged.
+                </span>
+              </label>
+            </div>
+          )}
+
           <div className="flex items-center gap-3">
             <Button
               onClick={sign}
               disabled={
                 pending ||
                 (!isUnlocked && hasPin && authValue.length !== 4) ||
-                (!isUnlocked && !hasPin && authValue.length !== 6)
+                (!isUnlocked && !hasPin) ||
+                (editedSectionIds !== null && !editedAttested)
               }
             >
               {pending ? 'Signing…' : 'Sign note'}
@@ -339,8 +414,7 @@ function PinSetupInline({ onClose }: { onClose: (setNow: boolean) => void }) {
       const res = await fetch('/api/auth/pin/setup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        // No TOTP — server accepts first-time setup based on the session's
-        // mfaVerified flag (user already passed MFA at sign-in).
+        // First-time setup is allowed on a login-verified session.
         body: JSON.stringify({ newPin: pin }),
       });
       if (!res.ok) {
@@ -357,8 +431,7 @@ function PinSetupInline({ onClose }: { onClose: (setNow: boolean) => void }) {
       <CardHeader>
         <CardTitle className="text-md">Set up signing PIN</CardTitle>
         <CardDescription>
-          Pick a 4-digit PIN to use instead of typing your authenticator code every time. The unlock
-          window is 30 minutes per verify. You can change the PIN later from your profile.
+          Pick a 4-digit PIN for signing notes. The unlock window is 30 minutes per verify.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">

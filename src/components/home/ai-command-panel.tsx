@@ -30,25 +30,54 @@ const SUGGESTIONS = [
  *
  * PHI rule: query text is never stored in localStorage or URL params
  * beyond the patients search — no PHI in the command input itself.
+ *
+ * Tier 2 telemetry (2026-05-25)
+ * -----------------------------
+ * Every submission posts to /api/ai-command/log so the server can
+ * classify the SHAPE of the query and write a PHI-free audit row.
+ * The post is fire-and-forget — its failure CANNOT block the
+ * clinician's redirect. This data feeds the /admin/ai-queries
+ * dashboard and informs Tier 3's command vocabulary design.
  */
 export function AiCommandPanel({ variant = 'desktop' }: Props) {
   const router = useRouter();
   const [query, setQuery] = useState('');
   const [pending, startTransition] = useTransition();
+  const surface = variant === 'mobile' ? 'home-mobile' : 'home-desktop';
+
+  function logQuery(q: string) {
+    // Fire-and-forget. We deliberately do NOT await — telemetry must
+    // never delay or block the user's navigation. Errors are
+    // swallowed silently because (a) the audit failure is not
+    // user-facing and (b) the caller has already moved on. If the
+    // network is offline, we lose ONE row of telemetry; the
+    // clinician's journey is unaffected.
+    void fetch('/api/ai-command/log', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: q, surface }),
+      // Use keepalive so the request still flies if the user
+      // navigates immediately. Critical for a router.push that
+      // tears down the page synchronously.
+      keepalive: true,
+    }).catch(() => {
+      // Telemetry failure is intentionally silent.
+    });
+  }
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
     const q = query.trim();
     if (!q) return;
+    logQuery(q);
     startTransition(() => {
-      // For now, route all queries to patient search.
-      // Wave 8 will intercept here and invoke the copilot.
       router.push(`/patients?query=${encodeURIComponent(q)}`);
     });
   }
 
   function applySuggestion(label: string) {
     setQuery(label);
+    logQuery(label);
     startTransition(() => {
       router.push(`/patients?query=${encodeURIComponent(label)}`);
     });

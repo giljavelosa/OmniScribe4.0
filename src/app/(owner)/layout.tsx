@@ -10,8 +10,7 @@ export const dynamic = 'force-dynamic';
 export default async function OwnerLayout({ children }: { children: ReactNode }) {
   const session = await auth();
   if (!session?.user) redirect('/login');
-  if (!session.user.mfaEnabled) redirect('/mfa-setup');
-  if (!session.user.mfaVerified) redirect('/mfa-challenge');
+  // Sprint 0.20 — MFA + login-verified gates removed; only platform-role check.
   if (session.user.platformRole !== 'PLATFORM_OWNER') redirect('/home');
 
   return (
@@ -27,6 +26,7 @@ export default async function OwnerLayout({ children }: { children: ReactNode })
               <Link href="/owner/audit" className="text-muted-foreground hover:text-foreground">Audit</Link>
               <Link href="/owner/announcements" className="text-muted-foreground hover:text-foreground">Announcements</Link>
               <Link href="/owner/health" className="text-muted-foreground hover:text-foreground">Health</Link>
+              <Link href="/owner/pricing-insights" className="text-muted-foreground hover:text-foreground">Pricing</Link>
             </nav>
           </div>
           <Link href="/home" className="text-xs text-muted-foreground hover:text-foreground">

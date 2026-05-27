@@ -11,7 +11,7 @@ export const dynamic = 'force-dynamic';
 /**
  * /ops layout — Unit 33.
  *
- * Gates by PLATFORM_OPS OR PLATFORM_OWNER + MFA. Owner is the strict
+ * Gates by PLATFORM_OPS OR PLATFORM_OWNER + completed login verification.
  * superset so it appears in BOTH /owner and /ops navs (one user, two
  * consoles, distinct affordances). NONE platformRole sees /home like
  * any other clinician.
@@ -23,8 +23,7 @@ export const dynamic = 'force-dynamic';
 export default async function OpsLayout({ children }: { children: ReactNode }) {
   const session = await auth();
   if (!session?.user) redirect('/login');
-  if (!session.user.mfaEnabled) redirect('/mfa-setup');
-  if (!session.user.mfaVerified) redirect('/mfa-challenge');
+  // Sprint 0.20 — MFA + login-verified gates removed; only role check.
   if (
     session.user.platformRole !== 'PLATFORM_OPS' &&
     session.user.platformRole !== 'PLATFORM_OWNER'

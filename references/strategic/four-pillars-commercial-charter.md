@@ -1,5 +1,8 @@
 # Four pillars — UI, Admin, HIPAA (scribe scope), Commercial deploy
 
+> **Sprint 0.20 — MFA removed.** Any reference to MFA, /mfa-challenge, /mfa-setup, TOTP, authenticator app setup, or login-verified gates in this document is HISTORICAL. Authentication is now password-only. See `context/specs/01-foundation-auth-tenant.md` and `progress-tracker.md`.
+
+
 **Captured:** 2026-05-06  
 **Purpose:** Single index for four parallel commitments Gil stated together. Detailed specs stay in the linked files below — this charter **does not** replace them.
 

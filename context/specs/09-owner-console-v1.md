@@ -1,5 +1,8 @@
 # Unit 09: Owner Console v1
 
+> **Sprint 0.20 — MFA removed.** Any reference to MFA, /mfa-challenge, /mfa-setup, TOTP, authenticator app setup, or login-verified gates in this document is HISTORICAL. Authentication is now password-only. See `context/specs/01-foundation-auth-tenant.md` and `progress-tracker.md`.
+
+
 > **Wave 1** (owner console). Billing prerequisites in this unit are **Wave 7 §09** — see [`00-build-plan.md`](00-build-plan.md) Wave 7 for the canonical billing wave. Live Stripe lands in **Unit 38**.
 
 ## Goal

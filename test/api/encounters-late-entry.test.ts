@@ -59,8 +59,6 @@ function session() {
       orgUserId: 'ou_caller',
       role: 'CLINICIAN' as const,
       division: 'MEDICAL' as const,
-      mfaEnabled: true,
-      mfaVerified: true,
       platformRole: 'NONE' as const,
       canManagePatients: false,
     },
@@ -76,7 +74,6 @@ function primeMocksForSuccess() {
     division: 'MEDICAL',
     isActive: true,
     canManagePatients: false,
-    organization: { forceMfa: false },
   });
   patientFindFirst.mockResolvedValueOnce({ id: 'pat_1', siteId: 's_one' });
   caseManagementFindFirst.mockResolvedValueOnce({ id: 'case_1', status: 'ACTIVE' });

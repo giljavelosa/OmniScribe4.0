@@ -78,10 +78,35 @@ export type SectionStats = {
   recentLatenciesMs: number[];
 };
 
+/**
+ * `_meta` is a free-form bag for note-level pipeline signals that don't
+ * belong on per-section state. Today it carries the empty-transcript
+ * sentinel — set when the AI worker short-circuited to placeholder
+ * sections because the cleaned transcript had zero words. The /review
+ * surface reads it to render <EmptyTranscriptBanner> instead of
+ * letting the clinician stare at six identical "No transcript captured"
+ * paragraphs and conclude their recording is broken.
+ *
+ * PHI-free: anything written here is observable in audit + admin views.
+ */
+export type InferenceMeta = {
+  /** True when the worker fired the no-transcript short-circuit. */
+  emptyTranscript?: boolean;
+  /** Audio length the user actually captured, in ms. Helps the banner
+   *  copy be specific ("we captured 4 seconds of audio"). */
+  emptyTranscriptDurationMs?: number;
+  /** S3-uploaded byte size of the captured audio, if any. 0 = the
+   *  client sent only a header-only WAV. */
+  emptyTranscriptByteSize?: number;
+  /** ISO timestamp the worker detected the empty transcript. */
+  emptyTranscriptDetectedAt?: string;
+};
+
 export type InferenceLog = {
   _sectionStatus?: Record<string, SectionStatusEntry>;
   _regenerations?: RegenerationEntry[];
   _sectionStats?: SectionStats;
+  _meta?: InferenceMeta;
 };
 
 /** Rolling-window cap for recentLatenciesMs. 50 attempts is enough for

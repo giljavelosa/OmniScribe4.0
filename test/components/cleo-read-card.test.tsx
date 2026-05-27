@@ -30,6 +30,7 @@ describe('CleoReadCard — populated', () => {
       },
     ],
     openFollowUpCount: 2,
+    attestedScanCount: 1,
     lastRebuiltAt: new Date(Date.now() - 5 * 60_000).toISOString(),
   };
 
