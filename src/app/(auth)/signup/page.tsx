@@ -11,7 +11,6 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import { auth } from '@/lib/auth';
-import { postSigninRedirect } from '@/lib/post-signin-redirect';
 import { SignupForm } from './_components/signup-form';
 
 export const metadata: Metadata = { title: 'Create an OmniScribe org' };
@@ -20,19 +19,15 @@ export const dynamic = 'force-dynamic';
 /**
  * /signup — Unit 37 public self-serve org creation page.
  *
- * Already-signed-in users get redirected (mirrors /login). Anonymous
- * visitors see the form. Submission hits POST /api/auth/signup;
- * client follows up with NextAuth sign-in + lands at /mfa-setup.
+ * Already-signed-in users get redirected to /home (mirrors /login).
+ * Anonymous visitors see the form. Submission hits POST /api/auth/signup;
+ * the client follows up with NextAuth sign-in + lands at /home.
+ * Sprint 0.20 removed the post-signin MFA setup detour.
  */
 export default async function SignupPage() {
   const session = await auth();
   if (session?.user) {
-    redirect(
-      postSigninRedirect({
-        mfaEnabled: session.user.mfaEnabled,
-        mfaVerified: session.user.mfaVerified,
-      }),
-    );
+    redirect('/home');
   }
 
   return (

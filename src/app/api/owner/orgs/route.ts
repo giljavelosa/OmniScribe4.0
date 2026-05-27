@@ -54,7 +54,6 @@ export async function POST(req: Request) {
         baaExecutedAt: baaDate,
         baaVersion: data.baaVersion,
         baaCountersignedBy: user.id,
-        forceMfa: false,
       },
     });
     const invite = await tx.invite.create({

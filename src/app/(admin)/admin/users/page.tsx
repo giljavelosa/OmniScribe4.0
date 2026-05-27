@@ -75,7 +75,6 @@ export default async function AdminUsersPage() {
                 <th className="text-left px-4 py-2 font-medium">Role</th>
                 <th className="text-left px-4 py-2 font-medium">Division</th>
                 <th className="text-left px-4 py-2 font-medium">Sites</th>
-                <th className="text-left px-4 py-2 font-medium">Authenticator</th>
                 <th className="text-left px-4 py-2 font-medium">Status</th>
                 <th className="text-left px-4 py-2 font-medium">Seat</th>
                 <th className="px-4 py-2" />
@@ -104,11 +103,6 @@ export default async function AdminUsersPage() {
                           {enrolled.length > 2 ? ` +${enrolled.length - 2}` : ''}
                         </span>
                       )}
-                    </td>
-                    <td className="px-4 py-3">
-                      <StatusBadge variant={ou.user.mfaEnabled ? 'success' : 'warning'}>
-                        {ou.user.mfaEnabled ? 'enrolled' : 'not enrolled'}
-                      </StatusBadge>
                     </td>
                     <td className="px-4 py-3">
                       <StatusBadge variant={ou.isActive ? 'success' : 'neutral'}>

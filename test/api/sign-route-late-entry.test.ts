@@ -23,6 +23,8 @@ const encounterFindUnique = vi.fn();
 const episodeOfCareUpdate = vi.fn();
 const txMock = vi.fn();
 
+const reviewFlagCount = vi.fn();
+
 vi.mock('@/lib/prisma', () => ({
   prisma: {
     note: {
@@ -33,6 +35,8 @@ vi.mock('@/lib/prisma', () => ({
     followUp: { findMany: (...a: unknown[]) => followUpFindMany(...a) },
     encounter: { findUnique: (...a: unknown[]) => encounterFindUnique(...a) },
     episodeOfCare: { update: (...a: unknown[]) => episodeOfCareUpdate(...a) },
+    reviewFlag: { count: (...a: unknown[]) => reviewFlagCount(...a) },
+    copilotPatientState: { findMany: vi.fn().mockResolvedValue([]) },
     $transaction: (cb: (tx: unknown) => unknown) =>
       txMock(cb) ??
       cb({
@@ -49,10 +53,6 @@ vi.mock('@/lib/authz/server', () => ({
 const writeAuditLog = vi.fn();
 vi.mock('@/lib/audit/log', () => ({
   writeAuditLog: (...a: unknown[]) => writeAuditLog(...a),
-}));
-
-vi.mock('@/lib/mfa', () => ({
-  verifyTotpToken: vi.fn(async () => true),
 }));
 
 vi.mock('@/lib/queue', () => ({
@@ -102,11 +102,12 @@ beforeEach(() => {
   // Defaults that exercise the happy path.
   requireFeatureAccess.mockResolvedValue(authedGuard());
   followUpFindMany.mockResolvedValue([]); // No open follow-ups → no sweep
+  // Sprint 0.20 — MFA removed; sign-time auth is signing-PIN only.
+  // Setting signUnlockedUntil in the future short-circuits the PIN
+  // prompt so the test focuses on the late-entry audit metadata.
   userFindUnique.mockResolvedValue({
-    mfaSecret: 'SECRET',
-    mfaEnabled: true,
-    signingPinHash: null,
-    signUnlockedUntil: null,
+    signingPinHash: '$2b$10$bogusbcrypthashfortest',
+    signUnlockedUntil: new Date(Date.now() + 5 * 60 * 1000),
   });
   // Transaction commits its callback against a stub tx.
   txMock.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) =>
@@ -145,7 +146,7 @@ describe('POST /api/notes/[id]/sign — late-entry audit metadata', () => {
   it('NOTE_SIGNED metadata carries isLateEntry=false on a normal visit', async () => {
     noteFindFirst.mockResolvedValueOnce(noteFixture());
 
-    const res = await POST(buildRequest({ mfaToken: '123456' }), {
+    const res = await POST(buildRequest({}), {
       params: Promise.resolve({ id: 'note_1' }),
     });
     expect(res.status).toBe(200);
@@ -169,7 +170,7 @@ describe('POST /api/notes/[id]/sign — late-entry audit metadata', () => {
       }),
     );
 
-    const res = await POST(buildRequest({ mfaToken: '123456' }), {
+    const res = await POST(buildRequest({}), {
       params: Promise.resolve({ id: 'note_1' }),
     });
     expect(res.status).toBe(200);

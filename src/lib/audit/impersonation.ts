@@ -1,7 +1,7 @@
 /**
  * assertNotImpersonating + writeImpersonatableAudit — Unit 32.
  *
- * The middleware (`src/middleware.ts`) is the structural guarantee that
+ * The proxy (`src/proxy.ts`) is the structural guarantee that
  * impersonation sessions can't mutate; this helper is the route-level
  * fallback for paths the middleware matcher doesn't cover (e.g. server
  * actions) AND the source of the IMPERSONATION_BLOCKED_MUTATION audit

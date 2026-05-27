@@ -8,7 +8,6 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { StatusBanner } from '@/components/ui/status-banner';
-import { postSigninRedirect } from '@/lib/post-signin-redirect';
 
 export function LoginForm() {
   const [email, setEmail] = useState('');
@@ -37,11 +36,8 @@ export function LoginForm() {
         await new Promise((r) => setTimeout(r, 150));
         session = await getSession();
       }
-      const target = postSigninRedirect({
-        mfaEnabled: session?.user.mfaEnabled ?? false,
-        mfaVerified: session?.user.mfaVerified ?? false,
-      });
-      window.location.assign(target);
+      // Sprint 0.20 — password-only auth; land at home after sign-in.
+      window.location.assign('/home');
     });
   }
 

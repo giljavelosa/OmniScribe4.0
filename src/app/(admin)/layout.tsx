@@ -11,8 +11,7 @@ const ADMIN_ROLES = new Set(['ORG_ADMIN', 'SITE_ADMIN']);
 export default async function AdminLayout({ children }: { children: ReactNode }) {
   const session = await auth();
   if (!session?.user) redirect('/login');
-  if (!session.user.mfaEnabled) redirect('/mfa-setup');
-  if (!session.user.mfaVerified) redirect('/mfa-challenge');
+  // Sprint 0.20 — MFA + login-verified gates removed; only role authorization here.
   if (
     session.user.platformRole !== 'PLATFORM_OWNER' &&
     !(session.user.role && ADMIN_ROLES.has(session.user.role))
