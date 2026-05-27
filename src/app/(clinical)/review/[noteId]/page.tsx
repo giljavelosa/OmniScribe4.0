@@ -11,6 +11,8 @@ import { CopilotShell } from '@/components/copilot/copilot-shell';
 import type { CopilotFollowUp } from '@/components/copilot/cards/open-followups-card';
 import type { NextVisitFollowUp } from './_components/follow-ups-for-next-visit';
 import { hasPlanFollowUps } from '@/lib/notes/has-plan-followups';
+import { isFeatureEnabled, FEATURE_FLAG_KEYS } from '@/lib/feature-flags';
+import { evaluateIntentCaseFit } from '@/services/copilot/intent-case-fit';
 import { ReviewClient } from './_components/review-client';
 import type {
   CaseRouterRunDTO,
@@ -39,11 +41,16 @@ export default async function ReviewPage({ params }: { params: Promise<{ noteId:
       encounter: {
         select: {
           caseManagementId: true,
+          // Unit 48 PR1 — structured intent (set at start-visit). Drives
+          // the Unit 49 §G intent-fit chip below.
+          intent: true,
           // Drives the pre-sign reminder banner: when the encounter is still
           // bound to a PENDING_ROUTER case, the clinician hasn't accepted
           // Miss Cleo's proposal yet, and Sprint 0.13 Decision 3 says
           // routing must lock before sign.
-          caseManagement: { select: { status: true } },
+          caseManagement: {
+            select: { status: true, primaryIcd: true, secondaryIcd: true },
+          },
         },
       },
       caseRouterRun: true,
@@ -187,6 +194,28 @@ export default async function ReviewPage({ params }: { params: Promise<{ noteId:
     : '';
   const planHasFollowUps = hasPlanFollowUps(planContent);
 
+  // Unit 49 §G — pre-sign intent-fit chip. Pure structured comparison
+  // (rule 20 safe): reads encounter.intent vs caseManagement.primaryIcd
+  // ONLY. Never touches draft narrative. Gated behind `cleo.caseRule.v1`.
+  let cleoIntentFit: { reason: string; matchedIcd: string | null } | null = null;
+  const cleoCaseRuleOn = await isFeatureEnabled(
+    session.user.orgId,
+    FEATURE_FLAG_KEYS.CLEO_CASE_RULE_V1,
+  );
+  if (cleoCaseRuleOn && note.encounter?.caseManagement) {
+    const fit = evaluateIntentCaseFit({
+      encounterIntent: note.encounter.intent,
+      caseICDs: {
+        primaryIcd: note.encounter.caseManagement.primaryIcd ?? null,
+        secondaryIcd: note.encounter.caseManagement.secondaryIcd ?? null,
+      },
+    });
+    // Only surface a chip on MISFITS — FITS / LIKELY_FITS are silent.
+    if (fit.verdict === 'MISFITS') {
+      cleoIntentFit = { reason: fit.reason, matchedIcd: fit.matchedIcd };
+    }
+  }
+
   return (
     <>
       <ReviewClient
@@ -225,6 +254,7 @@ export default async function ReviewPage({ params }: { params: Promise<{ noteId:
         initialRouterActiveCases={initialActiveCases}
         initialCurrentCaseManagementId={currentCaseManagementId}
         initialCurrentCaseManagementStatus={currentCaseManagementStatus}
+        cleoIntentFit={cleoIntentFit}
       />
       <CopilotShell
         surface="review"

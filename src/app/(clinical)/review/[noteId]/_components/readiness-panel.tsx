@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { StatusBadge } from '@/components/ui/status-badge';
+import { IntentFitChip } from '@/components/copilot/intent-fit-chip';
 import type { ProgressStripCell } from '@/lib/notes/derive-progress-strip';
 
 type Props = {
@@ -11,6 +12,12 @@ type Props = {
   cells: ProgressStripCell[];
   readyForSign: boolean;
   noteStatus: string;
+  /** Unit 49 §G — when set, renders a SOFT pre-sign chip below the
+   *  panel's body and above the Sign button. Non-null only when the
+   *  org has `cleo.caseRule.v1` ON AND the encounter's intent doesn't
+   *  match the attached case's ICD. The chip is informational — sign
+   *  is NOT blocked by a misfit. */
+  cleoIntentFit?: { reason: string; matchedIcd: string | null } | null;
 };
 
 /**
@@ -23,7 +30,7 @@ type Props = {
  * For Unit 05 we ship section-completeness only; the AI-flag + follow-up
  * surfaces are stubs noting which units fill them in.
  */
-export function ReadinessPanel({ noteId, cells, readyForSign, noteStatus }: Props) {
+export function ReadinessPanel({ noteId, cells, readyForSign, noteStatus, cleoIntentFit = null }: Props) {
   const required = cells.filter((c) => c.isRequired);
   const requiredDone = required.filter((c) => c.status === 'populated' || c.status === 'edited');
   const requiredBlocked = required.filter((c) => c.status !== 'populated' && c.status !== 'edited');
@@ -78,6 +85,8 @@ export function ReadinessPanel({ noteId, cells, readyForSign, noteStatus }: Prop
             AI compliance flags (Unit 14) + open follow-ups from prior visits (Unit 06) will surface here.
           </p>
         </div>
+
+        {cleoIntentFit && !isSigned && <IntentFitChip reason={cleoIntentFit.reason} />}
 
         {!isSigned && (
           <Button asChild className="w-full" disabled={!readyForSign}>

@@ -5,6 +5,7 @@ import { CalendarDays, PlusCircle } from 'lucide-react';
 import type { Division } from '@prisma/client';
 
 import { Button } from '@/components/ui/button';
+import { CaseSuggestionBadge } from '@/components/copilot/case-suggestion-badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -124,6 +125,16 @@ type Props = {
    * proposes the destination at review time.
    */
   forceCaseId?: string;
+  /**
+   * Unit 49 §F — Miss Cleo's nominated case for THIS pending visit
+   * (from `GET /api/patients/[id]/case-suggestions`). When set AND the
+   * nominee.id matches a case in the picker, that row wears a
+   * `<CaseSuggestionBadge>` with the nominator's reason in the tooltip.
+   * Gated upstream by `cleo.caseRule.v1` — the API returns
+   * `{ flagOff: true }` when the flag is off, and the page sets this
+   * prop to `null` in that case so no badge renders.
+   */
+  cleoNominee?: { id: string; reason: string } | null;
 };
 
 /** Sentinel — rehab visit without linking an episode of care. */
@@ -225,6 +236,7 @@ function PickerShell({
   submit,
   forceDatePicker,
   forceCaseId,
+  cleoNominee,
 }: Props) {
   const [newCaseOpen, setNewCaseOpen] = useState(false);
   const siteListLen = sites?.length ?? 0;
@@ -346,6 +358,9 @@ function PickerShell({
                   caseRow={c}
                   selected={caseId === c.id}
                   isHero={c.id === heroCaseId}
+                  cleoNominationReason={
+                    cleoNominee && cleoNominee.id === c.id ? cleoNominee.reason : null
+                  }
                   onSelect={() => {
                     setCaseId(c.id);
                     setEpisodeChoice('');
@@ -511,6 +526,7 @@ function CaseRadio({
   onSelect,
   disabled,
   isHero = false,
+  cleoNominationReason = null,
 }: {
   caseRow: StartVisitDialogCase;
   selected: boolean;
@@ -520,6 +536,11 @@ function CaseRadio({
    *  / "Most recent case" pill. The radio dot still moves with the user's
    *  selection; the pill stays on the recommendation. */
   isHero?: boolean;
+  /** Unit 49 §F — when set, this row also wears a "Cleo: best match"
+   *  badge with the nominator's reason in the tooltip. Coexists with
+   *  `isHero` (rare: the same case can be both the chart's hero AND
+   *  Cleo's pick — both pills render). */
+  cleoNominationReason?: string | null;
 }) {
   // Prefer the viewing clinician's own activity for the subtitle — matches
   // the chart's hero framing. Fall back to overall activity.
@@ -560,6 +581,7 @@ function CaseRadio({
               {viewerIso ? 'Your active case' : 'Most recent case'}
             </StatusBadge>
           )}
+          {cleoNominationReason && <CaseSuggestionBadge reason={cleoNominationReason} />}
         </div>
         {subtitle && (
           <p className="text-xs text-muted-foreground">{subtitle}</p>

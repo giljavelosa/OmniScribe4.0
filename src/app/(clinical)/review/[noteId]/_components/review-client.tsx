@@ -95,6 +95,14 @@ type Props = {
    *  soft nudge under the routing panel so the clinician doesn't forget to
    *  accept Miss Cleo's proposal before sign-time. */
   initialCurrentCaseManagementStatus?: string | null;
+  /** Unit 49 §G — pre-sign intent-fit chip payload. NON-null only when:
+   *    - feature flag `cleo.caseRule.v1` is ON for the org, AND
+   *    - encounter.intent ⇆ caseManagement.primaryIcd evaluation
+   *      returned MISFITS (FITS / LIKELY_FITS render no chip — silent
+   *      acknowledgement of a clean match).
+   *  The chip renders verbatim from `reason`; tooltip omitted because the
+   *  reason fits inline in the readiness panel. */
+  cleoIntentFit?: { reason: string; matchedIcd: string | null } | null;
 };
 
 /**
@@ -115,6 +123,7 @@ export function ReviewClient({
   initialRouterActiveCases,
   initialCurrentCaseManagementId,
   initialCurrentCaseManagementStatus = null,
+  cleoIntentFit = null,
 }: Props) {
   const router = useRouter();
   const [snap, setSnap] = useState<ReviewSnapshot>(initial);
@@ -296,6 +305,7 @@ export function ReviewClient({
             cells={progress}
             readyForSign={readyForSign}
             noteStatus={snap.status}
+            cleoIntentFit={cleoIntentFit}
           />
           <FollowUpsForNextVisit
             noteId={noteId}
