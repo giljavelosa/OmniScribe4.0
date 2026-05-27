@@ -47,3 +47,10 @@ tsconfig.tsbuildinfo
 
 # Claude Code workspace state (worktree mirrors + local IDE settings)
 .claude/
+
+# Local dev scratch — patient uploads, test artifacts, playwright reports.
+# These are populated by `npm run dev` + `npm test` and should never land in git.
+tmp/
+test-results/
+playwright-report/
+e2e/.auth/
