@@ -1,4 +1,5 @@
 import { getLLMService, type LLMService } from '@/services/llm';
+import { stripJsonFence } from '@/lib/llm/strip-json-fence';
 import {
   BRIEF_SYSTEM_PROMPT,
   buildBriefUserMessage,
@@ -62,7 +63,7 @@ export class BriefGenerator {
         temperature: 0,
         jsonMode: true,
         model: 'sonnet',
-        maxTokens: 1500,
+        maxTokens: 4096,
         ...(meter ? { meter: { ...meter, surface: 'worker.brief.sonnet' } } : {}),
       });
       const parseAttempt = parseBriefOutput(result.text, input);
@@ -114,12 +115,12 @@ type ParseResult =
  * brief grounded in the input so dev exercises the full pipeline.
  */
 function parseBriefOutput(rawText: string, input: BuildBriefPromptInput): ParseResult {
-  const trimmed = rawText.trim();
+  const stripped = stripJsonFence(rawText);
   let parsedJson: unknown;
   try {
-    parsedJson = JSON.parse(trimmed);
+    parsedJson = JSON.parse(stripped);
   } catch {
-    return { ok: false, error: `non-JSON response: ${trimmed.slice(0, 120)}` };
+    return { ok: false, error: `non-JSON response: ${stripped.slice(0, 120)}` };
   }
 
   if (
