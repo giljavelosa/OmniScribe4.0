@@ -6,7 +6,6 @@ import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { StatusBanner } from '@/components/ui/status-banner';
 
@@ -35,7 +34,6 @@ type Props = {
     name: string;
     division: string;
     defaultDivision: string | null;
-    forceMfa: boolean;
     complianceProfile: string;
   };
 };
@@ -45,7 +43,6 @@ export function OrgSettingsForm({ initial }: Props) {
   const [name, setName] = useState(initial.name);
   const [division, setDivision] = useState(initial.division);
   const [defaultDivision, setDefaultDivision] = useState(initial.defaultDivision ?? '');
-  const [forceMfa, setForceMfa] = useState(initial.forceMfa);
   const [complianceProfile, setComplianceProfile] = useState(initial.complianceProfile);
   const [defaultNoteStyle, setDefaultNoteStyle] = useState('HYBRID');
   const [error, setError] = useState<string | null>(null);
@@ -63,7 +60,6 @@ export function OrgSettingsForm({ initial }: Props) {
           name: name.trim(),
           division,
           defaultDivision: defaultDivision || null,
-          forceMfa,
           complianceProfile,
           defaultNoteStyle,
         }),
@@ -165,23 +161,7 @@ export function OrgSettingsForm({ initial }: Props) {
         </div>
       </div>
 
-      <div className="rounded-md border border-border p-3 space-y-3">
-        <div className="flex items-start justify-between gap-3">
-          <div className="space-y-1">
-            <Label htmlFor="force-mfa">Require authenticator at sign-in</Label>
-            <p className="text-xs text-muted-foreground">
-              Already enforced by D2 (every user enrolls on first sign-in). Toggle here for
-              future-proofing — if D2 is ever relaxed, this flag becomes the per-org gate.
-            </p>
-          </div>
-          <Switch
-            id="force-mfa"
-            checked={forceMfa}
-            onCheckedChange={setForceMfa}
-            disabled={pending}
-          />
-        </div>
-      </div>
+      {/* Sprint 0.20 — MFA removed; authenticator-required toggle deleted. */}
 
       {error && <StatusBanner variant="danger">{error}</StatusBanner>}
 

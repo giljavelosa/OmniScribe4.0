@@ -1,5 +1,10 @@
 /**
- * src/middleware.ts — Unit 32.
+ * src/proxy.ts — Unit 32.
+ *
+ * (Renamed from `middleware.ts` for Next.js 16 — the framework's
+ * middleware concept was renamed to "proxy" in v16; the file
+ * convention + the exported function name both moved with it. See
+ * https://nextjs.org/docs/messages/middleware-to-proxy.)
  *
  * Edge-level structural guarantee that an active impersonation session
  * cannot mutate. Runs before any route handler; reads the NextAuth JWT
@@ -12,12 +17,12 @@
  *     end the impersonation session — without this carve-out, the
  *     owner would be permanently stuck)
  *
- * NOTE: middleware does NOT write the IMPERSONATION_BLOCKED_MUTATION
+ * NOTE: this proxy does NOT write the IMPERSONATION_BLOCKED_MUTATION
  * audit row — Edge can't reach the DB. The route-level
  * `assertNotImpersonating` helper writes the row when invoked. For
  * routes that don't yet invoke the helper (legacy / units 1-31),
- * the middleware still blocks the request structurally so the audit
- * gap is the only consequence (not a security gap).
+ * the proxy still blocks the request structurally so the audit gap
+ * is the only consequence (not a security gap).
  *
  * Matcher scoped to /api/* — the impersonation gate is an API surface
  * concern. Server actions are also caught here when invoked from a
@@ -33,7 +38,7 @@ import {
   shouldBlockUnderImpersonation,
 } from '@/lib/impersonation';
 
-export async function middleware(req: NextRequest) {
+export async function proxy(req: NextRequest) {
   // getToken reads the NextAuth cookie + decodes the JWT without
   // touching the DB — Edge-safe. Secret is auto-discovered from env.
   const token = await getToken({
@@ -49,7 +54,7 @@ export async function middleware(req: NextRequest) {
     })
   ) {
     // Audit row is written at the route layer by assertNotImpersonating
-    // when invoked. Middleware just short-circuits.
+    // when invoked. The proxy just short-circuits.
     return NextResponse.json(
       { error: { code: 'impersonation_read_only' } },
       { status: 403 },

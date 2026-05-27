@@ -37,7 +37,6 @@ export default async function AdminOrgSettingsPage() {
               name: org.name,
               division: org.division,
               defaultDivision: org.defaultDivision,
-              forceMfa: org.forceMfa,
               complianceProfile: org.complianceProfile,
             }}
           />

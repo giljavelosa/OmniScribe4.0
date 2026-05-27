@@ -3,9 +3,6 @@
  * every role (ORG_ADMIN, CLINICIAN, VIEWER, SITE_ADMIN, PLATFORM_OWNER),
  * one site with two rooms, and 5 seats. All passwords hash to `Demo1234!`.
  *
- * D9 — admin@demo.local seeds with MFA pre-enrolled using the canonical otplib
- * test vector secret `JBSWY3DPEHPK3PXP`. Document at docs/SEED_CREDENTIALS.md.
- *
  * Anti-regression rule 4: ALWAYS run `npx prisma db seed` after schema changes.
  */
 
@@ -33,7 +30,6 @@ import {
   ExternalContextStatus,
 } from '@prisma/client';
 import bcrypt from 'bcryptjs';
-import { generate as generateTotp } from 'otplib';
 import {
   SEED_VISIT_CORPUS,
   SEED_PATIENT_DEMOGRAPHICS,
@@ -66,10 +62,6 @@ const prisma = new PrismaClient();
 
 const DEMO_PASSWORD = 'Demo1234!';
 const BCRYPT_ROUNDS = 12;
-// Stable test secret (20 bytes / 32 base32 chars) — predictable for local dev only.
-// Never set this secret in any deployed environment. otplib v13 enforces a
-// 16-byte minimum; the old 10-byte JBSWY3DPEHPK3PXP test vector is too short.
-const DEMO_ADMIN_MFA_SECRET = '7FSWEU6M2MYDQONC5WHDM72MK3FUQZ4Q';
 
 async function hashPassword(plain: string) {
   return bcrypt.hash(plain, BCRYPT_ROUNDS);
@@ -272,21 +264,8 @@ async function seedBriefsAndFollowUps(
   }
 }
 
-/** Returns 10 plain recovery codes and their bcrypt hashes. */
-async function generateRecoveryCodes(count = 10) {
-  const plain: string[] = [];
-  const hashed: string[] = [];
-  for (let i = 0; i < count; i++) {
-    const code = Math.random().toString(36).slice(2, 7) + '-' + Math.random().toString(36).slice(2, 7);
-    plain.push(code);
-    hashed.push(await bcrypt.hash(code, BCRYPT_ROUNDS));
-  }
-  return { plain, hashed };
-}
-
 async function main() {
   const passwordHash = await hashPassword(DEMO_PASSWORD);
-  const adminRecoveryCodes = await generateRecoveryCodes(10);
 
   console.log('Seeding Demo Clinic …');
 
@@ -300,7 +279,6 @@ async function main() {
       division: Division.MULTI,
       defaultDivision: Division.MEDICAL,
       billingEmail: 'billing@demo.local',
-      forceMfa: false,
       // BAA pre-attested so the Owner console shows green for the demo org.
       baaExecutedAt: new Date('2026-05-17T00:00:00Z'),
       baaVersion: '2026.05.01',
@@ -334,7 +312,6 @@ async function main() {
   });
 
   // ---------------- Users + OrgUsers + Seats ----------------
-  // Tuple shape: [email, OrgRole, Division, profession?, professionType?, canManagePatients?, mfaEnabled?, platformRole?]
   const users: Array<{
     email: string;
     role: OrgRole;
@@ -342,10 +319,9 @@ async function main() {
     profession?: string;
     professionType?: Profession;
     canManagePatients?: boolean;
-    mfaEnabled: boolean;
     platformRole?: PlatformRole;
   }> = [
-    { email: 'admin@demo.local', role: OrgRole.ORG_ADMIN, division: Division.MULTI, mfaEnabled: true },
+    { email: 'admin@demo.local', role: OrgRole.ORG_ADMIN, division: Division.MULTI },
     {
       email: 'clinician@demo.local',
       role: OrgRole.CLINICIAN,
@@ -353,20 +329,17 @@ async function main() {
       profession: 'Family Medicine MD',
       professionType: Profession.MD,
       canManagePatients: true,
-      mfaEnabled: false,
     },
-    { email: 'viewer@demo.local', role: OrgRole.VIEWER, division: Division.MEDICAL, mfaEnabled: false },
+    { email: 'viewer@demo.local', role: OrgRole.VIEWER, division: Division.MEDICAL },
     {
       email: 'siteadmin@demo.local',
       role: OrgRole.SITE_ADMIN,
       division: Division.MEDICAL,
-      mfaEnabled: false,
     },
     {
       email: 'owner@demo.local',
       role: OrgRole.CLINICIAN, // org-membership role; platform-owner-ness lives on User.platformRole
       division: Division.MEDICAL,
-      mfaEnabled: false,
       platformRole: PlatformRole.PLATFORM_OWNER,
     },
   ];
@@ -378,28 +351,12 @@ async function main() {
       where: { email: u.email },
       update: {
         passwordHash,
-        // Only re-stamp the canonical test secret for users pre-enrolled in the
-        // seed definition (admin@demo.local). For all other seed users, leave
-        // mfaEnabled / mfaSecret / mfaRecoveryCodes untouched so that any real
-        // enrollment completed during a dev session survives a re-seed.
-        // Without this guard, every `npx prisma db seed` call resets
-        // mfaEnabled=false, forcing the MFA setup screen on every sign-in.
-        ...(u.mfaEnabled
-          ? {
-              mfaSecret: DEMO_ADMIN_MFA_SECRET,
-              mfaEnabled: true,
-              mfaRecoveryCodes: adminRecoveryCodes.hashed as unknown as object,
-            }
-          : {}),
         platformRole: u.platformRole ?? PlatformRole.NONE,
       },
       create: {
         email: u.email,
         name: u.email.split('@')[0]!.replace(/\./g, ' '),
         passwordHash,
-        mfaSecret: u.mfaEnabled ? DEMO_ADMIN_MFA_SECRET : null,
-        mfaEnabled: u.mfaEnabled,
-        mfaRecoveryCodes: u.mfaEnabled ? (adminRecoveryCodes.hashed as unknown as object) : undefined,
         platformRole: u.platformRole ?? PlatformRole.NONE,
       },
     });
@@ -894,7 +851,6 @@ async function main() {
         email: c.email,
         name: c.name,
         passwordHash: await hashPassword(DEMO_PASSWORD),
-        mfaEnabled: false,
         platformRole: PlatformRole.NONE,
       },
     });
@@ -1387,13 +1343,6 @@ async function main() {
       data: { primaryIcd: icd },
     });
   }
-
-  // Sanity: generate a TOTP token against the seeded secret so devs know
-  // their authenticator app will accept it.
-  const token = await generateTotp({ secret: DEMO_ADMIN_MFA_SECRET });
-  console.log(`Seeded admin@demo.local MFA secret (test vector): ${DEMO_ADMIN_MFA_SECRET}`);
-  console.log(`Current TOTP token (changes every 30s): ${token}`);
-  console.log(`Recovery codes (one-time print): ${adminRecoveryCodes.plain.join(', ')}`);
 
   console.log('Seed complete.');
 }

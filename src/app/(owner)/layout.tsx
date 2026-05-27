@@ -10,8 +10,7 @@ export const dynamic = 'force-dynamic';
 export default async function OwnerLayout({ children }: { children: ReactNode }) {
   const session = await auth();
   if (!session?.user) redirect('/login');
-  if (!session.user.mfaEnabled) redirect('/mfa-setup');
-  if (!session.user.mfaVerified) redirect('/mfa-challenge');
+  // Sprint 0.20 — MFA + login-verified gates removed; only platform-role check.
   if (session.user.platformRole !== 'PLATFORM_OWNER') redirect('/home');
 
   return (
