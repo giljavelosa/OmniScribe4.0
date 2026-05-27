@@ -238,6 +238,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const now = new Date();
   const finalCanonical = canonicalize(draft, sections, now);
 
+  let autoDroppedProposalCount = 0;
   await prisma.$transaction(async (tx) => {
     await tx.note.update({
       where: { id: noteId },
@@ -248,8 +249,32 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         signedByUserId: user.id,
       },
     });
-    // Follow-up sweep closes here in Unit 06 — placeholder for now.
+    // Sprint pre-sign-followup-suggest — auto-DROP any FollowUp rows still in
+    // PROPOSED status at sign time. Unreviewed Cleo suggestions must never
+    // leak to the next visit's clinician (rule 24 — the clinician's
+    // confirmation is the only path from PROPOSED to OPEN). Accepted rows
+    // (already OPEN) and manually-added rows are untouched.
+    const dropped = await tx.followUp.updateMany({
+      where: { originNoteId: noteId, orgId: orgUser.orgId, status: 'PROPOSED' },
+      data: {
+        status: 'DROPPED',
+        dropReason: 'unreviewed_at_sign',
+        closedAt: now,
+      },
+    });
+    autoDroppedProposalCount = dropped.count;
   });
+
+  if (autoDroppedProposalCount > 0) {
+    await writeAuditLog({
+      userId: user.id,
+      orgId: orgUser.orgId,
+      action: 'FOLLOWUP_PROPOSALS_AUTO_DROPPED_AT_SIGN',
+      resourceType: 'Note',
+      resourceId: noteId,
+      metadata: { count: autoDroppedProposalCount },
+    });
+  }
 
   await writeAuditLog({
     userId: user.id,

@@ -92,12 +92,16 @@ export default async function PreparePage({ params }: { params: Promise<{ noteId
   // follow-ups come from the brief snapshot at last sign; live mutation
   // lands on /capture where the action chips matter most.
   const copilotFollowUps: CopilotFollowUp[] = briefContent
-    ? briefContent.openFollowUps.map((fu) => ({
-        id: fu.followUpId,
-        text: fu.text,
-        status: fu.status,
-        source: fu.source,
-      }))
+    ? briefContent.openFollowUps
+        // PROPOSED rows are pre-sign only; the brief is post-sign so they're
+        // never present, but the schema union allows them. Defensive filter.
+        .filter((fu): fu is typeof fu & { status: Exclude<typeof fu.status, 'PROPOSED'> } => fu.status !== 'PROPOSED')
+        .map((fu) => ({
+          id: fu.followUpId,
+          text: fu.text,
+          status: fu.status,
+          source: fu.source,
+        }))
     : [];
 
   const planForTodayItems: PlanItem[] = briefContent

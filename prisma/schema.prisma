@@ -121,35 +121,35 @@ model Organization {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  sites              Site[]
-  orgUsers           OrgUser[]
-  seats              Seat[]
-  invites            Invite[]
-  featureFlags       FeatureFlag[]
-  ipAllowlistEntries IpAllowlistEntry[]
-  patients           Patient[]
-  departments        Department[]
-  noteTemplates      NoteTemplate[]
-  noteBriefs         NoteBrief[]
-  followUps          FollowUp[]
-  telehealthSessions TelehealthSession[]
-  fhirIdentities     FhirIdentity[]
-  ehrConnections     OrgEhrConnection[]
-  usageDaily         OrgUsageDaily[]
-  llmCalls           LlmCallLog[]
-  llmCostDaily       OrgLlmCostDaily[]
-  externalContexts   ExternalContext[]
-  caseManagements    CaseManagement[]
-  caseRouterRuns     CaseRouterRun[]
+  sites                  Site[]
+  orgUsers               OrgUser[]
+  seats                  Seat[]
+  invites                Invite[]
+  featureFlags           FeatureFlag[]
+  ipAllowlistEntries     IpAllowlistEntry[]
+  patients               Patient[]
+  departments            Department[]
+  noteTemplates          NoteTemplate[]
+  noteBriefs             NoteBrief[]
+  followUps              FollowUp[]
+  telehealthSessions     TelehealthSession[]
+  fhirIdentities         FhirIdentity[]
+  ehrConnections         OrgEhrConnection[]
+  usageDaily             OrgUsageDaily[]
+  llmCalls               LlmCallLog[]
+  llmCostDaily           OrgLlmCostDaily[]
+  externalContexts       ExternalContext[]
+  caseManagements        CaseManagement[]
+  caseRouterRuns         CaseRouterRun[]
   // Sprint 0.14 — Miss Cleo's per-(patient × clinician) memory + chat threads.
-  copilotPatientStates  CopilotPatientState[]
-  copilotConversations  CopilotConversation[]
+  copilotPatientStates   CopilotPatientState[]
+  copilotConversations   CopilotConversation[]
   // Sprint 0.16 — FHIR reconciliation drift log (back-relation only).
-  caseFhirDriftLogs     CaseFhirDriftLog[]
+  caseFhirDriftLogs      CaseFhirDriftLog[]
   // Sprint 0.17 — FHIR write-back proposals (back-relation only).
   fhirWriteBackProposals FhirWriteBackProposal[]
   // Sprint 0.18 — Cleo's proactive nudges (back-relation only).
-  cleoNudges            CleoNudge[]
+  cleoNudges             CleoNudge[]
 
   @@index([baaExecutedAt])
   @@index([subscriptionPlan])
@@ -177,7 +177,7 @@ model OrgUsageDaily {
   id                    String       @id @default(cuid())
   orgId                 String
   organization          Organization @relation(fields: [orgId], references: [id])
-  day                   DateTime     // midnight UTC of the calendar day
+  day                   DateTime // midnight UTC of the calendar day
   notesSigned           Int          @default(0)
   transcriptionMinutes  Int          @default(0)
   copilotAsks           Int          @default(0)
@@ -198,18 +198,18 @@ model OrgUsageDaily {
 /// recomputed on read. Matches accounting reality + insulates the
 /// rollup from future MODEL_PRICING edits.
 model LlmCallLog {
-  id        String       @id @default(cuid())
-  orgId     String
+  id           String       @id @default(cuid())
+  orgId        String
   organization Organization @relation(fields: [orgId], references: [id])
-  noteId    String?      // optional — anchor to a Note when applicable
-  surface   String       // 'copilot.ask', 'worker.brief', etc.
-  model     String       // Bedrock model id (cross-region prefix included)
-  tokensIn  Int
-  tokensOut Int
-  costUsd   Decimal      @db.Decimal(12, 4)
-  latencyMs Int
-  stub      Boolean      @default(false)
-  createdAt DateTime     @default(now())
+  noteId       String? // optional — anchor to a Note when applicable
+  surface      String // 'copilot.ask', 'worker.brief', etc.
+  model        String // Bedrock model id (cross-region prefix included)
+  tokensIn     Int
+  tokensOut    Int
+  costUsd      Decimal      @db.Decimal(12, 4)
+  latencyMs    Int
+  stub         Boolean      @default(false)
+  createdAt    DateTime     @default(now())
 
   @@index([orgId, createdAt])
   @@index([surface])
@@ -222,7 +222,7 @@ model OrgLlmCostDaily {
   id             String       @id @default(cuid())
   orgId          String
   organization   Organization @relation(fields: [orgId], references: [id])
-  day            DateTime     // midnight UTC
+  day            DateTime // midnight UTC
   totalTokensIn  Int          @default(0)
   totalTokensOut Int          @default(0)
   totalCostUsd   Decimal      @default(0) @db.Decimal(12, 4)
@@ -280,34 +280,34 @@ model User {
   // TOTP per signature. Bcrypt-hashed at rest.
   signingPinHash    String?
   signUnlockedUntil DateTime?
-  platformRole     PlatformRole @default(NONE)
+  platformRole      PlatformRole @default(NONE)
   /// Unit 37 — Account lockout. Incremented on every wrong-password
   /// attempt; cleared on successful auth (or when a fresh attempt
   /// succeeds after lockedUntil has passed). Threshold = 5 →
   /// 15-minute auto-lock.
-  failedLoginCount Int          @default(0)
+  failedLoginCount  Int          @default(0)
   /// When set, NextAuth authorize() returns null until this time
   /// passes — regardless of password correctness — so an attacker
   /// pinging a locked account doesn't get "lock cleared but wrong
   /// password" timing artifacts.
-  lockedUntil      DateTime?
-  createdAt        DateTime     @default(now())
-  updatedAt        DateTime     @updatedAt
+  lockedUntil       DateTime?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
 
-  orgUsers            OrgUser[]
-  sessions            UserSession[]
-  passwordResetTokens PasswordResetToken[]
-  caseRouterAccepts   CaseRouterRun[]      @relation("CaseRouterAcceptedBy")
+  orgUsers                 OrgUser[]
+  sessions                 UserSession[]
+  passwordResetTokens      PasswordResetToken[]
+  caseRouterAccepts        CaseRouterRun[]         @relation("CaseRouterAcceptedBy")
   // Sprint 0.16 — drift logs resolved by this user (back-relation only).
-  caseFhirDriftResolutions CaseFhirDriftLog[] @relation("CaseFhirDriftResolvedBy")
+  caseFhirDriftResolutions CaseFhirDriftLog[]      @relation("CaseFhirDriftResolvedBy")
   // Sprint 0.17 — FHIR write-back proposal authorship + lifecycle.
-  fhirWriteBackProposed FhirWriteBackProposal[] @relation("FhirWriteBackProposedBy")
-  fhirWriteBackApproved FhirWriteBackProposal[] @relation("FhirWriteBackApprovedBy")
-  fhirWriteBackCancelled FhirWriteBackProposal[] @relation("FhirWriteBackCancelledBy")
+  fhirWriteBackProposed    FhirWriteBackProposal[] @relation("FhirWriteBackProposedBy")
+  fhirWriteBackApproved    FhirWriteBackProposal[] @relation("FhirWriteBackApprovedBy")
+  fhirWriteBackCancelled   FhirWriteBackProposal[] @relation("FhirWriteBackCancelledBy")
   // Sprint 0.18 — Cleo nudge lifecycle (back-relations only).
-  cleoNudgesDismissed CleoNudge[] @relation("CleoNudgeDismissedBy")
-  cleoNudgesSnoozed   CleoNudge[] @relation("CleoNudgeSnoozedBy")
-  cleoNudgesActed     CleoNudge[] @relation("CleoNudgeActedBy")
+  cleoNudgesDismissed      CleoNudge[]             @relation("CleoNudgeDismissedBy")
+  cleoNudgesSnoozed        CleoNudge[]             @relation("CleoNudgeSnoozedBy")
+  cleoNudgesActed          CleoNudge[]             @relation("CleoNudgeActedBy")
 }
 
 model OrgUser {
@@ -329,19 +329,19 @@ model OrgUser {
   createdAt          DateTime     @default(now())
   updatedAt          DateTime     @updatedAt
 
-  seatId              String?              @unique
-  seat                Seat?                @relation(fields: [seatId], references: [id])
-  practitionerProfile PractitionerProfile?
-  fhirIdentities      FhirIdentity[]       @relation("FhirIdentityClinician")
-  externalContextsAdded ExternalContext[]  @relation("ExternalContextAddedBy")
-  siteEnrollments     OrgUserSite[]        @relation("OrgUserSiteMember")
-  siteEnrollmentsCreated OrgUserSite[]     @relation("OrgUserSiteEnroller")
-  voiceProfile        VoiceProfile?
+  seatId                 String?               @unique
+  seat                   Seat?                 @relation(fields: [seatId], references: [id])
+  practitionerProfile    PractitionerProfile?
+  fhirIdentities         FhirIdentity[]        @relation("FhirIdentityClinician")
+  externalContextsAdded  ExternalContext[]     @relation("ExternalContextAddedBy")
+  siteEnrollments        OrgUserSite[]         @relation("OrgUserSiteMember")
+  siteEnrollmentsCreated OrgUserSite[]         @relation("OrgUserSiteEnroller")
+  voiceProfile           VoiceProfile?
   // Sprint 0.14 — per-clinician Cleo memory + persistent chat threads.
-  copilotPatientStates  CopilotPatientState[]
-  copilotConversations  CopilotConversation[]
+  copilotPatientStates   CopilotPatientState[]
+  copilotConversations   CopilotConversation[]
   // Sprint 0.18 — Cleo's proactive nudges, scoped to this clinician.
-  cleoNudges            CleoNudge[]
+  cleoNudges             CleoNudge[]
 
   @@unique([userId, orgId])
   @@index([orgId, role])
@@ -1005,8 +1005,10 @@ model Schedule {
   episodeOfCareId    String?
   episode            EpisodeOfCare? @relation(fields: [episodeOfCareId], references: [id])
 
-  encounter Encounter?
-  /** Unit 15 — 1:1 telehealth session when visitType=TELEHEALTH. */
+  encounter         Encounter?
+  /**
+   * Unit 15 — 1:1 telehealth session when visitType=TELEHEALTH.
+   */
   telehealthSession TelehealthSession?
 
   @@index([clinicianOrgUserId, scheduledStart])
@@ -1016,31 +1018,31 @@ model Schedule {
 
 /// Sprint 0.11 — ICD-anchored patient-care umbrella. Every encounter links here.
 model CaseManagement {
-  id                String               @id @default(cuid())
-  orgId             String
-  organization      Organization         @relation(fields: [orgId], references: [id])
-  patientId         String
-  patient           Patient              @relation(fields: [patientId], references: [id])
-  primaryIcd        String?
-  primaryIcdLabel   String
-  secondaryIcd      String?
-  secondaryIcdLabel String?
+  id                     String               @id @default(cuid())
+  orgId                  String
+  organization           Organization         @relation(fields: [orgId], references: [id])
+  patientId              String
+  patient                Patient              @relation(fields: [patientId], references: [id])
+  primaryIcd             String?
+  primaryIcdLabel        String
+  secondaryIcd           String?
+  secondaryIcdLabel      String?
   /// Migrated from legacy EpisodeOfCare.bodyPart when present.
-  description       String?
-  status            CaseManagementStatus @default(ACTIVE)
-  openedByOrgUserId String?
-  openedAt          DateTime             @default(now())
-  closedAt          DateTime?
-  closedByOrgUserId String?
-  closeReason       String?
+  description            String?
+  status                 CaseManagementStatus @default(ACTIVE)
+  openedByOrgUserId      String?
+  openedAt               DateTime             @default(now())
+  closedAt               DateTime?
+  closedByOrgUserId      String?
+  closeReason            String?
   /// Sprint 0.13 — forward-compatible with Sprint 0.15's FHIR phase. Set when
   /// the case opens from a verified FHIR Condition; null until then.
   mirrorsFhirConditionId String?
 
-  episodes   EpisodeOfCare[]
-  encounters Encounter[]
+  episodes               EpisodeOfCare[]
+  encounters             Encounter[]
   // Sprint 0.16 — FHIR reconciliation drift log (back-relation only).
-  fhirDriftLogs CaseFhirDriftLog[]
+  fhirDriftLogs          CaseFhirDriftLog[]
   // Sprint 0.17 — FHIR write-back proposals (back-relation only).
   fhirWriteBackProposals FhirWriteBackProposal[]
 
@@ -1061,30 +1063,30 @@ model CaseManagement {
 /// confirmed FollowUp rows, and verified FHIR resources. Rule 24: the
 /// agent does data routing only — never clinical recommendations.
 model CaseRouterRun {
-  id               String            @id @default(cuid())
-  orgId            String
-  organization     Organization      @relation(fields: [orgId], references: [id])
-  noteId           String            @unique
-  note             Note              @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  id                     String                  @id @default(cuid())
+  orgId                  String
+  organization           Organization            @relation(fields: [orgId], references: [id])
+  noteId                 String                  @unique
+  note                   Note                    @relation(fields: [noteId], references: [id], onDelete: Cascade)
   /// Strict CaseRouterProposal (see src/services/copilot/case-router.ts).
   /// Zod-validated at write time; stored as Json so additive Sprint 0.15
   /// fields (e.g. open-new-from-condition) don't require a migration.
-  proposalJson     Json
-  confidence       RouterConfidence
-  reasoning        String
+  proposalJson           Json
+  confidence             RouterConfidence
+  reasoning              String
   /// Bedrock model id family (e.g. 'sonnet', 'haiku', or 'stub') so the
   /// auditor can filter "all decisions made by model X" without an extra
   /// join. Full model id is in the audit metadata.
-  modelVersion     String
-  createdAt        DateTime          @default(now())
+  modelVersion           String
+  createdAt              DateTime                @default(now())
   /// 'accepted' | 'overridden-attach' | 'overridden-open-new'
   /// | 'overridden-attach-with-secondary' | 'overridden-manual'
-  acceptedAction   String?
-  acceptedAt       DateTime?
-  acceptedByUserId String?
-  acceptedBy       User?             @relation("CaseRouterAcceptedBy", fields: [acceptedByUserId], references: [id])
+  acceptedAction         String?
+  acceptedAt             DateTime?
+  acceptedByUserId       String?
+  acceptedBy             User?                   @relation("CaseRouterAcceptedBy", fields: [acceptedByUserId], references: [id])
   // Sprint 0.16 — drift logs written during this run (back-relation only).
-  driftLogs        CaseFhirDriftLog[]
+  driftLogs              CaseFhirDriftLog[]
   // Sprint 0.17 — FHIR write-back proposals lineage'd to this run.
   fhirWriteBackProposals FhirWriteBackProposal[] @relation("FhirWriteBackByRun")
 
@@ -1110,16 +1112,16 @@ model CaseRouterRun {
 /// `(caseManagementId, resolvedAt)` index supports "open drifts on this
 /// case" queries (Cleo's state-builder + the chart-side drift banner).
 model CaseFhirDriftLog {
-  id               String            @id @default(cuid())
+  id               String         @id @default(cuid())
   orgId            String
-  organization     Organization      @relation(fields: [orgId], references: [id])
+  organization     Organization   @relation(fields: [orgId], references: [id])
   patientId        String
-  patient          Patient           @relation(fields: [patientId], references: [id])
+  patient          Patient        @relation(fields: [patientId], references: [id])
   caseManagementId String
-  caseManagement   CaseManagement    @relation(fields: [caseManagementId], references: [id])
+  caseManagement   CaseManagement @relation(fields: [caseManagementId], references: [id])
   fhirConditionId  String
 
-  driftKind        CaseFhirDriftKind
+  driftKind CaseFhirDriftKind
 
   /// Snapshot at detection — both sides. Lets a regulator reconstruct
   /// "what did the two systems each say at the moment Cleo flagged it?"
@@ -1134,24 +1136,24 @@ model CaseFhirDriftLog {
   conditionIcdAtDetection      String
   conditionIcdLabelAtDetection String
 
-  detectedAt       DateTime          @default(now())
+  detectedAt      DateTime       @default(now())
   /// FK to the `CaseRouterRun` that detected this drift. Nullable to
   /// reserve room for Sprint 0.18's background-sweep detector — for
   /// Sprint 0.16 this is ALWAYS set.
-  detectedByRunId  String?
-  detectedByRun    CaseRouterRun?    @relation(fields: [detectedByRunId], references: [id])
+  detectedByRunId String?
+  detectedByRun   CaseRouterRun? @relation(fields: [detectedByRunId], references: [id])
 
   /// Resolution — null until the clinician picks an option at /review.
   /// Pair updated atomically with the case mutation inside the accept
   /// endpoint's transaction.
-  resolvedAt       DateTime?
+  resolvedAt             DateTime?
   /// 'reopen-case' | 'open-new-case' | 'close-case' | 'attach-as-is' |
   /// 'update-case-icd' — the enum of resolution kinds the agent + UI
   /// surface. Kept as a string (vs. a DB enum) so future kinds add
   /// without a migration.
-  resolvedAction   String?
-  resolvedByUserId String?
-  resolvedBy       User?             @relation("CaseFhirDriftResolvedBy", fields: [resolvedByUserId], references: [id])
+  resolvedAction         String?
+  resolvedByUserId       String?
+  resolvedBy             User?                   @relation("CaseFhirDriftResolvedBy", fields: [resolvedByUserId], references: [id])
   // Sprint 0.17 — write-back proposals that resolved this drift via
   // a PATCH (close-case / update-case-icd / reopen-case).
   fhirWriteBackProposals FhirWriteBackProposal[] @relation("FhirWriteBackByDrift")
@@ -1189,15 +1191,15 @@ model Encounter {
 
 /// REHAB-only plan of care nested under CaseManagement (DB CHECK in migration).
 model EpisodeOfCare {
-  id                 String        @id @default(cuid())
+  id                 String         @id @default(cuid())
   orgId              String
   patientId          String
-  patient            Patient       @relation(fields: [patientId], references: [id])
+  patient            Patient        @relation(fields: [patientId], references: [id])
   caseManagementId   String
   caseManagement     CaseManagement @relation(fields: [caseManagementId], references: [id])
   clinicianOrgUserId String
   departmentId       String
-  department         Department    @relation(fields: [departmentId], references: [id])
+  department         Department     @relation(fields: [departmentId], references: [id])
   division           Division
   /// Legacy free-text diagnosis — retained; mirrors primaryIcdLabel for display.
   diagnosis          String
@@ -1206,18 +1208,24 @@ model EpisodeOfCare {
   primaryIcdLabel    String?
   secondaryIcd       String?
   secondaryIcdLabel  String?
-  status             EpisodeStatus @default(ACTIVE)
-  startedAt          DateTime      @default(now())
+  status             EpisodeStatus  @default(ACTIVE)
+  startedAt          DateTime       @default(now())
   endedAt            DateTime?
   recertDueAt        DateTime?
-  /** Configurable per-episode recert cadence. Default 90 days; API layer
-   *  enforces min 7, max 365 (Unit 11). */
-  recertIntervalDays Int           @default(90)
+  /**
+   * Configurable per-episode recert cadence. Default 90 days; API layer
+   * enforces min 7, max 365 (Unit 11).
+   */
+  recertIntervalDays Int            @default(90)
   visitsAuthorized   Int?
-  visitsCompleted    Int           @default(0)
-  /** DISCHARGED close-out reason (optional). */
+  visitsCompleted    Int            @default(0)
+  /**
+   * DISCHARGED close-out reason (optional).
+   */
   closeReason        String?
-  /** DISCHARGED → ACTIVE re-open reason (required at API). */
+  /**
+   * DISCHARGED → ACTIVE re-open reason (required at API).
+   */
   reopenReason       String?
 
   goals             EpisodeGoal[]
@@ -1249,20 +1257,28 @@ model EpisodeGoal {
 }
 
 model GoalProgressEntry {
-  id            String      @id @default(cuid())
-  goalId        String
-  goal          EpisodeGoal @relation(fields: [goalId], references: [id], onDelete: Cascade)
-  /** Optional — present when the entry was captured inside a note (Unit 05);
-   *  absent when captured directly from the patient detail (Unit 11). */
-  noteId        String?
-  /** Optional — when the entry records a status transition (Unit 11) instead
-   *  of a measurement, measureValue stays null. */
-  measureValue  String?
-  /** Status snapshot at the time of the entry (Unit 11). */
-  statusAtEntry GoalStatus?
-  /** Optional free-text from the clinician explaining the update (Unit 11). */
-  deltaNote     String?
-  recordedAt    DateTime    @default(now())
+  id                  String      @id @default(cuid())
+  goalId              String
+  goal                EpisodeGoal @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  /**
+   * Optional — present when the entry was captured inside a note (Unit 05);
+   * absent when captured directly from the patient detail (Unit 11).
+   */
+  noteId              String?
+  /**
+   * Optional — when the entry records a status transition (Unit 11) instead
+   * of a measurement, measureValue stays null.
+   */
+  measureValue        String?
+  /**
+   * Status snapshot at the time of the entry (Unit 11).
+   */
+  statusAtEntry       GoalStatus?
+  /**
+   * Optional free-text from the clinician explaining the update (Unit 11).
+   */
+  deltaNote           String?
+  recordedAt          DateTime    @default(now())
   recordedByOrgUserId String?
 
   @@index([goalId, recordedAt])
@@ -1384,13 +1400,17 @@ model NoteTemplate {
   sensitivityDefault  NoteSensitivityLevel @default(STANDARD_CLINICAL)
   version             Int                  @default(1)
   createdByOrgUserId  String?
-  /** Unit 13 — source template when this row was cloned (drives version-
-   *  history chain). null when this is an original. */
+  /**
+   * Unit 13 — source template when this row was cloned (drives version-
+   * history chain). null when this is an original.
+   */
   clonedFromId        String?
   clonedFrom          NoteTemplate?        @relation("TemplateClonedFrom", fields: [clonedFromId], references: [id])
   clones              NoteTemplate[]       @relation("TemplateClonedFrom")
-  /** Unit 13 — soft-delete. Archived templates don't surface in the picker;
-   *  the row stays for historical note reference. */
+  /**
+   * Unit 13 — soft-delete. Archived templates don't surface in the picker;
+   * the row stays for historical note reference.
+   */
   isArchived          Boolean              @default(false)
   archivedAt          DateTime?
   archivedByOrgUserId String?
@@ -1462,9 +1482,9 @@ model AudioSegment {
 // =============================================================================
 
 model VoiceProfile {
-  id              String    @id @default(cuid())
+  id              String                      @id @default(cuid())
   orgUserId       String
-  orgUser         OrgUser   @relation(fields: [orgUserId], references: [id])
+  orgUser         OrgUser                     @relation(fields: [orgUserId], references: [id])
   orgId           String
   /// 192-dim TitaNet x-vector stored as pgvector; null until the
   /// compute-enrollment-embedding worker completes.
@@ -1477,14 +1497,14 @@ model VoiceProfile {
   /// Human-readable label e.g. "My Voice" or the user's display name.
   displayName     String?
   /// Heuristic default role used during transcript matching.
-  defaultRole     String    @default("CLINICIAN")
-  isDeleted       Boolean   @default(false)
+  defaultRole     String                      @default("CLINICIAN")
+  isDeleted       Boolean                     @default(false)
   deletedAt       DateTime?
   /// 30-day window during which the record can be restored; hard-delete
   /// allowed after this date by a scheduled ops sweep (not auto-deleted).
   hardDeleteAt    DateTime?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  createdAt       DateTime                    @default(now())
+  updatedAt       DateTime                    @updatedAt
 
   @@unique([orgUserId])
   @@index([orgId, isDeleted])
@@ -1506,6 +1526,7 @@ model VoiceProfile {
 // =============================================================================
 
 enum FollowUpStatus {
+  PROPOSED // Sprint pre-sign-followup-suggest — Cleo proposal awaiting clinician triage
   OPEN
   MET
   CARRIED
@@ -1557,6 +1578,13 @@ model FollowUp {
   closingNoteText   String? // required when MET (≥5 chars)
   dropReason        String? // required when DROPPED (≥5 chars)
 
+  // Sprint pre-sign-followup-suggest — provenance for Cleo-proposed rows
+  // (status=PROPOSED). All three are NULL for manually-added or post-sign-
+  // extracted rows. Kept nullable + additive so existing rows are untouched.
+  proposedSourceText       String? @db.Text // ~200-char Plan excerpt the extractor matched on
+  proposedExtractorVersion String? // e.g. "followup-extractor-v1"
+  proposedFromHash         String? // sha256(planContent) at extraction time — used to skip redundant re-runs
+
   closedAt          DateTime?
   closedByOrgUserId String?
 
@@ -1566,6 +1594,7 @@ model FollowUp {
   @@index([patientId, status])
   @@index([orgId, status])
   @@index([episodeId])
+  @@index([originNoteId, status]) // Sprint pre-sign-followup-suggest — fast PROPOSED lookup for a draft note
 }
 
 // =============================================================================
@@ -1583,24 +1612,30 @@ model FollowUp {
 // superseded row per (measureKey, scope) on every read.
 // =============================================================================
 model SnapshotOverride {
-  id                    String    @id @default(cuid())
+  id                    String         @id @default(cuid())
   orgId                 String
   patientId             String
-  patient               Patient   @relation(fields: [patientId], references: [id])
+  patient               Patient        @relation(fields: [patientId], references: [id])
   episodeId             String?
   episode               EpisodeOfCare? @relation(fields: [episodeId], references: [id])
   measureKey            String
-  /** Scalar (number), string ("3+"), or structured object ({systolic, diastolic}).
-   *  No Zod validation at the DB layer — the snapshot pipeline coerces to
-   *  the registry's expected shape at render time. */
+  /**
+   * Scalar (number), string ("3+"), or structured object ({systolic, diastolic}).
+   * No Zod validation at the DB layer — the snapshot pipeline coerces to
+   * the registry's expected shape at render time.
+   */
   valueJson             Json
   unit                  String?
-  /** Clinician-supplied "as of" time. */
+  /**
+   * Clinician-supplied "as of" time.
+   */
   recordedAt            DateTime
-  enteredAt             DateTime  @default(now())
+  enteredAt             DateTime       @default(now())
   enteredByOrgUserId    String
-  /** Soft-delete: when set, this row is superseded. The latest non-
-   *  superseded row per (measureKey, scope) wins. */
+  /**
+   * Soft-delete: when set, this row is superseded. The latest non-
+   * superseded row per (measureKey, scope) wins.
+   */
   supersededAt          DateTime?
   supersededByOrgUserId String?
 
@@ -1645,21 +1680,35 @@ model ReviewFlag {
   sectionId           String
   severity            ReviewFlagSeverity
   status              ReviewFlagStatus   @default(OPEN)
-  /** AI-extracted claim from the draft section that triggered the flag. */
+  /**
+   * AI-extracted claim from the draft section that triggered the flag.
+   */
   claim               String
-  /** Why the AI flagged it — short rationale. */
+  /**
+   * Why the AI flagged it — short rationale.
+   */
   rationale           String
-  /** Transcript evidence snippet supporting (GREEN) or contradicting (RED)
-   *  the claim. May be null for BLUE/YELLOW. */
+  /**
+   * Transcript evidence snippet supporting (GREEN) or contradicting (RED)
+   * the claim. May be null for BLUE/YELLOW.
+   */
   evidence            String?
-  /** Suggested replacement text (RED especially). */
+  /**
+   * Suggested replacement text (RED especially).
+   */
   suggestion          String?
-  /** AI confidence 0..1 — surfaces in UI as small percent. */
+  /**
+   * AI confidence 0..1 — surfaces in UI as small percent.
+   */
   confidence          Float              @default(0.5)
-  /** Set when status flips to RESOLVED or DISMISSED. */
+  /**
+   * Set when status flips to RESOLVED or DISMISSED.
+   */
   resolvedAt          DateTime?
   resolvedByOrgUserId String?
-  /** 'ACCEPT_EDIT' | 'DISMISS_KEEP' | 'REGENERATE_SECTION' | 'AUTO_VERIFIED' */
+  /**
+   * 'ACCEPT_EDIT' | 'DISMISS_KEEP' | 'REGENERATE_SECTION' | 'AUTO_VERIFIED'
+   */
   resolutionAction    String?
   resolutionNote      String?
   createdAt           DateTime           @default(now())
@@ -1699,44 +1748,58 @@ enum TelehealthSessionStatus {
 }
 
 model TelehealthSession {
-  id             String                  @id @default(cuid())
-  orgId          String
-  organization   Organization            @relation(fields: [orgId], references: [id])
-  scheduleId     String                  @unique
-  schedule       Schedule                @relation(fields: [scheduleId], references: [id])
-  patientId      String
-  patient        Patient                 @relation(fields: [patientId], references: [id])
-  /** Magic-link token, 22-char URL-safe base64. */
-  magicToken     String                  @unique
-  /** Token expires at min(issuedAt + 24h, scheduledEnd + 2h). */
-  magicExpiresAt DateTime
-  /** Set on first successful DOB verify. Single-use. */
-  verifiedAt     DateTime?
-  /** Set when the patient submits consent. consentVersion captures which
-   *  version of the consent text was accepted (Wave 3 polish: the text
-   *  lives in a future ConsentTemplate; for v1 it's a free-form string). */
-  consentAt      DateTime?
-  consentVersion String?
-  /** Daily.co room metadata (or stub equivalents when DAILY_API_KEY unset). */
-  roomUrl        String?
-  roomName       String?
-  roomExpiresAt  DateTime?
-  status         TelehealthSessionStatus @default(SCHEDULED)
-  startedAt      DateTime?
-  endedAt        DateTime?
-  endedReason    String?
+  id                 String                  @id @default(cuid())
+  orgId              String
+  organization       Organization            @relation(fields: [orgId], references: [id])
+  scheduleId         String                  @unique
+  schedule           Schedule                @relation(fields: [scheduleId], references: [id])
+  patientId          String
+  patient            Patient                 @relation(fields: [patientId], references: [id])
+  /**
+   * Magic-link token, 22-char URL-safe base64.
+   */
+  magicToken         String                  @unique
+  /**
+   * Token expires at min(issuedAt + 24h, scheduledEnd + 2h).
+   */
+  magicExpiresAt     DateTime
+  /**
+   * Set on first successful DOB verify. Single-use.
+   */
+  verifiedAt         DateTime?
+  /**
+   * Set when the patient submits consent. consentVersion captures which
+   * version of the consent text was accepted (Wave 3 polish: the text
+   * lives in a future ConsentTemplate; for v1 it's a free-form string).
+   */
+  consentAt          DateTime?
+  consentVersion     String?
+  /**
+   * Daily.co room metadata (or stub equivalents when DAILY_API_KEY unset).
+   */
+  roomUrl            String?
+  roomName           String?
+  roomExpiresAt      DateTime?
+  status             TelehealthSessionStatus @default(SCHEDULED)
+  startedAt          DateTime?
+  endedAt            DateTime?
+  endedReason        String?
   createdByOrgUserId String?
-  /** Unit 16 — Note this session's live transcript writes into. Created in
-   *  the same $transaction as the Daily.co room on session start. 1:1; null
-   *  until the clinician starts the call. */
-  noteId         String?                 @unique
-  note           Note?                   @relation(fields: [noteId], references: [id])
-  /** Unit 18 — PHI-free call quality metrics written by the /end handler.
-   *  Shape: { sampleChunksProcessed, reconnectCount, callDurationMs,
-   *  transcriptSegmentCount }. Auditor lens + future ops dashboards. */
-  qualityMetrics Json?
-  createdAt      DateTime                @default(now())
-  updatedAt      DateTime                @updatedAt
+  /**
+   * Unit 16 — Note this session's live transcript writes into. Created in
+   * the same $transaction as the Daily.co room on session start. 1:1; null
+   * until the clinician starts the call.
+   */
+  noteId             String?                 @unique
+  note               Note?                   @relation(fields: [noteId], references: [id])
+  /**
+   * Unit 18 — PHI-free call quality metrics written by the /end handler.
+   * Shape: { sampleChunksProcessed, reconnectCount, callDurationMs,
+   * transcriptSegmentCount }. Auditor lens + future ops dashboards.
+   */
+  qualityMetrics     Json?
+  createdAt          DateTime                @default(now())
+  updatedAt          DateTime                @updatedAt
 
   @@index([orgId, status])
   @@index([magicExpiresAt])
@@ -1748,7 +1811,6 @@ model TelehealthSession {
 
 /**
  * Per-clinician, per-EHR SMART on FHIR token + identity binding.
- *
  * Token columns are AES-256-GCM-encrypted before insert (see
  * src/lib/fhir/token-crypto.ts). The envelope format is versioned so a
  * future key rotation can recognize stale ciphertexts and re-encrypt.
@@ -1759,16 +1821,20 @@ model FhirIdentity {
   organization        Organization @relation(fields: [orgId], references: [id])
   clinicianOrgUserId  String
   clinician           OrgUser      @relation("FhirIdentityClinician", fields: [clinicianOrgUserId], references: [id])
-  ehrSystem           String       // 'nextgen' | 'epic' | 'cerner' | 'stub'
+  ehrSystem           String // 'nextgen' | 'epic' | 'cerner' | 'stub'
   fhirBaseUrl         String
   accessTokenEnc      String       @db.Text
   refreshTokenEnc     String       @db.Text
   scope               String       @db.Text
   expiresAt           DateTime
-  /** Set on each successful refresh; null until the first refresh fires. */
+  /**
+   * Set on each successful refresh; null until the first refresh fires.
+   */
   refreshedAt         DateTime?
-  /** Patient context from the launch (NextGen typically includes it); used
-   *  as a hint for Unit 20's identity matching, not as the match itself. */
+  /**
+   * Patient context from the launch (NextGen typically includes it); used
+   * as a hint for Unit 20's identity matching, not as the match itself.
+   */
   launchPatientFhirId String?
   createdAt           DateTime     @default(now())
   updatedAt           DateTime     @updatedAt
@@ -1783,17 +1849,19 @@ model FhirIdentity {
  * context; full CRUD + matching UI is F2 / Unit 20.
  */
 model PatientFhirIdentity {
-  id                  String   @id @default(cuid())
+  id                  String    @id @default(cuid())
   patientId           String
-  patient             Patient  @relation(fields: [patientId], references: [id])
+  patient             Patient   @relation(fields: [patientId], references: [id])
   ehrSystem           String
   fhirPatientId       String
   fhirIdentifier      String?
-  /** 'verified' = clinician confirmed | 'high' = strong auto-match | 'manual' = needs review */
+  /**
+   * 'verified' = clinician confirmed | 'high' = strong auto-match | 'manual' = needs review
+   */
   matchConfidence     String
   verifiedAt          DateTime?
   verifiedByOrgUserId String?
-  createdAt           DateTime @default(now())
+  createdAt           DateTime  @default(now())
 
   @@unique([ehrSystem, fhirPatientId])
   @@index([patientId, ehrSystem])
@@ -1843,31 +1911,28 @@ model FhirLaunchState {
 
 /**
  * Per-org EHR connection — Unit 24 / F6 schema only.
- *
  * Houses encrypted client credentials + the FHIR base URL per (org,
  * ehrSystem) tuple. Lets a future unit support multi-EHR-per-org or
  * per-customer credential rotation without an env-var redeploy.
- *
  * v1 ships ZERO callers — the existing NextGen flow stays env-driven
  * (rule 14: client secrets in env / Secrets Manager). When the first
  * paying customer demands Epic / Cerner, the per-org config flow lands
  * with the wiring that reads from this table.
- *
  * Credentials encrypted with the same AES-256-GCM envelope as
  * FhirIdentity tokens (lib/fhir/token-crypto.ts) so the at-rest
  * encryption posture is identical.
  */
 model OrgEhrConnection {
-  id              String   @id @default(cuid())
-  orgId           String
-  organization    Organization @relation(fields: [orgId], references: [id])
-  ehrSystem       String   // matches EhrVendor: 'nextgen' | 'epic' | 'cerner'
-  displayName     String
-  fhirBaseUrl     String
-  clientIdEnc     String   @db.Text
-  clientSecretEnc String   @db.Text
-  redirectUri     String
-  enabled         Boolean  @default(true)
+  id                       String       @id @default(cuid())
+  orgId                    String
+  organization             Organization @relation(fields: [orgId], references: [id])
+  ehrSystem                String // matches EhrVendor: 'nextgen' | 'epic' | 'cerner'
+  displayName              String
+  fhirBaseUrl              String
+  clientIdEnc              String       @db.Text
+  clientSecretEnc          String       @db.Text
+  redirectUri              String
+  enabled                  Boolean      @default(true)
   /// Sprint 0.17 — FHIR Phase D₃ write-back master toggle. Defaults
   /// FALSE for every existing org (decision 10, backward-compat). When
   /// false, the accept endpoint's behavior is byte-identical to Sprint
@@ -1875,14 +1940,14 @@ model OrgEhrConnection {
   /// jobs enqueued. Flipping to true requires an admin click on the
   /// org-settings page; flipping back to false batch-cancels every
   /// PROPOSED / APPROVED proposal for the org.
-  writebackEnabled        Boolean   @default(false)
+  writebackEnabled         Boolean      @default(false)
   /// Timestamp of the last toggle-on click (for audit + the
   /// admin-settings "enabled since" copy).
-  writebackEnabledAt      DateTime?
+  writebackEnabledAt       DateTime?
   /// Admin user id of the last toggle-on click.
   writebackEnabledByUserId String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt                DateTime     @default(now())
+  updatedAt                DateTime     @updatedAt
 
   @@unique([orgId, ehrSystem])
   @@index([orgId])
@@ -1922,59 +1987,59 @@ model OrgEhrConnection {
 /// resolved`; we never DELETE Condition. The FHIR resource history
 /// stays in the EHR.
 model FhirWriteBackProposal {
-  id                String                   @id @default(cuid())
-  orgId             String
-  organization      Organization             @relation(fields: [orgId], references: [id])
-  caseManagementId  String
-  caseManagement    CaseManagement           @relation(fields: [caseManagementId], references: [id])
-  patientId         String
-  patient           Patient                  @relation(fields: [patientId], references: [id])
+  id               String         @id @default(cuid())
+  orgId            String
+  organization     Organization   @relation(fields: [orgId], references: [id])
+  caseManagementId String
+  caseManagement   CaseManagement @relation(fields: [caseManagementId], references: [id])
+  patientId        String
+  patient          Patient        @relation(fields: [patientId], references: [id])
   /// Clinician who confirmed the case action that generated this
   /// proposal (not the same as the eventual approver — though they
   /// often coincide).
-  proposedByUserId  String
-  proposedBy        User                     @relation("FhirWriteBackProposedBy", fields: [proposedByUserId], references: [id])
+  proposedByUserId String
+  proposedBy       User           @relation("FhirWriteBackProposedBy", fields: [proposedByUserId], references: [id])
 
   // ---- Trigger lineage (why this write was proposed) ----
   /// 'open-new' | 'open-new-from-condition' | 'reconcile-with-mutation'
-  triggerKind       String
+  triggerKind     String
   /// The routing run that surfaced the underlying action.
-  caseRouterRunId   String?
-  caseRouterRun     CaseRouterRun?           @relation("FhirWriteBackByRun", fields: [caseRouterRunId], references: [id])
+  caseRouterRunId String?
+  caseRouterRun   CaseRouterRun?    @relation("FhirWriteBackByRun", fields: [caseRouterRunId], references: [id])
   /// The drift log resolved (only set for reconcile triggers).
-  driftLogId        String?
-  driftLog          CaseFhirDriftLog?        @relation("FhirWriteBackByDrift", fields: [driftLogId], references: [id])
+  driftLogId      String?
+  driftLog        CaseFhirDriftLog? @relation("FhirWriteBackByDrift", fields: [driftLogId], references: [id])
 
   // ---- Payload ----
-  operation         FhirWriteBackOperation
+  operation       FhirWriteBackOperation
   /// Null for CREATE; populated for PATCH (the EHR Condition.id this
   /// proposal patches).
-  fhirConditionId   String?
+  fhirConditionId String?
   /// CREATE: the full FHIR R4 Condition resource. PATCH: the RFC 6902
   /// JSON Patch array. Zod-validated at the service layer (no schema
   /// constraint here — the JSON shape evolves additively).
-  payloadJson       Json
+  payloadJson     Json
   /// The `meta.versionId` captured at proposal time (Sprint 0.16 drift
   /// detection). PATCH only — sent as `If-Match: W/"<version>"` so a
   /// concurrent EHR-side mutation yields a 412 + `failureKind: CONFLICT`
   /// rather than a silent overwrite (decision 6).
-  ifMatchVersion    String?
+  ifMatchVersion  String?
   /// cuid2; sent as `X-Request-Id` on the upstream FHIR call. Unique so
   /// a duplicate proposal-insert attempt fails closed at the DB.
-  idempotencyKey    String                   @unique
+  idempotencyKey  String                 @unique
 
   // ---- State machine ----
-  status            FhirWriteBackStatus      @default(PROPOSED)
-  proposedAt        DateTime                 @default(now())
+  status            FhirWriteBackStatus @default(PROPOSED)
+  proposedAt        DateTime            @default(now())
   approvedAt        DateTime?
   approvedByUserId  String?
-  approvedBy        User?                    @relation("FhirWriteBackApprovedBy", fields: [approvedByUserId], references: [id])
+  approvedBy        User?               @relation("FhirWriteBackApprovedBy", fields: [approvedByUserId], references: [id])
   executingAt       DateTime?
   succeededAt       DateTime?
   failedAt          DateTime?
   cancelledAt       DateTime?
   cancelledByUserId String?
-  cancelledBy       User?                    @relation("FhirWriteBackCancelledBy", fields: [cancelledByUserId], references: [id])
+  cancelledBy       User?               @relation("FhirWriteBackCancelledBy", fields: [cancelledByUserId], references: [id])
 
   // ---- Outcome (populated by worker) ----
   /// Resource id the EHR returned (CREATE) or echoed back (PATCH).
@@ -1988,7 +2053,7 @@ model FhirWriteBackProposal {
   /// Monotonic counter incremented per worker failure. Useful for the
   /// auditor lens ("how often does this org's EHR reject writes?")
   /// without scanning the audit log.
-  failureCount      Int                      @default(0)
+  failureCount      Int                       @default(0)
 
   @@index([orgId, status])
   @@index([caseManagementId])
@@ -2033,70 +2098,70 @@ model FhirWriteBackProposal {
 /// An escalating clinical signal must not get silenced by a stale
 /// dismissal.
 model CleoNudge {
-  id                          String              @id @default(cuid())
-  orgId                       String
-  organization                Organization        @relation(fields: [orgId], references: [id])
-  patientId                   String
-  patient                     Patient             @relation(fields: [patientId], references: [id])
+  id                 String       @id @default(cuid())
+  orgId              String
+  organization       Organization @relation(fields: [orgId], references: [id])
+  patientId          String
+  patient            Patient      @relation(fields: [patientId], references: [id])
   /// Per-clinician (Sprint 0.14 projection lineage). One clinician's
   /// dismissal does NOT silence the nudge for their colleague.
-  clinicianOrgUserId          String
-  clinicianOrgUser            OrgUser             @relation(fields: [clinicianOrgUserId], references: [id])
+  clinicianOrgUserId String
+  clinicianOrgUser   OrgUser      @relation(fields: [clinicianOrgUserId], references: [id])
 
-  kind                        CleoNudgeKind
-  priority                    CleoNudgePriority
+  kind             CleoNudgeKind
+  priority         CleoNudgePriority
   /// Where the nudge is eligible to render. CHART / VISIT_PREPARE /
   /// BOTH (most common). Read-time filter narrows by current surface.
-  eligibleSurfaces            CleoNudgeSurface    @default(BOTH)
+  eligibleSurfaces CleoNudgeSurface  @default(BOTH)
 
   /// Stable hash of the source pattern's identity (e.g.
   /// `goal_stalled:goal_42:since_2026-04-15`). The compound unique
   /// constraint below treats two patterns with the SAME hash as the
   /// SAME logical nudge — re-running the generator is idempotent.
-  sourcePatternSnapshotHash   String
+  sourcePatternSnapshotHash String
   /// The pattern detail the detector saw at proposal time. Stored as
   /// JSON so the read-time renderer doesn't need to re-derive from
   /// the latest `observedPatternsJson` (which may have shifted).
   /// PHI-bearing (measure values etc.) — clinical surface only,
   /// never audit metadata.
-  sourcePatternSnapshotJson   Json
+  sourcePatternSnapshotJson Json
   /// Affordance slug — the categorical action label that records
   /// WHICH path the clinician chose on `_ACTED` (e.g.
   /// 'open-reconcile-flow' / 'start-recert-visit' /
   /// 'open-plan-editor' / 'review-failed-writeback' /
   /// 'reevaluate-goal'). Decision 7 — generic 'open' regresses the
   /// auditor lens.
-  affordanceSlug              String
+  affordanceSlug            String
 
   // ---- State machine ----
-  status                      CleoNudgeStatus     @default(PROPOSED)
-  proposedAt                  DateTime            @default(now())
+  status            CleoNudgeStatus @default(PROPOSED)
+  proposedAt        DateTime        @default(now())
   /// First-mount audit fired (decision 5). Subsequent mounts do NOT
   /// re-stamp this field.
-  shownAt                     DateTime?
-  dismissedAt                 DateTime?
-  dismissedByUserId           String?
-  dismissedBy                 User?               @relation("CleoNudgeDismissedBy", fields: [dismissedByUserId], references: [id])
-  snoozedAt                   DateTime?
-  snoozedByUserId             String?
-  snoozedBy                   User?               @relation("CleoNudgeSnoozedBy", fields: [snoozedByUserId], references: [id])
+  shownAt           DateTime?
+  dismissedAt       DateTime?
+  dismissedByUserId String?
+  dismissedBy       User?           @relation("CleoNudgeDismissedBy", fields: [dismissedByUserId], references: [id])
+  snoozedAt         DateTime?
+  snoozedByUserId   String?
+  snoozedBy         User?           @relation("CleoNudgeSnoozedBy", fields: [snoozedByUserId], references: [id])
   /// Future timestamp; the read filter excludes the row until now ≥ this.
-  snoozeUntil                 DateTime?
-  actedAt                     DateTime?
-  actedByUserId               String?
-  actedBy                     User?               @relation("CleoNudgeActedBy", fields: [actedByUserId], references: [id])
+  snoozeUntil       DateTime?
+  actedAt           DateTime?
+  actedByUserId     String?
+  actedBy           User?           @relation("CleoNudgeActedBy", fields: [actedByUserId], references: [id])
   /// The affordance slug the clinician pressed (echoes
   /// `affordanceSlug` on the happy path; may differ if the UI ever
   /// offers a secondary affordance under the same nudge — out of
   /// scope this sprint).
-  actedAction                 String?
+  actedAction       String?
   /// Stamped when the read-time expiry filter flips the row.
-  expiredAt                   DateTime?
+  expiredAt         DateTime?
 
   // ---- Lineage ----
   /// Sprint 0.12 persona-version stamp. Lets a regulator filter
   /// "all Cleo nudges under miss-cleo-v1" in one query.
-  personaVersion              String              @default("miss-cleo-v1")
+  personaVersion String @default("miss-cleo-v1")
 
   /// Decision 1 — one logical nudge per (clinician × patient × kind ×
   /// snapshot-hash). Generator `upsert` uses this compound key so a
@@ -2126,51 +2191,51 @@ model CleoNudge {
 // =============================================================================
 
 enum ExternalContextSource {
-  PATIENT_SUPPLIED      // patient sent audio / transcript
-  OUTSIDE_PROVIDER      // referring doc, prior facility
-  EARLIER_UNDOCUMENTED  // visit clinician did but never documented
-  CLINICIAN_NOTES       // free-text recollection
+  PATIENT_SUPPLIED // patient sent audio / transcript
+  OUTSIDE_PROVIDER // referring doc, prior facility
+  EARLIER_UNDOCUMENTED // visit clinician did but never documented
+  CLINICIAN_NOTES // free-text recollection
   OTHER
 }
 
 enum ExternalContextStatus {
-  PENDING_TRANSCRIPTION  // audio uploaded, batch job queued
-  READY                  // transcript + (optional) audio stored
-  FAILED                 // transcription failed; transcript not available
+  PENDING_TRANSCRIPTION // audio uploaded, batch job queued
+  READY // transcript + (optional) audio stored
+  FAILED // transcription failed; transcript not available
 }
 
 model ExternalContext {
-  id                String   @id @default(cuid())
-  orgId             String
-  organization      Organization @relation(fields: [orgId], references: [id])
-  patientId         String
-  patient           Patient  @relation(fields: [patientId], references: [id])
-  episodeOfCareId   String?
-  episode           EpisodeOfCare? @relation(fields: [episodeOfCareId], references: [id])
+  id              String         @id @default(cuid())
+  orgId           String
+  organization    Organization   @relation(fields: [orgId], references: [id])
+  patientId       String
+  patient         Patient        @relation(fields: [patientId], references: [id])
+  episodeOfCareId String?
+  episode         EpisodeOfCare? @relation(fields: [episodeOfCareId], references: [id])
 
   /// Date the underlying event happened — NOT when the row was created.
-  dateOfRecord      DateTime
-  source            ExternalContextSource
+  dateOfRecord DateTime
+  source       ExternalContextSource
   /// Optional human note about the source ("Dr. Smith referral letter",
   /// "patient phone follow-up", etc.).
-  sourceLabel       String?
+  sourceLabel  String?
 
   /// Free-text recollection / paste-in transcript / batch transcript output.
   /// Always present once status === READY. For PENDING_TRANSCRIPTION rows
   /// (upload mode pre-worker) this is the empty string; the worker overwrites
   /// it when the Soniox batch completes.
-  transcriptClean   String
+  transcriptClean String
   /// Soniox batch result raw form (if from audio upload). Null when transcript
   /// was pasted directly.
-  transcriptRaw     Json?
+  transcriptRaw   Json?
   /// S3 key for the source audio. Null when transcript-only.
-  audioFileKey      String?
+  audioFileKey    String?
 
-  status            ExternalContextStatus
+  status ExternalContextStatus
 
-  addedAt           DateTime @default(now())
-  addedByOrgUserId  String
-  addedBy           OrgUser  @relation("ExternalContextAddedBy", fields: [addedByOrgUserId], references: [id])
+  addedAt          DateTime @default(now())
+  addedByOrgUserId String
+  addedBy          OrgUser  @relation("ExternalContextAddedBy", fields: [addedByOrgUserId], references: [id])
 
   @@index([patientId, dateOfRecord])
   @@index([orgId])
@@ -2195,15 +2260,15 @@ model OrgUserSite {
 
   /// True for the clinician's primary/home site. UI defaults (schedule
   /// "My sites" filter, patient creation default siteId) use this.
-  isPrimary       Boolean  @default(false)
+  isPrimary Boolean @default(false)
 
   /// Free-text scope notes — "OR privileges", "evening shift only",
   /// "supervision required". Surfaced in admin UI; not enforced.
   credentialNotes String?
 
-  enrolledAt         DateTime @default(now())
+  enrolledAt          DateTime @default(now())
   enrolledByOrgUserId String?
-  enrolledBy         OrgUser? @relation("OrgUserSiteEnroller", fields: [enrolledByOrgUserId], references: [id])
+  enrolledBy          OrgUser? @relation("OrgUserSiteEnroller", fields: [enrolledByOrgUserId], references: [id])
 
   @@unique([orgUserId, siteId])
   @@index([siteId])
@@ -2248,10 +2313,10 @@ model CopilotPatientState {
 
   /// `{ cases: [{id, primaryIcd, primaryIcdLabel, lastViewerActivityAt,
   ///    routingConfidenceHistory, fhirMirror?}] }`. Zod-validated on write.
-  caseAwarenessJson    Json
+  caseAwarenessJson     Json
   /// `{ patterns: [{kind, ...detector-specific fields, observedInNoteIds,
   ///    count, firstSeen, lastSeen}] }`. Zod-validated on write.
-  observedPatternsJson Json
+  observedPatternsJson  Json
   /// `{ facts: [{summary, sourceNoteId?, sourceFollowUpId?,
   ///    sourceConditionId?, citedAt}] }`. Distilled from prior Ask
   ///    assistant turns' source pills (no LLM call in Phase 1).

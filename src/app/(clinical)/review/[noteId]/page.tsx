@@ -89,15 +89,21 @@ export default async function ReviewPage({ params }: { params: Promise<{ noteId:
     include: { originNote: { select: { signedAt: true } } },
     take: 20,
   });
-  const copilotFollowUps: CopilotFollowUp[] = openFollowUps.map((fu) => ({
-    id: fu.id,
-    text: fu.text,
-    status: fu.status,
-    source: {
-      noteId: fu.originNoteId,
-      date: (fu.originNote?.signedAt ?? fu.createdAt).toISOString().slice(0, 10),
-    },
-  }));
+  const copilotFollowUps: CopilotFollowUp[] = openFollowUps
+    // Defensive narrowing: the WHERE clause filters status='OPEN' so PROPOSED
+    // rows can't appear here in practice, but Prisma's emitted FollowUpStatus
+    // union still includes PROPOSED. Filtering at the map keeps the type
+    // boundary explicit + survives future query edits.
+    .filter((fu): fu is typeof fu & { status: Exclude<typeof fu.status, 'PROPOSED'> } => fu.status !== 'PROPOSED')
+    .map((fu) => ({
+      id: fu.id,
+      text: fu.text,
+      status: fu.status,
+      source: {
+        noteId: fu.originNoteId,
+        date: (fu.originNote?.signedAt ?? fu.createdAt).toISOString().slice(0, 10),
+      },
+    }));
 
   // Follow-ups the clinician has already pre-staged for the NEXT visit from
   // this current note (or that the copilot draft-confirm flow created with
