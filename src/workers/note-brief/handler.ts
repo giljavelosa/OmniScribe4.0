@@ -205,6 +205,12 @@ export async function handle(job: Job<NoteBriefJob>) {
               episodeId,
               originNoteId: noteId,
               text: item.text,
+              // Unit 49 PR2 — stamp the division from the origin note so the
+              // brief filter + triage guard can enforce the case-division
+              // rule on follow-ups too. Without this, a PT could mark an
+              // MD's follow-up as MET (cross-division write — the hole
+              // PR2 closes).
+              division: note.division,
             },
           }),
         ),
@@ -225,11 +231,20 @@ export async function handle(job: Job<NoteBriefJob>) {
     }
   }
 
-  // Open follow-ups for the brief preview: ALL currently-open follow-ups for
-  // this patient (the next visit's clinician should see every commitment,
-  // not just the ones from this note).
+  // Open follow-ups for the brief preview: every currently-open follow-up
+  // for this patient WITHIN THE NOTE'S DIVISION (Unit 49 PR2 — closes the
+  // cross-division bleed). A brief generated from a REHAB note only
+  // surfaces REHAB + MULTI follow-ups; the BH clinician's brief (from
+  // their own signed note) surfaces BH + MULTI. Same patient, two
+  // division-scoped views — no chance of a different-division clinician
+  // triaging this brief's commitments.
   const openFollowUps = await prisma.followUp.findMany({
-    where: { patientId: note.patientId, orgId, status: 'OPEN' },
+    where: {
+      patientId: note.patientId,
+      orgId,
+      status: 'OPEN',
+      division: { in: [note.division, 'MULTI'] },
+    },
     orderBy: { createdAt: 'desc' },
     take: 20,
     include: { originNote: { select: { signedAt: true } } },

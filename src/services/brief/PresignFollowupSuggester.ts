@@ -75,6 +75,10 @@ export class PresignFollowupSuggester {
         id: true,
         status: true,
         patientId: true,
+        // Unit 49 PR2 — pull division so PROPOSED follow-ups inherit
+        // the origin note's division (matches the post-sign extractor
+        // path so PROPOSED → OPEN promotions don't violate the gate).
+        division: true,
         encounter: { select: { episodeOfCareId: true } },
         draftJson: true,
         template: { select: { sectionSchema: true } },
@@ -162,6 +166,7 @@ export class PresignFollowupSuggester {
             originNoteId: noteId,
             text: item.text,
             status: 'PROPOSED',
+            division: note.division,
             proposedSourceText: planContent.slice(0, SOURCE_TEXT_LIMIT),
             proposedExtractorVersion: FOLLOWUP_EXTRACTOR_VERSION,
             proposedFromHash: planHash,

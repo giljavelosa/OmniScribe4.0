@@ -109,9 +109,15 @@ beforeEach(() => {
     signingPinHash: '$2b$10$bogusbcrypthashfortest',
     signUnlockedUntil: new Date(Date.now() + 5 * 60 * 1000),
   });
-  // Transaction commits its callback against a stub tx.
+  // Transaction commits its callback against a stub tx. Sprint pre-sign-
+  // followup-suggest added a `tx.followUp.updateMany` call inside the sign
+  // tx to auto-DROP unreviewed PROPOSED rows on sign — mock it as a no-op
+  // ({ count: 0 }) so this older test doesn't crash on the missing method.
   txMock.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) =>
-    cb({ note: { update: noteUpdate } }),
+    cb({
+      note: { update: noteUpdate },
+      followUp: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) },
+    }),
   );
   noteUpdate.mockResolvedValue({});
   encounterFindUnique.mockResolvedValue({ episodeOfCareId: null });

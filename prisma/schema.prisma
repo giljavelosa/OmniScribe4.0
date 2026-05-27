@@ -1585,6 +1585,17 @@ model FollowUp {
   closingNoteText   String? // required when MET (≥5 chars)
   dropReason        String? // required when DROPPED (≥5 chars)
 
+  /// Unit 49 PR2 — division stamp inherited from origin note at creation.
+  /// Closes the cross-division triage hole: a clinician from a different
+  /// division cannot mark another division's follow-up as MET/DROPPED/
+  /// CARRIED (enforced via assertCanTriageFollowUp + 403 +
+  /// CASE_DIVISION_BLOCKED audit). Brief query filters by viewer division
+  /// so a PT brief does not surface a BH clinician's follow-ups (the BH
+  /// clinician sees them in THEIR division's brief).
+  /// Orphan rows (origin note deleted) backfill to MULTI as the escape
+  /// hatch; MULTI passes the gate for any division.
+  division Division
+
   // Sprint pre-sign-followup-suggest — provenance for Cleo-proposed rows
   // (status=PROPOSED). All three are NULL for manually-added or post-sign-
   // extracted rows. Kept nullable + additive so existing rows are untouched.
@@ -1602,6 +1613,7 @@ model FollowUp {
   @@index([orgId, status])
   @@index([episodeId])
   @@index([originNoteId, status]) // Sprint pre-sign-followup-suggest — fast PROPOSED lookup for a draft note
+  @@index([orgId, patientId, division, status]) // Unit 49 PR2 — division-scoped brief + triage queries
 }
 
 // =============================================================================

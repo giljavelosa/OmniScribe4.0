@@ -19,7 +19,7 @@
  * (viewerDivision, 'MULTI')`). This helper is for the write boundary.
  */
 
-import type { CaseManagement, OrgUser } from '@prisma/client';
+import type { CaseManagement, FollowUp, OrgUser } from '@prisma/client';
 
 export class CaseDivisionDeniedError extends Error {
   readonly caseId: string;
@@ -59,4 +59,57 @@ export function assertCanContinueCase(
   if (c.division === 'MULTI') return;
   if (clinician.division === c.division) return;
   throw new CaseDivisionDeniedError(c.id, c.division, clinician.division);
+}
+
+// ---------------------------------------------------------------------------
+// PR2 — Follow-up division gate.
+//
+// Same shape as the case gate but for FollowUp.division. A different-
+// division clinician must not be able to mark another division's
+// commitment as MET / DROPPED / CARRIED. The triage route catches the
+// error and emits the same `CASE_DIVISION_BLOCKED` audit row with
+// metadata.route='followup-triage' as the discriminator so an auditor
+// can query both case- and follow-up-side blocks from one action type.
+// ---------------------------------------------------------------------------
+
+export class FollowUpDivisionDeniedError extends Error {
+  readonly followUpId: string;
+  readonly followUpDivision: string;
+  readonly clinicianDivision: string;
+
+  constructor(
+    followUpId: string,
+    followUpDivision: string,
+    clinicianDivision: string,
+  ) {
+    super(
+      `Clinician division ${clinicianDivision} cannot triage follow-up ${followUpId} (division ${followUpDivision})`,
+    );
+    this.name = 'FollowUpDivisionDeniedError';
+    this.followUpId = followUpId;
+    this.followUpDivision = followUpDivision;
+    this.clinicianDivision = clinicianDivision;
+  }
+}
+
+/**
+ * Assert that a clinician's division permits them to triage (MET / DROPPED
+ * / CARRIED) a follow-up. Same semantics as `assertCanContinueCase` but
+ * for `FollowUp` rows:
+ *
+ * - `MULTI` follow-ups pass for any clinician.
+ * - Same-division match passes.
+ * - All other combinations throw `FollowUpDivisionDeniedError`.
+ *
+ * The error includes the follow-up id + both divisions so the caller can
+ * build a PHI-free `CASE_DIVISION_BLOCKED` audit row (the shared action
+ * keeps the auditor's lens for cross-division write attempts unified).
+ */
+export function assertCanTriageFollowUp(
+  f: Pick<FollowUp, 'id' | 'division'>,
+  clinician: Pick<OrgUser, 'division'>,
+): void {
+  if (f.division === 'MULTI') return;
+  if (clinician.division === f.division) return;
+  throw new FollowUpDivisionDeniedError(f.id, f.division, clinician.division);
 }

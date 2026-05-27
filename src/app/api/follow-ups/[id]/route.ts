@@ -6,6 +6,10 @@ import { prisma } from '@/lib/prisma';
 import { requireFeatureAccess } from '@/lib/authz/server';
 import { writeAuditLog } from '@/lib/audit/log';
 import { assertOrgScoped } from '@/lib/phi-access';
+import {
+  assertCanTriageFollowUp,
+  FollowUpDivisionDeniedError,
+} from '@/lib/case-access';
 
 export const runtime = 'nodejs';
 
@@ -68,6 +72,50 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       { error: { code: 'not_open', message: `Follow-up is already ${followUp.status}.` } },
       { status: 409 },
     );
+  }
+
+  // Unit 49 PR2 — division gate. The follow-up carries its origin note's
+  // division; the caller must share that division (or hold MULTI). Pre-
+  // flight fetch of the actor's OrgUser.division — kept narrow (one
+  // column) so the gate doesn't bloat the request hot path. Failures
+  // emit the same CASE_DIVISION_BLOCKED audit action as the case-write
+  // gate with a `route='followup-triage'` discriminator so an auditor
+  // can query cross-division write attempts from one row type.
+  const actor = await prisma.orgUser.findUnique({
+    where: { id: authorizationUser.orgUserId },
+    select: { division: true },
+  });
+  if (!actor) {
+    return NextResponse.json({ error: { code: 'forbidden' } }, { status: 403 });
+  }
+  try {
+    assertCanTriageFollowUp(followUp, actor);
+  } catch (err) {
+    if (err instanceof FollowUpDivisionDeniedError) {
+      await writeAuditLog({
+        userId: user.id,
+        orgId: authorizationUser.orgId,
+        action: 'CASE_DIVISION_BLOCKED',
+        resourceType: 'FollowUp',
+        resourceId: id,
+        metadata: {
+          route: 'followup-triage',
+          followUpDivision: err.followUpDivision,
+          clinicianDivision: err.clinicianDivision,
+          attemptedStatus: parsed.data.status,
+        },
+      });
+      return NextResponse.json(
+        {
+          error: {
+            code: 'division_blocked',
+            message: `This follow-up belongs to the ${err.followUpDivision} division; your division (${err.clinicianDivision}) cannot triage it.`,
+          },
+        },
+        { status: 403 },
+      );
+    }
+    throw err;
   }
 
   const nowDate = new Date();

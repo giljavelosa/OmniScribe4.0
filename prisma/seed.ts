@@ -247,9 +247,20 @@ async function seedBriefsAndFollowUps(
     });
 
     for (const fu of content.openFollowUps) {
+      // Unit 49 PR2 — stamp division from the origin note. Seed data
+      // carries follow-ups across notes (carry-over scenarios) so the
+      // origin can have a different division from the current note;
+      // fetch per-row. Falls back to MULTI on a stale id (shouldn't
+      // happen in a clean seed run, but keeps the NOT NULL constraint
+      // happy if origin was deleted).
+      const originNote = await prisma.note.findUnique({
+        where: { id: fu.source.noteId },
+        select: { division: true },
+      });
+      const fuDivision = originNote?.division ?? Division.MULTI;
       await prisma.followUp.upsert({
         where: { id: fu.followUpId },
-        update: { text: fu.text, status: 'OPEN' },
+        update: { text: fu.text, status: 'OPEN', division: fuDivision },
         create: {
           id: fu.followUpId,
           orgId: spec.orgId,
@@ -258,6 +269,7 @@ async function seedBriefsAndFollowUps(
           originNoteId: fu.source.noteId,
           text: fu.text,
           status: 'OPEN',
+          division: fuDivision,
         },
       });
     }

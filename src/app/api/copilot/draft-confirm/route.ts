@@ -95,7 +95,10 @@ export async function POST(req: Request) {
 
     const note = await prisma.note.findFirst({
       where: { id: body.noteId, orgId: authorizationUser.orgId },
-      select: { id: true, encounter: { select: { episodeOfCareId: true } } },
+      // Unit 49 PR2 — pull `division` so the follow-up inherits its
+      // origin note's division (NOT NULL constraint + the case-division
+      // rule applies to copilot-created follow-ups too).
+      select: { id: true, division: true, encounter: { select: { episodeOfCareId: true } } },
     });
     if (!note) return NextResponse.json({ error: { code: 'note_not_found' } }, { status: 404 });
 
@@ -106,6 +109,7 @@ export async function POST(req: Request) {
         episodeId: note.encounter?.episodeOfCareId ?? null,
         originNoteId: body.noteId,
         text: body.content.slice(0, 1000),
+        division: note.division,
       },
     });
     createdFollowUpId = followUp.id;

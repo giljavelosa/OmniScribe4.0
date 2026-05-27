@@ -63,6 +63,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       status: true,
       clinicianOrgUserId: true,
       patientId: true,
+      // Unit 49 PR2 — FollowUp.division is NOT NULL and inherits from
+      // the origin note. Pull it here so the create payload below can
+      // stamp it without a second round trip.
+      division: true,
       encounter: { select: { episodeOfCareId: true } },
     },
   });
@@ -102,6 +106,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           episodeId,
           originNoteId: note.id,
           text,
+          division: note.division,
           status: FollowUpStatus.OPEN,
         },
         select: { id: true, text: true, status: true, createdAt: true },
