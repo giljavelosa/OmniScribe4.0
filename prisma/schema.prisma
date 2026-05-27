@@ -94,7 +94,6 @@ model Organization {
   defaultDivision  Division?
   billingEmail     String
   stripeCustomerId String?
-  forceMfa         Boolean   @default(false)
 
   // BAA tracking — required for the Owner console to mark an org "BAA on file".
   // Required at the application layer for new orgs created via /owner/orgs/new;
@@ -276,10 +275,6 @@ model User {
   name             String?
   image            String?
   passwordHash     String
-  mfaSecret        String?
-  mfaEnabled       Boolean      @default(false)
-  // JSON array of bcrypt-hashed recovery codes; each element is consumed when used.
-  mfaRecoveryCodes Json?
   // Signing-PIN MVP — provider sets a 4-digit PIN once, used to unlock sign
   // actions for a grace window (signUnlockedUntil) instead of re-prompting
   // TOTP per signature. Bcrypt-hashed at rest.

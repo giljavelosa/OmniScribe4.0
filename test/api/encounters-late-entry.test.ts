@@ -73,9 +73,7 @@ function primeMocksForSuccess() {
     role: 'CLINICIAN',
     division: 'MEDICAL',
     isActive: true,
-    canManagePatients: false,
-    organization: { forceMfa: false },
-  });
+    canManagePatients: false,  });
   patientFindFirst.mockResolvedValueOnce({ id: 'pat_1', siteId: 's_one' });
   caseManagementFindFirst.mockResolvedValueOnce({ id: 'case_1', status: 'ACTIVE' });
   orgUserFindUnique.mockResolvedValueOnce({ role: 'CLINICIAN', orgId: 'org_1' });

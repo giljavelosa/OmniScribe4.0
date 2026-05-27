@@ -48,7 +48,6 @@ export async function seedRiverbendOrganization(
       division: Division.MULTI,
       defaultDivision: Division.MEDICAL,
       billingEmail: 'billing@riverbend.local',
-      forceMfa: false,
       baaExecutedAt: new Date('2026-05-09T00:00:00Z'),
       baaVersion: '2026.05.01',
       complianceProfile: 'STANDARD',
@@ -201,7 +200,6 @@ export async function seedRiverbendOrganization(
         email: u.email,
         name: u.name,
         passwordHash,
-        mfaEnabled: false,
         platformRole: 'NONE',
       },
     });

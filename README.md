@@ -5,7 +5,7 @@
 ## Implementation status
 
 - **Phase:** Waves 0–6 capability complete (Units 01–37). **Polish gate active** — Waves 7 & 8 paused. See [`context/specs/polish-waves-0-6.md`](context/specs/polish-waves-0-6.md).
-- **Stack pins:** Next.js 16 (App Router) + React 19 + TypeScript strict, Prisma 6 + Postgres 16 + pgvector, Redis 7 + BullMQ 5, NextAuth v5 + MFA TOTP, AWS Bedrock (Sonnet 4.5 / Haiku 4.5), Soniox real-time STT.
+- **Stack pins:** Next.js 16 (App Router) + React 19 + TypeScript strict, Prisma 6 + Postgres 16 + pgvector, Redis 7 + BullMQ 5, NextAuth v5 (password-only auth + signing PIN), AWS Bedrock (Sonnet 4.5 / Haiku 4.5), Soniox real-time STT.
 - **Live ledger:** [`context/progress-tracker.md`](context/progress-tracker.md). Build plan: [`context/specs/00-build-plan.md`](context/specs/00-build-plan.md).
 
 ## Local-dev quickstart
@@ -31,13 +31,13 @@ npm run dev:workers                 # Terminal 2 — BullMQ workers
 
 Demo credentials seeded by `prisma db seed`:
 
-| Email                    | Role         | Password    | MFA |
-|--------------------------|--------------|-------------|-----|
-| `admin@demo.local`       | ORG_ADMIN    | `Demo1234!` | enrolled (see `docs/SEED_CREDENTIALS.md`) |
-| `clinician@demo.local`   | CLINICIAN    | `Demo1234!` | enroll on first sign-in |
-| `viewer@demo.local`      | VIEWER       | `Demo1234!` | enroll on first sign-in |
-| `siteadmin@demo.local`   | SITE_ADMIN   | `Demo1234!` | enroll on first sign-in |
-| `owner@demo.local`       | PLATFORM_OWNER | `Demo1234!` | enroll on first sign-in |
+| Email                    | Role         | Password    |
+|--------------------------|--------------|-------------|
+| `admin@demo.local`       | ORG_ADMIN    | `Demo1234!` |
+| `clinician@demo.local`   | CLINICIAN    | `Demo1234!` |
+| `viewer@demo.local`      | VIEWER       | `Demo1234!` |
+| `siteadmin@demo.local`   | SITE_ADMIN   | `Demo1234!` |
+| `owner@demo.local`       | PLATFORM_OWNER | `Demo1234!` |
 
 ## Building the next unit
 

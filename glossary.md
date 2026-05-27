@@ -24,9 +24,7 @@
 | **US Core** | The US FHIR Implementation Guide profile. Target for v1, not formally certified. |
 | **MAC** | Medicare Administrative Contractor. The auditor for Medicare claims. Three-lens "Medicare Compliance Officer" lens references this. |
 | **Right of Amendment** | HIPAA right for patients to request changes to their PHI. OmniScribe supports via addenda (signed notes are immutable). |
-| **MFA** | Multi-Factor Authentication. v1 is TOTP (6-digit time-based one-time password). |
-| **TOTP** | Time-based One-Time Password (RFC 6238). The MFA standard for v1. |
-| **WebAuthn** | Hardware-key / passkey authentication. **Out of scope for v1**; TOTP only. |
+| **Signing PIN** | Per-user 4-digit PIN (bcrypt-hashed at `User.signingPinHash`) that gates note signing for a grace window. The protection at the moment of attestation; replaces what MFA TOTP did before Sprint 0.20. |
 | **BullMQ** | Node.js queue library on Redis. OmniScribe runs 5 queues (`transcription`, `ai-generation`, `note-finalize`, `voice-id`, `note-brief`). |
 | **OKLCH** | Perceptual color space (Lightness / Chroma / Hue). All design tokens use OKLCH for cross-mode consistency. |
 | **pgvector** | PostgreSQL extension for vector similarity search. Used for voice-embedding cosine similarity. |
