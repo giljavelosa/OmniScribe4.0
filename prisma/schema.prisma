@@ -130,6 +130,9 @@ model Organization {
   /// Unit 35 — Per-org monthly LLM budget in USD. null = no threshold.
   monthlyLlmBudgetUsd Decimal? @db.Decimal(10, 2)
 
+  /// Unit 51 — Cached org-wide visit bank balance (ledger is source of truth).
+  visitBankBalance Int @default(0)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -162,6 +165,10 @@ model Organization {
   fhirWriteBackProposals FhirWriteBackProposal[]
   // Sprint 0.18 — Cleo's proactive nudges (back-relation only).
   cleoNudges             CleoNudge[]
+  // Unit 51 — commercial capacity.
+  commercialContract     OrganizationCommercialContract?
+  visitLedgerEntries     VisitLedgerEntry[]
+  visitCapacityRequests  VisitCapacityRequest[]
 
   @@index([baaExecutedAt])
   @@index([subscriptionPlan])
@@ -374,6 +381,8 @@ model OrgUser {
   canManagePatients  Boolean      @default(false)
   preferredNoteStyle NoteStyle    @default(HYBRID)
   isActive           Boolean      @default(true)
+  /// Unit 51 — Per-clinician visit wallet (admin-allocated from org bank).
+  visitWalletBalance Int          @default(0)
   createdAt          DateTime     @default(now())
   updatedAt          DateTime     @updatedAt
 
@@ -390,6 +399,9 @@ model OrgUser {
   copilotConversations   CopilotConversation[]
   // Sprint 0.18 — Cleo's proactive nudges, scoped to this clinician.
   cleoNudges             CleoNudge[]
+  visitLedgerEntries     VisitLedgerEntry[]
+  visitCapacityRequests  VisitCapacityRequest[] @relation("VisitRequestRequester")
+  visitCapacityReviews   VisitCapacityRequest[] @relation("VisitRequestReviewer")
 
   @@unique([userId, orgId])
   @@index([orgId, role])
@@ -2506,4 +2518,163 @@ model CopilotMessage {
   conversation CopilotConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
   @@index([conversationId, createdAt])
+}
+
+// =============================================================================
+// Unit 51 — Commercial capacity: visit bank, user wallets, owner catalog.
+// =============================================================================
+
+enum CommercialModel {
+  TRIAL
+  SOLO_VISIT_BANK
+  ORG_VISIT_BANK
+  ENTERPRISE_PER_SEAT
+  LEGACY_SKU
+}
+
+enum VisitCreditBasis {
+  COMMITTED
+  ACTIVE
+}
+
+enum VisitDebitOrder {
+  USER_WALLET_THEN_BANK
+  BANK_ONLY
+}
+
+enum MonthlyAllowancePolicy {
+  EXPIRE
+  ROLLOVER_USER
+  SWEEP_TO_BANK
+}
+
+enum VisitLedgerSourceType {
+  TRIAL_GRANT
+  CONTRACT_BUNDLE
+  MONTHLY_ALLOWANCE
+  BUNDLE_PURCHASE
+  OWNER_GRANT
+  ADMIN_ALLOCATE
+  ADMIN_RECLAIM
+  NOTE_DEBIT
+  ADJUSTMENT
+  REQUEST_APPROVED
+}
+
+enum VisitCapacityRequestStatus {
+  PENDING
+  APPROVED
+  DENIED
+}
+
+/// Versioned platform-wide pricing catalog. Owner publishes; org contracts
+/// may snapshot `catalogVersion` at signing.
+model PlatformBillingCatalog {
+  id        String   @id @default(cuid())
+  version   Int
+  isActive  Boolean  @default(false)
+  /// Monthly solo/org tiers: [{ id, label, monthlyPriceCents, monthlyVisitCredit }]
+  soloTiersJson Json
+  /// One-time top-up packs: [{ id, label, visitCount, priceCents }]
+  visitBundlesJson Json
+  collaboratorSeatPriceCents Int
+  defaultOveragePriceCents   Int
+  trialSoloVisits            Int
+  trialSoloDays              Int
+  trialOrgSeats              Int
+  trialOrgVisits             Int
+  trialOrgDays               Int
+  /// Enterprise template defaults for owner contract form prefill.
+  enterpriseTemplateJson Json
+  publishedAt       DateTime?
+  publishedByUserId String?
+  createdAt         DateTime  @default(now())
+
+  commercialContracts OrganizationCommercialContract[]
+
+  @@unique([version])
+  @@index([isActive])
+}
+
+/// Per-org commercial terms — drives capacity enforcement + owner overrides.
+model OrganizationCommercialContract {
+  orgId String @id
+  org   Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  commercialModel CommercialModel @default(TRIAL)
+  catalogVersionId  String?
+  catalogVersion    PlatformBillingCatalog? @relation(fields: [catalogVersionId], references: [id])
+
+  committedSeats Int @default(1)
+  contractStart  DateTime?
+  contractEnd    DateTime?
+
+  seatPriceCents          Int?
+  visitsPerSeatPerMonth   Int?
+  visitCreditBasis        VisitCreditBasis @default(COMMITTED)
+  seatBillBasis           VisitCreditBasis @default(COMMITTED)
+  monthlyAllowancePolicy  MonthlyAllowancePolicy @default(SWEEP_TO_BANK)
+  monthlyAllowanceRolloverCap Int?
+
+  signingBundleVisits Int @default(0)
+  overagePriceCents   Int?
+  allowOverage        Boolean @default(false)
+  allowUserVisitRequests Boolean @default(true)
+  visitDebitOrder     VisitDebitOrder @default(USER_WALLET_THEN_BANK)
+
+  /// Solo monthly tier id from catalog (e.g. "solo-pro").
+  monthlyTierId String?
+  monthlyPriceOverrideCents Int?
+  monthlyVisitCreditOverride Int?
+
+  trialEndsAt DateTime?
+  capacityEnforcementEnabled Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// Append-only visit ledger. Positive amount = credit; negative = debit.
+model VisitLedgerEntry {
+  id        String   @id @default(cuid())
+  orgId     String
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  /// When set, entry affects user wallet; null = org bank only.
+  orgUserId String?
+  orgUser   OrgUser? @relation(fields: [orgUserId], references: [id], onDelete: SetNull)
+
+  amount   Int
+  orgBankBalanceAfter   Int
+  userWalletBalanceAfter Int?
+
+  sourceType VisitLedgerSourceType
+  sourceId   String?
+  expiresAt  DateTime?
+  idempotencyKey String? @unique
+  metadata   Json?
+
+  createdByUserId String?
+  createdAt       DateTime @default(now())
+
+  @@index([orgId, createdAt])
+  @@index([orgUserId, createdAt])
+}
+
+model VisitCapacityRequest {
+  id                  String @id @default(cuid())
+  orgId               String
+  org                 Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  requesterOrgUserId  String
+  requester           OrgUser @relation("VisitRequestRequester", fields: [requesterOrgUserId], references: [id], onDelete: Cascade)
+  requestedVisits     Int
+  message             String? @db.VarChar(500)
+  status              VisitCapacityRequestStatus @default(PENDING)
+  reviewerOrgUserId   String?
+  reviewer            OrgUser? @relation("VisitRequestReviewer", fields: [reviewerOrgUserId], references: [id], onDelete: SetNull)
+  responseNote        String? @db.VarChar(500)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([orgId, status])
+  @@index([requesterOrgUserId, createdAt])
 }

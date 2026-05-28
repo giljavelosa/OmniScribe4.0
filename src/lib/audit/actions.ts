@@ -202,7 +202,18 @@ export type AuditAction =
   | 'STRIPE_SUBSCRIPTION_CANCELED'
   | 'STRIPE_PAYMENT_FAILED'
   | 'STRIPE_BILLING_PORTAL_OPENED'
-  // ---- Unit 10: Section-regenerate UX maturity ----
+  | 'STRIPE_CAPACITY_CHECKOUT_STARTED'
+  | 'STRIPE_CAPACITY_FULFILLED'
+  // ---- Unit 51: Commercial capacity / visit ledger ----
+  | 'VISIT_LEDGER_CREDIT'
+  | 'VISIT_LEDGER_DEBIT'
+  | 'VISIT_ALLOCATED'
+  | 'VISIT_RECLAIMED'
+  | 'VISIT_REQUEST_CREATED'
+  | 'VISIT_REQUEST_APPROVED'
+  | 'VISIT_REQUEST_DENIED'
+  | 'PLATFORM_CATALOG_PUBLISHED'
+  | 'ORG_COMMERCIAL_UPDATED'
   | 'SECTION_DIFF_VIEWED'
   | 'SECTION_REGEN_RETRY_BATCH'
   // ---- Unit 11: Episode-of-care maturity ----

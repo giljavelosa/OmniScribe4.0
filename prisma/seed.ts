@@ -56,6 +56,7 @@ import { upsertCaseManagement, upsertRehabEpisode } from './seed-case-helpers';
 import { seedAcmeOrganization, seedAcmeAdditionalEpisodes } from './seed-acme-org';
 import { seedCascadiaOrganization } from './seed-cascadia-org';
 import { seedRiverbendOrganization } from './seed-riverbend-org';
+import { ensureActiveCatalog } from '../src/lib/billing/catalog-service';
 import type { PriorContextBriefContent } from '../src/types/brief';
 
 const prisma = new PrismaClient();
@@ -297,6 +298,31 @@ async function main() {
       // Note: countersignedBy filled in after we create the owner user below.
       complianceProfile: ComplianceProfile.STANDARD,
     },
+  });
+
+  // Unit 51 — platform billing catalog (early — independent of visit corpus).
+  const catalog = await ensureActiveCatalog();
+  await prisma.organizationCommercialContract.upsert({
+    where: { orgId: org.id },
+    create: {
+      orgId: org.id,
+      commercialModel: 'ORG_VISIT_BANK',
+      catalogVersionId: catalog.id,
+      committedSeats: 49,
+      visitsPerSeatPerMonth: 160,
+      visitCreditBasis: 'COMMITTED',
+      capacityEnforcementEnabled: true,
+      allowUserVisitRequests: true,
+    },
+    update: {
+      commercialModel: 'ORG_VISIT_BANK',
+      committedSeats: 49,
+      capacityEnforcementEnabled: true,
+    },
+  });
+  await prisma.organization.update({
+    where: { id: org.id },
+    data: { visitBankBalance: 50_000 },
   });
 
   const site = await prisma.site.upsert({
@@ -1358,6 +1384,13 @@ async function main() {
       data: { primaryIcd: icd },
     });
   }
+
+  // Unit 51 — platform billing catalog + Demo Clinic commercial contract.
+  // (Applied early after org create; block kept for idempotent re-seed.)
+  await prisma.organization.update({
+    where: { id: 'seed-demo-clinic' },
+    data: { visitBankBalance: 50_000 },
+  });
 
   console.log('Seed complete.');
 }

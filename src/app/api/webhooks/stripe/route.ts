@@ -5,6 +5,10 @@ import { prisma } from '@/lib/prisma';
 import { writeAuditLog } from '@/lib/audit/log';
 import { getStripe } from '@/lib/stripe/client';
 import { reconcileSeats } from '@/lib/stripe/reconcile';
+import {
+  fulfillMonthlyTierInvoice,
+  handleCheckoutSessionCompleted,
+} from '@/lib/billing/stripe-fulfillment';
 
 export const runtime = 'nodejs';
 
@@ -47,16 +51,34 @@ export async function POST(req: Request) {
     switch (event.type) {
       case 'checkout.session.completed': {
         const session = event.data.object as Stripe.Checkout.Session;
+        await handleCheckoutSessionCompleted(session);
+
         if (typeof session.subscription === 'string') {
           const sub = await stripe.subscriptions.retrieve(session.subscription);
-          await provisionFromSubscription(sub);
+          // Legacy seat subscription — skip when capacity tier owns the sub.
+          if (sub.metadata?.purchaseType !== 'monthly_tier') {
+            await provisionFromSubscription(sub);
+          }
         }
         break;
       }
 
       case 'customer.subscription.created':
       case 'customer.subscription.updated': {
-        await provisionFromSubscription(event.data.object as Stripe.Subscription);
+        const sub = event.data.object as Stripe.Subscription;
+        if (sub.metadata?.purchaseType !== 'monthly_tier') {
+          await provisionFromSubscription(sub);
+        }
+        break;
+      }
+
+      case 'invoice.paid': {
+        const invoice = event.data.object as Stripe.Invoice;
+        const billingReason = (invoice as unknown as { billing_reason?: string }).billing_reason;
+        // Initial subscription invoice is fulfilled at checkout.session.completed.
+        if (billingReason === 'subscription_cycle') {
+          await fulfillMonthlyTierInvoice(invoice);
+        }
         break;
       }
 

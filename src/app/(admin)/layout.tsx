@@ -35,6 +35,9 @@ export default async function AdminLayout({ children }: { children: ReactNode })
               <Link href="/admin/seats" className="text-muted-foreground hover:text-foreground">
                 Seats
               </Link>
+              <Link href="/admin/capacity" className="text-muted-foreground hover:text-foreground">
+                Capacity
+              </Link>
               <Link href="/admin/templates" className="text-muted-foreground hover:text-foreground">
                 Templates
               </Link>

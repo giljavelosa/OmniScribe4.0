@@ -5,6 +5,7 @@ import { z } from 'zod';
 
 import { prisma } from '@/lib/prisma';
 import { writeAuditLog, writePlatformAuditLog } from '@/lib/audit/log';
+import { ensureOrganizationCommercialContract } from '@/lib/billing/ensure-contract';
 import { validatePassword } from '@/lib/auth/password-policy';
 import { consumeSignupAttempt } from '@/lib/rate-limit';
 import {
@@ -174,6 +175,8 @@ export async function POST(req: Request) {
     resourceId: org.id,
     metadata: auditMeta,
   });
+
+  await ensureOrganizationCommercialContract(org.id);
 
   return NextResponse.json(
     { data: { ok: true, orgId: org.id, userId: user.id } },

@@ -4,7 +4,8 @@
 
 ## Current Phase
 
-- **⏸ Wave 7 paused — Polish gate (Waves 0–6).** Units 01–37 capability shipped; deferred stubs, touch targets, telehealth real-mode, voice-ID, FHIR sweeper, PWA icons, and announcement banners must land before Wave 7 Unit 41. **Canonical checklist:** [`context/specs/polish-waves-0-6.md`](specs/polish-waves-0-6.md).
+- **▶ Wave 7 Unit 51 PR2 in progress — Stripe capacity checkout, monthly allowance cron, usage/capacity UI.** PR1 (schema + ledger + owner catalog + gates) landed in branch. PR2 adds checkout-capacity, webhook fulfillment, billing UI, `/account/usage` bank section, contract expiry banners.
+- **⏸ Wave 7 Unit 41 superseded** by Unit 51 visit-bank model.
 - **▶ Wave 8 Unit 42 shipped 2026-05-21** out of polish-gate order — the cockpit page actively being built needed Miss Cleo mounted, and the agent-reliability fixes (parse-fence tolerance, iteration refund, `lookupPatientGoals`) were unblocking real clinician questions. Wave 8 Units 43–47 remain paused until the polish gate clears.
 - **🔧 Sprint 0 in progress — Login & session trust (P0).** MFA redirect loops are the first-reported production bug. Fixing the JWT cookie propagation race and hardening the D2 chain before Sprint A clinical work. **Spec:** [`context/specs/sprint-0-login-first.md`](specs/sprint-0-login-first.md).
 
@@ -856,6 +857,14 @@ Extension to shipped Units 06 + 48 (the Unit 48 spec lives on the unit-48 branch
 
 ## In Progress
 
+- **Unit 51 — Commercial capacity ledger (2026-05-27)**
+  - **Schema**: `Organization.visitBankBalance`, `OrgUser.visitWalletBalance`, `PlatformBillingCatalog`, `OrganizationCommercialContract`, `VisitLedgerEntry`, `VisitCapacityRequest`. Migration `20260603000000_unit_51_commercial_capacity`.
+  - **Ledger**: `src/lib/billing/visit-ledger.ts` — credit org bank, allocate/reclaim wallet↔bank, idempotent note debit.
+  - **Gate**: `checkVisitCapacity` on encounter + schedule + telehealth start; `debitVisitOnNoteGeneration` on `NOTE_GENERATION_COMPLETED`.
+  - **Owner**: `/owner/commercial/catalog`, `/owner/orgs/[id]` commercial card + credit API.
+  - **Admin**: `/admin/capacity` — bank, wallets, allocate/reclaim, visit request approve/deny.
+  - **Signup**: auto `ensureOrganizationCommercialContract` + trial grant.
+  - **Deferred PR2**: Stripe bundle checkout, monthly allowance cron, contract expiry emails, `/account/usage` bank UI refresh.
 - **Polish gate (Waves 0–6)** — planning complete; implementation not started. Pick Sprint A item to begin.
 - **Unit 48 — Pre-visit brief intent + intent-aware spine** — spec drafted 2026-05-23 ([`specs/48-pre-visit-brief-intent.md`](specs/48-pre-visit-brief-intent.md)) with companion reference docs ([`taxonomy`](../references/visit-type-taxonomy.md), [`state-of-play audit`](../references/brief-chain-state-of-play.md)). **Not yet under implementation.** Sequencing TBD relative to Sprint 0 (in flight) and Sprint A polish work. Suggested first PR per spec §Phasing: schema + IntentProposer + `/proposed-intent` endpoint + unit tests (no UI; no behavior change).
 - **Unit 49 PR1 + PR2 + §F/§G** — landed on main 2026-05-26 through 2026-05-27. **PR1 (2026-05-26):** §A schema migration + §B helper + audit + §C wire-in at accept/edit/continue/encounters/start-visit + §D router division scope + §E silent UI filters on patient-chart/review/home. **PR2 (2026-05-27, commit `4b67aec`):** `FollowUp.division` column + 403 gate on triage routes + 8 new unit tests for `assertCanTriageFollowUp`. **§F + §G (2026-05-27, commit `5226371`):** Cleo case-nominator badge (§F) + pre-sign intent-fit chip (§G) both behind `cleo.caseRule.v1` feature flag. New plumbing: `src/lib/feature-flags.ts` (first per-org read helper around existing FeatureFlag model, 15 tests); `src/services/copilot/case-nominator.ts` (deterministic 4-tier ranking, 20 tests); `src/services/copilot/intent-case-fit.ts` (rule-20-safe structured-fields-only compare, 10 tests); new endpoint `GET /api/patients/[id]/case-suggestions`; `<CaseSuggestionBadge>` wired into start-visit dialog `CaseRadio`; `<IntentFitChip>` wired into `<ReadinessPanel>` on /review. **Deep e2e:** 8/8 in `e2e/unit-49-cleo-case-rule.spec.ts` (4 API contract + 1 viewer-403 + 2 UI on /review + 1 flag-off-default). **Dependency cherry-pick:** Unit 48 PR1 (`f728b65`) — schema + IntentProposer + endpoint — was a prerequisite for §G's intent comparison and was reconciled onto main from `feat/unit-48-pr1-intent-foundation`. **Status:** PR3 (post-sign Cleo biller advisory card with `ADDENDUM` / `OPEN_NEW_NEXT_VISIT` / `MARK_CLEARED` actions on Note.billerAdvisoryJson) still pending; cases-panel hero badge wiring still pending (currently the badge only renders inside the start-visit dialog's picker, which Sprint 0.13 hides by default — follow-on item).

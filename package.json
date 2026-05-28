@@ -27,6 +27,7 @@
     "touch-audit": "node scripts/touch-target-audit.mjs",
     "invite-sweep": "node scripts/invite-sweep.mjs",
     "rollup-refresh": "node scripts/rollup-refresh.mjs",
+    "billing:monthly-allowance": "node --env-file=.env --import=tsx scripts/billing-monthly-allowance.ts",
     "postinstall": "node scripts/postinstall.mjs"
   },
   "prisma": {

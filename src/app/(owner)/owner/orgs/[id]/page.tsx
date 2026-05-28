@@ -12,6 +12,7 @@ import { TransactionsTimeline } from './_components/transactions-timeline';
 import { ImpersonateControl } from './_components/impersonate-control';
 import { AuditRetentionForm } from './_components/audit-retention-form';
 import { LlmCostCard } from './_components/llm-cost-card';
+import { CommercialContractCard } from './_components/commercial-contract-card';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Organization' };
@@ -119,6 +120,13 @@ export default async function OwnerOrgPage({ params }: { params: Promise<{ id: s
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader><CardTitle className="text-md">Commercial contract</CardTitle></CardHeader>
+        <CardContent>
+          <CommercialContractCard orgId={org.id} />
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader><CardTitle className="text-md">30-day usage</CardTitle></CardHeader>

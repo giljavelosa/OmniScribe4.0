@@ -4,7 +4,6 @@ import { useEffect, useState, useTransition } from 'react';
 import { useSearchParams } from 'next/navigation';
 
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -23,61 +22,77 @@ type BillingState = {
   stripeCustomerLinked: boolean;
 };
 
-type SeatsResponse = {
-  summary: { activeSeats: number; assignedSeats: number };
-  stripeConfigured: boolean;
-  stripeCustomerLinked: boolean;
+type CatalogState = {
+  soloTiers: Array<{
+    id: string;
+    label: string;
+    monthlyPriceCents: number;
+    monthlyVisitCredit: number;
+  }>;
+  visitBundles: Array<{ id: string; label: string; visitCount: number; priceCents: number }>;
 };
 
 type ActionResponse = { data?: { url?: string }; error?: { message?: string } };
 
-/**
- * BillingClient — the org-admin subscription surface. Shows whether the org
- * has an active subscription and lets the admin either start one (Stripe
- * Checkout) or manage an existing one (Stripe customer portal). Seats are
- * provisioned by the Stripe webhook after checkout; they show up on /admin/seats.
- */
+function formatUsd(cents: number) {
+  return `$${(cents / 100).toFixed(2)}`;
+}
+
 export function BillingClient() {
   const params = useSearchParams();
   const checkout = params.get('checkout');
+  const capacity = params.get('capacity');
 
   const [state, setState] = useState<BillingState | null>(null);
+  const [catalog, setCatalog] = useState<CatalogState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [, startLoad] = useTransition();
-  const [tier, setTier] = useState<'SOLO' | 'TEAM'>('TEAM');
-  const [quantity, setQuantity] = useState(3);
+  const [tier, setTier] = useState('solo-standard');
+  const [bundleId, setBundleId] = useState('bundle-500');
   const [pending, startAction] = useTransition();
 
   function load() {
     setError(null);
     startLoad(async () => {
-      const res = await fetch('/api/admin/seats');
-      if (!res.ok) {
+      const [seatsRes, catalogRes] = await Promise.all([
+        fetch('/api/admin/seats'),
+        fetch('/api/billing/capacity-catalog'),
+      ]);
+      if (!seatsRes.ok) {
         setError('Failed to load billing status.');
         return;
       }
-      const json = (await res.json()) as SeatsResponse;
+      const seatsJson = (await seatsRes.json()) as {
+        summary: { activeSeats: number; assignedSeats: number };
+        stripeConfigured: boolean;
+        stripeCustomerLinked: boolean;
+      };
       setState({
-        activeSeats: json.summary.activeSeats,
-        assignedSeats: json.summary.assignedSeats,
-        stripeConfigured: json.stripeConfigured,
-        stripeCustomerLinked: json.stripeCustomerLinked,
+        activeSeats: seatsJson.summary.activeSeats,
+        assignedSeats: seatsJson.summary.assignedSeats,
+        stripeConfigured: seatsJson.stripeConfigured,
+        stripeCustomerLinked: seatsJson.stripeCustomerLinked,
       });
+      if (catalogRes.ok) {
+        const catJson = (await catalogRes.json()) as { data: CatalogState };
+        setCatalog(catJson.data);
+        if (catJson.data.soloTiers[0]) setTier(catJson.data.soloTiers[1]?.id ?? catJson.data.soloTiers[0].id);
+        if (catJson.data.visitBundles[0]) setBundleId(catJson.data.visitBundles[0].id);
+      }
     });
   }
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     load();
   }, []);
 
-  function startCheckout() {
+  function startCapacityCheckout(purchaseType: 'monthly_tier' | 'visit_bundle', catalogItemId: string) {
     setError(null);
     startAction(async () => {
-      const res = await fetch('/api/billing/checkout', {
+      const res = await fetch('/api/billing/checkout-capacity', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tier, quantity }),
+        body: JSON.stringify({ purchaseType, catalogItemId }),
       });
       const json = (await res.json().catch(() => null)) as ActionResponse | null;
       if (!res.ok || !json?.data?.url) {
@@ -101,15 +116,19 @@ export function BillingClient() {
     });
   }
 
-  const subscribed = !!state?.stripeCustomerLinked;
   const stripeOff = !!state && !state.stripeConfigured;
+  const selectedTier = catalog?.soloTiers.find((t) => t.id === tier);
+  const selectedBundle = catalog?.visitBundles.find((b) => b.id === bundleId);
 
   return (
     <div className="space-y-3">
       {checkout === 'success' && (
         <StatusBanner variant="info">
-          Payment received. Seats are being provisioned and will appear on the Seats page in a
-          few moments.
+          {capacity === 'bundle'
+            ? 'Payment received — visit bundle is being added to your org bank.'
+            : capacity === 'tier'
+              ? 'Subscription started — monthly visits are being credited to your org bank.'
+              : 'Payment received. Changes sync in a few moments.'}
         </StatusBanner>
       )}
       {checkout === 'cancelled' && (
@@ -118,78 +137,121 @@ export function BillingClient() {
       {error && <StatusBanner variant="danger">{error}</StatusBanner>}
       {stripeOff && (
         <StatusBanner variant="danger">
-          Billing is not configured on this server — subscriptions are unavailable until Stripe
-          keys are set.
+          Stripe is not configured — set STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET to enable
+          purchases.
         </StatusBanner>
       )}
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-md">Subscription</CardTitle>
+          <CardTitle className="text-md">Visit bank — monthly plan</CardTitle>
           <CardDescription>
-            {state
-              ? subscribed
-                ? `${state.activeSeats} seat${state.activeSeats === 1 ? '' : 's'} · ${state.assignedSeats} assigned`
-                : 'No active subscription.'
-              : 'Loading…'}
+            Subscribe to a solo tier. Each month, visits are credited to your org bank (shared
+            pool).
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
-          {subscribed ? (
+          {catalog ? (
             <>
-              <p className="text-xs text-muted-foreground">
-                Update your payment method, change the seat quantity, or cancel in the Stripe
-                billing portal. Seat-count changes sync back automatically.
-              </p>
-              <Button type="button" onClick={openPortal} disabled={pending || stripeOff}>
-                {pending ? 'Opening…' : 'Manage billing'}
+              <div className="space-y-1.5">
+                <Label>Plan tier</Label>
+                <Select value={tier} onValueChange={setTier}>
+                  <SelectTrigger disabled={pending || stripeOff}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {catalog.soloTiers.map((t) => (
+                      <SelectItem key={t.id} value={t.id}>
+                        {t.label} — {formatUsd(t.monthlyPriceCents)}/mo · {t.monthlyVisitCredit}{' '}
+                        visits
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button
+                type="button"
+                disabled={pending || stripeOff || !selectedTier}
+                onClick={() => startCapacityCheckout('monthly_tier', tier)}
+              >
+                {pending
+                  ? 'Starting checkout…'
+                  : selectedTier
+                    ? `Subscribe — ${selectedTier.label}`
+                    : 'Subscribe'}
               </Button>
             </>
           ) : (
+            <p className="text-sm text-muted-foreground">Loading catalog…</p>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-md">Visit top-up bundles</CardTitle>
+          <CardDescription>
+            One-time purchase — visits are added to your org bank immediately after payment.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {catalog ? (
             <>
-              <p className="text-xs text-muted-foreground">
-                Start a subscription to provision seats. You assign seats to clinicians on the
-                Seats page; billing follows the number of seats you buy, not how many are
-                assigned.
-              </p>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <Label>Plan</Label>
-                  <Select value={tier} onValueChange={(v) => setTier(v as 'SOLO' | 'TEAM')}>
-                    <SelectTrigger disabled={pending}>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="SOLO">Solo (1 seat)</SelectItem>
-                      <SelectItem value="TEAM">Team</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                {tier === 'TEAM' && (
-                  <div className="space-y-1.5">
-                    <Label htmlFor="seat-qty">Seats</Label>
-                    <Input
-                      id="seat-qty"
-                      type="number"
-                      min={1}
-                      max={500}
-                      value={quantity}
-                      onChange={(e) =>
-                        setQuantity(Math.max(1, Math.min(500, Number(e.target.value) || 1)))
-                      }
-                      disabled={pending}
-                    />
-                  </div>
-                )}
+              <div className="space-y-1.5">
+                <Label>Bundle</Label>
+                <Select value={bundleId} onValueChange={setBundleId}>
+                  <SelectTrigger disabled={pending || stripeOff}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {catalog.visitBundles.map((b) => (
+                      <SelectItem key={b.id} value={b.id}>
+                        {b.label} — {formatUsd(b.priceCents)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
-              <Button type="button" onClick={startCheckout} disabled={pending || stripeOff}>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={pending || stripeOff || !selectedBundle}
+                onClick={() => startCapacityCheckout('visit_bundle', bundleId)}
+              >
                 {pending
                   ? 'Starting checkout…'
-                  : tier === 'SOLO'
-                    ? 'Subscribe — Solo'
-                    : `Subscribe — Team (${quantity} seat${quantity === 1 ? '' : 's'})`}
+                  : selectedBundle
+                    ? `Buy ${selectedBundle.label}`
+                    : 'Buy bundle'}
               </Button>
             </>
+          ) : (
+            <p className="text-sm text-muted-foreground">Loading catalog…</p>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-md">Legacy seat subscription</CardTitle>
+          <CardDescription>
+            {state
+              ? state.stripeCustomerLinked
+                ? `${state.activeSeats} seat${state.activeSeats === 1 ? '' : 's'} · ${state.assignedSeats} assigned`
+                : 'No legacy seat subscription.'
+              : 'Loading…'}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {state?.stripeCustomerLinked ? (
+            <Button type="button" variant="outline" onClick={openPortal} disabled={pending || stripeOff}>
+              Manage legacy billing
+            </Button>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              Per-seat Stripe subscriptions from the pre-visit-bank model. New customers should use
+              visit-bank plans above.
+            </p>
           )}
         </CardContent>
       </Card>

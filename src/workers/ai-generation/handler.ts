@@ -15,6 +15,7 @@ import {
   mergeSectionIntoDraft,
   recordSectionAttempt,
 } from '@/lib/notes/section-status';
+import { debitVisitOnNoteGeneration } from '@/lib/billing/debit-on-generation';
 import type { TranscriptClean } from '@/services/transcription';
 
 type GenerateNoteJob = {
@@ -246,6 +247,7 @@ export async function handle(job: Job<AiGenerationJob>) {
         personaVersion: PERSONA_VERSION,
       },
     });
+    await debitVisitOnNoteGeneration(orgId, noteId);
     // Sprint 0.13 — chain-enqueue Miss Cleo's case-router. Same pattern as
     // enqueueNoteBriefJob from the sign route. Idempotent on noteId
     // (queue.ts) so a retried completion collapses to one Redis entry.
@@ -349,6 +351,7 @@ export async function handle(job: Job<AiGenerationJob>) {
       personaVersion: PERSONA_VERSION,
     },
   });
+  await debitVisitOnNoteGeneration(orgId, noteId);
 
   // Sprint 0.13 — chain-enqueue Miss Cleo's case-router so the review
   // screen can render her routing proposal at the top. Idempotent on

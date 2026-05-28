@@ -16,6 +16,7 @@ import {
   recommendSoloPlan,
 } from '@/lib/billing/recommend-plan';
 import { countOrgDraftsSince } from '@/lib/billing/draft-counter';
+import { VisitBankSection } from '@/components/billing/visit-bank-section';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Usage' };
@@ -96,6 +97,8 @@ export default async function AccountUsagePage() {
           {org.name} · {policy.label} plan · last 30 days
         </p>
       </header>
+
+      <VisitBankSection />
 
       {org.billingPlan === 'TRIAL' && (
         <StatusBanner variant="info">

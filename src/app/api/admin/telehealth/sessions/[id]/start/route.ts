@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireFeatureAccess } from '@/lib/authz/server';
 import { checkClinicianSeat, seatRequiredResponse } from '@/lib/authz/seat';
+import { checkVisitCapacity, visitCapacityRequiredResponse } from '@/lib/billing/capacity-gate';
 import { writeAuditLog } from '@/lib/audit/log';
 import { assertOrgScoped } from '@/lib/phi-access';
 import { createRoom, dailyConfig } from '@/services/telehealth/daily';
@@ -62,6 +63,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // when Stripe billing isn't configured; org admins bypass.
   const seatGate = await checkClinicianSeat(session.schedule.clinicianOrgUserId);
   if (!seatGate.ok) return seatRequiredResponse();
+
+  const capacityGate = await checkVisitCapacity(
+    session.orgId,
+    session.schedule.clinicianOrgUserId,
+  );
+  if (!capacityGate.ok) return visitCapacityRequiredResponse(capacityGate.reason);
 
   if (session.status !== 'CONSENT_CAPTURED') {
     // CONSENT_CAPTURED is the only acceptable prerequisite — the state

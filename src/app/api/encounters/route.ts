@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma';
 import { requireFeatureAccess } from '@/lib/authz/server';
 import { canActAtSite, getClinicianSiteIds } from '@/lib/authz/site-scope';
 import { checkClinicianSeat, seatRequiredResponse } from '@/lib/authz/seat';
+import { checkVisitCapacity, visitCapacityRequiredResponse } from '@/lib/billing/capacity-gate';
 import { writeAuditLog } from '@/lib/audit/log';
 import { startVisit } from '@/lib/encounters/start';
 import { DivisionResolutionError } from '@/lib/divisions/resolve';
@@ -63,6 +64,9 @@ export async function POST(req: Request) {
   // Stripe billing isn't configured; org admins bypass.
   const seatGate = await checkClinicianSeat(authorizationUser.orgUserId);
   if (!seatGate.ok) return seatRequiredResponse();
+
+  const capacityGate = await checkVisitCapacity(authorizationUser.orgId, authorizationUser.orgUserId);
+  if (!capacityGate.ok) return visitCapacityRequiredResponse(capacityGate.reason);
 
   const parsed = bodySchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
