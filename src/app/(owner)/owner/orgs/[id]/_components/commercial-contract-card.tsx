@@ -54,6 +54,7 @@ export function CommercialContractCard({ orgId }: { orgId: string }) {
 
   useEffect(() => {
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- load is stable; orgId is the trigger
   }, [orgId]);
 
   function creditBank() {

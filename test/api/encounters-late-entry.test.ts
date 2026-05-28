@@ -48,6 +48,12 @@ vi.mock('@/lib/authz/seat', () => ({
   seatRequiredResponse: vi.fn(),
 }));
 
+// Visit-bank gate: bypass — capacity enforcement is covered in capacity-gate.test.ts.
+vi.mock('@/lib/billing/capacity-gate', () => ({
+  checkVisitCapacity: vi.fn(async () => ({ ok: true, available: 100 })),
+  visitCapacityRequiredResponse: vi.fn(),
+}));
+
 import { POST } from '@/app/api/encounters/route';
 
 function session() {

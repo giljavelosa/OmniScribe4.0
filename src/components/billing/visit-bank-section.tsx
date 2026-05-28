@@ -22,6 +22,7 @@ type CapacityView = {
 export function VisitBankSection({ isOrgAdmin = false }: { isOrgAdmin?: boolean }) {
   const [data, setData] = useState<CapacityView | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [nowMs] = useState(() => Date.now());
   const [, startLoad] = useTransition();
 
   useEffect(() => {
@@ -53,7 +54,7 @@ export function VisitBankSection({ isOrgAdmin = false }: { isOrgAdmin?: boolean 
   if (!data.commercialModel) return null;
 
   const trialActive =
-    data.trialEndsAt && new Date(data.trialEndsAt).getTime() > Date.now();
+    data.trialEndsAt && new Date(data.trialEndsAt).getTime() > nowMs;
 
   return (
     <div className="space-y-3">

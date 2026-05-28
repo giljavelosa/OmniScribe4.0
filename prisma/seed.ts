@@ -165,7 +165,7 @@ async function seedVisitCorpus(
       'seed-riverbend-episode-linda-medical': 'seed-riverbend-case-linda-medical',
       'seed-riverbend-episode-linda-bh': 'seed-riverbend-case-linda-bh',
     };
-    let caseManagementId = await resolveCaseManagementIdForVisit({
+    const caseManagementId = await resolveCaseManagementIdForVisit({
       orgId,
       patientId: v.patientId,
       episodeId: v.episodeId,
