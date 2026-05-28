@@ -12,7 +12,7 @@ Ship the **visit-bank commercial model** discussed in product planning:
 4. **Capacity gate** — block new visit creation when no visits available (unless overage allowed).
 5. **Visit requests** — clinicians request visits; org admin approve/deny (v1 workflow, not open chat).
 
-Stripe catalog sync and checkout for bundles remain **follow-up PR**; this unit wires ledger + owner/admin surfaces + gates.
+Stripe catalog sync and checkout for bundles ship in PR2 (`checkout-capacity` + webhook fulfillment); org-tier checkout remains Group C follow-on.
 
 ## Locked decisions
 
@@ -52,14 +52,18 @@ See migration `20260603000000_unit_51_commercial_capacity`.
 
 ## Verify when done
 
-- [ ] Migration applies; seed creates active catalog + Demo Clinic contract with bank balance.
-- [ ] `npm test` — visit-ledger + capacity-gate tests green.
-- [ ] Owner can publish catalog; org contract PATCH audited.
-- [ ] Admin allocate 10 visits user A → bank −10, wallet +10.
-- [ ] Admin reclaim 5 → wallet −5, bank +5.
-- [ ] Encounter POST returns 403 `no_visit_capacity` when bank+wallet=0 and no overage.
-- [ ] Note generation debits 1 visit idempotently per noteId.
-- [ ] Visit request approve flow credits wallet from bank.
+- [x] Migration applies; seed creates active catalog + Demo Clinic contract with bank balance.
+- [x] `npm test` — visit-ledger + capacity-gate + stripe-fulfillment tests green.
+- [x] Owner can publish catalog; org contract PATCH audited.
+- [x] Admin allocate 10 visits user A → bank −10, wallet +10.
+- [x] Admin reclaim 5 → wallet −5, bank +5.
+- [x] Encounter POST returns 403 `no_visit_capacity` when bank+wallet=0 and no overage.
+- [x] Note generation debits 1 visit idempotently per noteId.
+- [x] Visit request approve flow credits wallet from bank.
+
+## PR-close (2026-05-27)
+
+Unit 51 core + PR2 shipped on main. PR-close adds stripe-fulfillment + capacity-gate unit tests, seed FK fix for visit corpus, and tracker/build-plan closure. Follow-on work (legacy billing bridge, org-tier checkout, overage) tracked as Groups B–D.
 
 ## Out of scope (PR3+)
 

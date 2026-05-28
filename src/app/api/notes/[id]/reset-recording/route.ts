@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 
-import { NoteStatus } from '@prisma/client';
+import { NoteStatus, Prisma } from '@prisma/client';
 
 import { prisma } from '@/lib/prisma';
 import { requireFeatureAccess } from '@/lib/authz/server';
@@ -98,9 +98,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       where: { id: noteId },
       data: {
         status: NoteStatus.PREPARING,
-        draftJson: null,
-        transcriptRaw: null,
-        transcriptClean: null,
+        draftJson: Prisma.JsonNull,
+        transcriptRaw: Prisma.JsonNull,
+        transcriptClean: Prisma.JsonNull,
         interruptedAt: null,
         lastWorkerError: null,
       },

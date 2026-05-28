@@ -75,6 +75,57 @@ type VisitSeedContext = {
   clinicianRowByEmail: Record<string, { userId: string; orgUserId: string }>;
 };
 
+/** Resolve a CaseManagement FK that actually exists before Encounter upsert. */
+async function resolveCaseManagementIdForVisit(params: {
+  orgId: string;
+  patientId: string;
+  episodeId?: string | null;
+  legacyCaseByEpisodeId: Record<string, string>;
+}): Promise<string> {
+  const { orgId, patientId, episodeId, legacyCaseByEpisodeId } = params;
+
+  if (episodeId) {
+    const ep = await prisma.episodeOfCare.findUnique({
+      where: { id: episodeId },
+      select: { caseManagementId: true },
+    });
+    if (ep?.caseManagementId) {
+      const linked = await prisma.caseManagement.findUnique({
+        where: { id: ep.caseManagementId },
+        select: { id: true },
+      });
+      if (linked) return ep.caseManagementId;
+    }
+
+    const legacyCaseId = legacyCaseByEpisodeId[episodeId];
+    if (legacyCaseId) {
+      const legacy = await prisma.caseManagement.findUnique({
+        where: { id: legacyCaseId },
+        select: { id: true },
+      });
+      if (legacy) return legacyCaseId;
+    }
+  }
+
+  const seedCaseId = `seed-case-${patientId}`;
+  const seedCase = await prisma.caseManagement.findUnique({
+    where: { id: seedCaseId },
+    select: { id: true },
+  });
+  if (seedCase) return seedCaseId;
+
+  const patientCase = await prisma.caseManagement.findFirst({
+    where: { orgId, patientId, status: 'ACTIVE' },
+    orderBy: { openedAt: 'desc' },
+    select: { id: true },
+  });
+  if (patientCase) return patientCase.id;
+
+  throw new Error(
+    `seedVisitCorpus: no CaseManagement for patient ${patientId} in org ${orgId}`,
+  );
+}
+
 async function seedVisitCorpus(
   corpus: SeedVisitCorpus[],
   ctx: VisitSeedContext,
@@ -114,26 +165,19 @@ async function seedVisitCorpus(
       'seed-riverbend-episode-linda-medical': 'seed-riverbend-case-linda-medical',
       'seed-riverbend-episode-linda-bh': 'seed-riverbend-case-linda-bh',
     };
-    let caseManagementId = `seed-case-${v.patientId}`;
+    let caseManagementId = await resolveCaseManagementIdForVisit({
+      orgId,
+      patientId: v.patientId,
+      episodeId: v.episodeId,
+      legacyCaseByEpisodeId,
+    });
     let episodeOfCareId: string | null = v.episodeId ?? null;
     if (v.episodeId) {
       const ep = await prisma.episodeOfCare.findUnique({
         where: { id: v.episodeId },
-        select: { id: true, caseManagementId: true },
+        select: { id: true },
       });
-      if (ep) {
-        caseManagementId = ep.caseManagementId;
-        episodeOfCareId = ep.id;
-      } else {
-        caseManagementId =
-          legacyCaseByEpisodeId[v.episodeId] ?? `cm-from-ep-${v.episodeId}`;
-        const caseRow = await prisma.caseManagement.findUnique({
-          where: { id: caseManagementId },
-          select: { id: true },
-        });
-        if (!caseRow) caseManagementId = `seed-case-${v.patientId}`;
-        episodeOfCareId = null;
-      }
+      if (!ep) episodeOfCareId = null;
     }
 
     const encounter = await prisma.encounter.upsert({

@@ -139,7 +139,7 @@ Per [`references/encounter-copilot-spec.md`](../../references/encounter-copilot-
 | 39 | **Subscription plan governance** | `SubscriptionPlan` enum, owner overrides, `ORG_SUBSCRIPTION_UPDATED` audit, `/owner/orgs/[id]` subscription form | §09 | billing slice of [`32-owner-console-maturity.md`](32-owner-console-maturity.md) | complete (built as Unit 32) |
 | 40 | **Self-serve commercial onboarding** | `/signup`, atomic org+SOLO seat, `ORG_SELF_PROVISIONED` audit; Stripe checkout during signup deferred | 08 | billing slice of [`37-public-signup.md`](37-public-signup.md) | complete (built as Unit 37) |
 | 41 | **Usage-based billing & plan-tier flags** | `FEATURE_FLAG_USAGE_BASED_BILLING`, Stripe metered usage, plan-tier feature gates | 38, 39 | (write spec on start) | superseded by 51 |
-| 51 | **Commercial capacity — visit bank & catalog** | Platform pricing catalog, org commercial contract, visit ledger (bank + user wallets), admin allocate/reclaim, capacity gate, visit requests | 38, 39 | [`51-commercial-capacity-ledger.md`](51-commercial-capacity-ledger.md) | in progress |
+| 51 | **Commercial capacity — visit bank & catalog** | Platform pricing catalog, org commercial contract, visit ledger (bank + user wallets), admin allocate/reclaim, capacity gate, visit requests, Stripe capacity checkout | 38, 39 | [`51-commercial-capacity-ledger.md`](51-commercial-capacity-ledger.md) | complete (2026-05-27) |
 
 **End of Wave 7**: Org can subscribe via Stripe, seats reconcile from webhook, admins assign seats, clinicians are gated, owner can set plan tier, and new orgs can self-provision with a trial SOLO seat. Unit 51 adds visit-bank commercial capacity on top of the Stripe foundation.
 
