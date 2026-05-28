@@ -11,6 +11,13 @@ const eslintConfig = [
     ignores: [
       'node_modules/**',
       '.next/**',
+      // Nested build output (e.g. parallel Claude-agent worktrees
+      // under `.claude/worktrees/<name>/.next/`) — root `.next/**`
+      // doesn't reach these. Without this, ESLint scans thousands
+      // of compiled JS chunks and reports ~1100 pre-existing errors
+      // that have no source-of-truth in our tree.
+      '**/.next/**',
+      '.claude/**',
       'dist/**',
       'build/**',
       'src/generated/**',
