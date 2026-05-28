@@ -7,7 +7,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { StatusBanner } from '@/components/ui/status-banner';
+import { TrialStatusBanner } from '@/components/billing/trial-status-banner';
 import { contractExpiryWarning } from '@/lib/billing/monthly-allowance';
+import { getTrialExpiryState } from '@/lib/billing/commercial-mode';
 
 type UserRow = {
   orgUserId: string;
@@ -127,9 +129,28 @@ export function CapacityClient() {
     ? contractExpiryWarning(new Date(state.contract.contractEnd))
     : { level: 'none' as const, daysLeft: Infinity };
 
+  const trialExpiry = state.contract
+    ? getTrialExpiryState({
+        commercialModel: state.contract.commercialModel,
+        trialEndsAt: state.contract.trialEndsAt
+          ? new Date(state.contract.trialEndsAt)
+          : null,
+      } as Parameters<typeof getTrialExpiryState>[0])
+    : null;
+
   return (
     <div className="space-y-6">
       {error && <StatusBanner variant="danger">{error}</StatusBanner>}
+
+      {trialExpiry && (
+        <TrialStatusBanner
+          trialEndsAt={state.contract?.trialEndsAt ?? null}
+          isOrgAdmin
+          expired={trialExpiry.expired}
+          daysLeft={trialExpiry.daysLeft}
+          urgent={trialExpiry.urgent}
+        />
+      )}
 
       {expiry.level !== 'none' && (
         <StatusBanner variant={expiry.level === 'urgent' ? 'danger' : 'warning'}>

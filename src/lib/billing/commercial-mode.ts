@@ -36,6 +36,35 @@ export function isTrialContractActive(
   return contract.trialEndsAt.getTime() > Date.now();
 }
 
+export type TrialExpiryState = {
+  expired: boolean;
+  daysLeft: number;
+  urgent: boolean;
+  warn: boolean;
+};
+
+/** Trial countdown / expiry for visit-bank trial orgs. */
+export function getTrialExpiryState(
+  contract:
+    | Pick<OrganizationCommercialContract, 'commercialModel' | 'trialEndsAt'>
+    | null
+    | undefined,
+  now = new Date(),
+): TrialExpiryState | null {
+  if (!contract || contract.commercialModel !== 'TRIAL' || !contract.trialEndsAt) return null;
+  const ms = contract.trialEndsAt.getTime() - now.getTime();
+  if (ms <= 0) {
+    return { expired: true, daysLeft: 0, urgent: true, warn: true };
+  }
+  const daysLeft = Math.ceil(ms / 86_400_000);
+  return {
+    expired: false,
+    daysLeft,
+    urgent: daysLeft <= 7,
+    warn: daysLeft <= 14,
+  };
+}
+
 /** Map catalog solo tier ids → legacy BillingPlan for dashboards still keyed on enum. */
 export function billingPlanForSoloTierId(tierId: string): BillingPlan {
   switch (tierId) {
@@ -103,6 +132,8 @@ export async function loadClinicianCapacitySummary(orgId: string, orgUserId: str
     commercialModel: contract!.commercialModel as CommercialModel,
     availableVisits,
     trialActive: isTrialContractActive(contract),
+    trialExpiry: getTrialExpiryState(contract),
+    trialEndsAt: contract!.trialEndsAt?.toISOString() ?? null,
   };
 }
 

@@ -63,7 +63,7 @@ See migration `20260603000000_unit_51_commercial_capacity`.
 
 ## PR-close (2026-05-27)
 
-Unit 51 core + PR2 shipped on main. PR-close adds stripe-fulfillment + capacity-gate unit tests, seed FK fix for visit corpus, and tracker/build-plan closure. Follow-on work (legacy billing bridge, org-tier checkout, overage) tracked as Groups B–D.
+Unit 51 core + PR2 shipped on main. PR-close adds stripe-fulfillment + capacity-gate unit tests, seed FK fix for visit corpus, and tracker/build-plan closure. Groups B–D shipped 2026-05-27 (legacy bridge, org plans, billing ops).
 
 ## Out of scope (PR3+)
 

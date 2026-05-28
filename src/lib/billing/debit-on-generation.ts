@@ -6,12 +6,12 @@
 
 import { prisma } from '@/lib/prisma';
 import { writeAuditLog } from '@/lib/audit/log';
-import { getVisitDebitOrderForOrg } from '@/lib/billing/capacity-gate';
+import { getVisitDebitContextForOrg } from '@/lib/billing/capacity-gate';
 import { debitForNote, VisitLedgerError } from '@/lib/billing/visit-ledger';
 
 export async function debitVisitOnNoteGeneration(orgId: string, noteId: string): Promise<void> {
-  const visitDebitOrder = await getVisitDebitOrderForOrg(orgId);
-  if (!visitDebitOrder) return;
+  const debitContext = await getVisitDebitContextForOrg(orgId);
+  if (!debitContext) return;
 
   const note = await prisma.note.findFirst({
     where: { id: noteId, orgId },
@@ -24,7 +24,8 @@ export async function debitVisitOnNoteGeneration(orgId: string, noteId: string):
       orgId,
       orgUserId: note.clinicianOrgUserId,
       noteId,
-      visitDebitOrder,
+      visitDebitOrder: debitContext.visitDebitOrder,
+      allowOverage: debitContext.allowOverage,
     });
     if (result.debited && !result.duplicate) {
       await writeAuditLog({
@@ -37,6 +38,7 @@ export async function debitVisitOnNoteGeneration(orgId: string, noteId: string):
           orgBankBalance: result.orgBankBalance,
           userWalletBalance: result.userWalletBalance,
           debitedFrom: result.debitedFrom,
+          overage: result.overage ?? false,
         },
       });
     }

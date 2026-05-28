@@ -4,6 +4,9 @@
  *
  * Cron suggestion: 0 6 1 * * (06:00 UTC on the 1st of each month)
  *
+ * Production scheduling (EventBridge → ECS task) — see infra/README.md
+ * § Billing ops cron jobs once the compute stack lands.
+ *
  * Usage: npx tsx scripts/billing-monthly-allowance.ts
  */
 

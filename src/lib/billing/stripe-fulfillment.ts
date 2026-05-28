@@ -8,6 +8,7 @@ import { CommercialModel } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { writeAuditLog } from '@/lib/audit/log';
 import { creditOrgBank } from '@/lib/billing/visit-ledger';
+import { applyMonthlyAllowancePolicyBeforeRenewal } from '@/lib/billing/allowance-policy';
 import {
   ensureOrganizationCommercialContract,
 } from '@/lib/billing/ensure-contract';
@@ -139,6 +140,8 @@ export async function fulfillMonthlyTierCheckout(
 
   await ensureOrganizationCommercialContract(meta.orgId);
 
+  const { payload: catalogPayload } = await getActiveCatalogPayload();
+
   if (typeof session.subscription === 'string') {
     await prisma.organization.update({
       where: { id: meta.orgId },
@@ -161,6 +164,8 @@ export async function fulfillMonthlyTierCheckout(
       monthlyTierId: meta.catalogItemId,
       committedSeats: 1,
       capacityEnforcementEnabled: true,
+      allowOverage: true,
+      overagePriceCents: catalogPayload.defaultOveragePriceCents,
     },
   });
 
@@ -335,12 +340,35 @@ export async function fulfillMonthlyTierInvoice(invoice: Stripe.Invoice): Promis
   const visitCredit = parseVisitCredit(meta);
   if (visitCredit === null || visitCredit < 1) return false;
 
+  const contract = await prisma.organizationCommercialContract.findUnique({
+    where: { orgId: meta.orgId },
+    select: {
+      monthlyAllowancePolicy: true,
+      monthlyAllowanceRolloverCap: true,
+    },
+  });
+
+  if (contract) {
+    await applyMonthlyAllowancePolicyBeforeRenewal({
+      orgId: meta.orgId,
+      policy: contract.monthlyAllowancePolicy,
+      rolloverCap: contract.monthlyAllowanceRolloverCap,
+      allowanceAmount: visitCredit,
+    });
+  }
+
+  const subRuntime = sub as unknown as { current_period_end?: number | null };
+  const periodEnd = subRuntime.current_period_end
+    ? new Date(subRuntime.current_period_end * 1000)
+    : undefined;
+
   const result = await creditOrgBank({
     orgId: meta.orgId,
     amount: visitCredit,
     sourceType: 'MONTHLY_ALLOWANCE',
     sourceId: invoice.id,
     idempotencyKey: `invoice-tier:${invoice.id}`,
+    expiresAt: periodEnd,
     metadata: {
       tierId: meta.catalogItemId,
       stripeInvoiceId: invoice.id,

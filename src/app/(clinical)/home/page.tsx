@@ -26,6 +26,7 @@ import { TodayStatusTiles } from '@/components/home/today-status-tiles';
 import { AiCommandPanel } from '@/components/home/ai-command-panel';
 import { DraftUsagePill } from '@/components/billing/draft-usage-pill';
 import { VisitCapacityPill } from '@/components/billing/visit-capacity-pill';
+import { TrialStatusBanner } from '@/components/billing/trial-status-banner';
 import { countOrgDraftsLast30Days } from '@/lib/billing/draft-counter';
 import { loadClinicianCapacitySummary } from '@/lib/billing/commercial-mode';
 import { HomeSearchForm } from './_components/home-search-form';
@@ -339,6 +340,19 @@ export default async function HomePage({
           <p className="text-primary-foreground/70 text-xs shrink-0 text-right">{dateLabel}</p>
         </div>
 
+        {/* 0.25 Trial / capacity warning */}
+        {capacitySummary?.trialExpiry && (
+          <div className="px-4 pt-2 bg-card">
+            <TrialStatusBanner
+              trialEndsAt={capacitySummary.trialEndsAt}
+              isOrgAdmin={!!isAdmin}
+              expired={capacitySummary.trialExpiry.expired}
+              daysLeft={capacitySummary.trialExpiry.daysLeft}
+              urgent={capacitySummary.trialExpiry.urgent}
+            />
+          </div>
+        )}
+
         {/* 0.5. Live draft-usage pill — clinician sees their plan
             consumption above the fold like a battery icon. Click →
             /account/usage for the breakdown. */}
@@ -554,6 +568,16 @@ export default async function HomePage({
               )
             )}
           </div>
+
+          {capacitySummary?.trialExpiry && (
+            <TrialStatusBanner
+              trialEndsAt={capacitySummary.trialEndsAt}
+              isOrgAdmin={!!isAdmin}
+              expired={capacitySummary.trialExpiry.expired}
+              daysLeft={capacitySummary.trialExpiry.daysLeft}
+              urgent={capacitySummary.trialExpiry.urgent}
+            />
+          )}
 
           {/* Patient search */}
           <HomeSearchForm />

@@ -66,13 +66,19 @@ export function visitCapacityRequiredResponse(reason: Exclude<CapacityGateResult
 }
 
 /**
- * Load contract + debit order for note completion worker.
+ * Load contract debit settings for note completion worker.
  */
-export async function getVisitDebitOrderForOrg(orgId: string) {
+export async function getVisitDebitContextForOrg(orgId: string) {
   const contract = await prisma.organizationCommercialContract.findUnique({
     where: { orgId },
     select: { visitDebitOrder: true, capacityEnforcementEnabled: true, allowOverage: true },
   });
   if (!contract?.capacityEnforcementEnabled) return null;
-  return contract.visitDebitOrder;
+  return contract;
+}
+
+/** @deprecated Use getVisitDebitContextForOrg */
+export async function getVisitDebitOrderForOrg(orgId: string) {
+  const ctx = await getVisitDebitContextForOrg(orgId);
+  return ctx?.visitDebitOrder ?? null;
 }

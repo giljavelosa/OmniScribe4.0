@@ -1,9 +1,9 @@
 'use client';
 
-import Link from 'next/link';
 import { useEffect, useState, useTransition } from 'react';
 
 import { VisitRequestButton } from '@/components/billing/visit-request-button';
+import { TrialStatusBanner } from '@/components/billing/trial-status-banner';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { StatusBanner } from '@/components/ui/status-banner';
 
@@ -14,6 +14,9 @@ type CapacityView = {
   availableVisits: number;
   commercialModel: string | null;
   trialEndsAt: string | null;
+  trialExpired?: boolean;
+  trialDaysLeft?: number;
+  trialUrgent?: boolean;
   contractEnd: string | null;
   allowUserVisitRequests: boolean;
   expiryWarning: { daysLeft: number; level: 'warn' | 'urgent' } | null;
@@ -22,7 +25,6 @@ type CapacityView = {
 export function VisitBankSection({ isOrgAdmin = false }: { isOrgAdmin?: boolean }) {
   const [data, setData] = useState<CapacityView | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [nowMs] = useState(() => Date.now());
   const [, startLoad] = useTransition();
 
   useEffect(() => {
@@ -53,11 +55,25 @@ export function VisitBankSection({ isOrgAdmin = false }: { isOrgAdmin?: boolean 
 
   if (!data.commercialModel) return null;
 
-  const trialActive =
-    data.trialEndsAt && new Date(data.trialEndsAt).getTime() > nowMs;
-
   return (
     <div className="space-y-3">
+      {data.trialExpired && (
+        <TrialStatusBanner
+          trialEndsAt={data.trialEndsAt}
+          isOrgAdmin={isOrgAdmin}
+          expired
+        />
+      )}
+
+      {!data.trialExpired && data.trialEndsAt && data.trialDaysLeft != null && (
+        <TrialStatusBanner
+          trialEndsAt={data.trialEndsAt}
+          isOrgAdmin={isOrgAdmin}
+          daysLeft={data.trialDaysLeft}
+          urgent={data.trialUrgent ?? false}
+        />
+      )}
+
       {data.expiryWarning && (
         <StatusBanner
           variant={data.expiryWarning.level === 'urgent' ? 'danger' : 'warning'}
@@ -65,30 +81,6 @@ export function VisitBankSection({ isOrgAdmin = false }: { isOrgAdmin?: boolean 
           {data.expiryWarning.level === 'urgent'
             ? `Your org contract ends in ${data.expiryWarning.daysLeft} day${data.expiryWarning.daysLeft === 1 ? '' : 's'}. Contact your admin to renew.`
             : `Your org contract ends in ${data.expiryWarning.daysLeft} days.`}
-        </StatusBanner>
-      )}
-
-      {trialActive && (
-        <StatusBanner variant="info">
-          Trial active until{' '}
-          {new Date(data.trialEndsAt!).toLocaleDateString(undefined, {
-            month: 'short',
-            day: 'numeric',
-            year: 'numeric',
-          })}
-          .
-          {isOrgAdmin ? (
-            <>
-              {' '}
-              Subscribe or buy visit bundles from{' '}
-              <Link href="/admin/billing" className="underline font-medium">
-                Billing
-              </Link>
-              .
-            </>
-          ) : (
-            <> Ask your org admin to choose a plan before the trial ends.</>
-          )}
         </StatusBanner>
       )}
 

@@ -101,6 +101,21 @@ npm run destroy -- -c env=dev
 Production stacks are deletion-protected. To tear them down: remove
 the protection manually via the AWS console, then re-run destroy.
 
+## Billing ops cron jobs (Unit 51 Group D)
+
+Once the **compute stack** lands (ECS Fargate or similar), schedule
+these npm scripts against the production app container:
+
+| Schedule (UTC) | Command | Purpose |
+|----------------|---------|---------|
+| `0 6 1 * *` | `npm run billing:monthly-allowance` | Enterprise org banks — seats × visits/seat/month |
+| `0 6 * * *` | `npx tsx scripts/billing-usage-report.ts` | Legacy draft overage → Stripe metered line |
+| `15 6 * * *` | `npm run billing:visit-overage-report` | Visit-bank overage → Stripe `visit_overage` line |
+
+Wire each as an **EventBridge rule → ECS RunTask** (or App Runner
+job) with the same env + secrets as the web service. Exit code `1`
+on partial failure is intentional — ops should review CloudWatch logs.
+
 ## Architecture decisions
 
 - **CDK v2 in TypeScript**, not Terraform: matches the app's TS

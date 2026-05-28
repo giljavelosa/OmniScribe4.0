@@ -4,7 +4,7 @@
 
 ## Current Phase
 
-- **✅ Wave 7 Unit 51 complete (2026-05-27)** — visit-bank commercial model + legacy bridge (Group B) + org plans (Group C). Group D (billing ops) remains follow-on.
+- **✅ Wave 7 Unit 51 complete (2026-05-27)** — visit-bank commercial model + legacy bridge (Group B) + org plans (Group C) + billing ops (Group D).
 - **⏸ Wave 7 Unit 41 superseded** by Unit 51 visit-bank model.
 - **▶ Wave 8 Unit 42 shipped 2026-05-21** out of polish-gate order — the cockpit page actively being built needed Miss Cleo mounted, and the agent-reliability fixes (parse-fence tolerance, iteration refund, `lookupPatientGoals`) were unblocking real clinician questions. Wave 8 Units 43–47 remain paused until the polish gate clears.
 - **🔧 Sprint 0 in progress — Login & session trust (P0).** MFA redirect loops are the first-reported production bug. Fixing the JWT cookie propagation race and hardening the D2 chain before Sprint A clinical work. **Spec:** [`context/specs/sprint-0-login-first.md`](specs/sprint-0-login-first.md).
@@ -16,6 +16,8 @@
 - Wave 7/8 specs remain indexed but **not in progress**.
 
 ## Completed
+
+- **2026-05-27 — Unit 51 Group D — Billing ops (overage, allowance policy, trial UX, prod cron).** `MonthlyAllowancePolicy` applied before renewal credits (EXPIRE / ROLLOVER_USER / SWEEP_TO_BANK) in `allowance-policy.ts` + Stripe invoice renewal + enterprise monthly allowance cron. Visit overage: `allowOverage` debits at zero balance, solo checkout adds metered `visit_overage` Stripe line, daily `billing:visit-overage-report` script. Trial expiry banners on `/home`, `/account/usage`, `/admin/capacity` via `TrialStatusBanner`. Infra README documents EventBridge cron schedule for billing jobs. E2e: `/admin/capacity` bank + allocate smoke. Tests: `allowance-policy`, `visit-overage-reporter`, `trial-expiry-state`.
 
 - **2026-05-27 — Unit 51 Group C — Org plans & subscription lifecycle.** Team visit-bank checkout (`org_monthly_tier` with seat count × catalog enterprise template), collaborator seat add-on subscription, signup solo vs org trial selection, Stripe webhook handlers for capacity subscription updated/deleted, billing portal exposed for capacity subs on `/admin/billing`, owner commercial card “Apply catalog enterprise defaults”. Tests: `org-pricing`, extended `stripe-fulfillment`.
 

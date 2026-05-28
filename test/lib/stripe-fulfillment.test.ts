@@ -23,6 +23,15 @@ vi.mock('@/lib/billing/catalog-resolver', () => ({
   }),
 }));
 
+vi.mock('@/lib/billing/allowance-policy', () => ({
+  applyMonthlyAllowancePolicyBeforeRenewal: vi.fn().mockResolvedValue({
+    unusedEstimate: 0,
+    expired: 0,
+    rolledOver: 0,
+    skipped: true,
+  }),
+}));
+
 vi.mock('@/lib/billing/visit-ledger', () => ({
   creditOrgBank: (...args: unknown[]) => creditOrgBank(...args),
 }));
@@ -45,7 +54,11 @@ vi.mock('@/lib/prisma', () => ({
     organizationCommercialContract: {
       update: (...args: unknown[]) => contractUpdate(...args),
       findUniqueOrThrow: (...args: unknown[]) => contractFindUniqueOrThrow(...args),
-      findUnique: vi.fn().mockResolvedValue({ committedSeats: 5 }),
+      findUnique: vi.fn().mockResolvedValue({
+        committedSeats: 5,
+        monthlyAllowancePolicy: 'SWEEP_TO_BANK',
+        monthlyAllowanceRolloverCap: null,
+      }),
     },
   },
 }));

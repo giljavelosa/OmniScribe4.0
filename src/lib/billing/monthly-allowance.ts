@@ -8,6 +8,7 @@ import { VisitCreditBasis } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { writeAuditLog } from '@/lib/audit/log';
 import { creditOrgBank } from '@/lib/billing/visit-ledger';
+import { applyMonthlyAllowancePolicyBeforeRenewal } from '@/lib/billing/allowance-policy';
 
 export type MonthlyAllowanceResult =
   | { ok: true; credited: number; orgBankBalance: number }
@@ -48,11 +49,23 @@ export async function runMonthlyAllowanceForOrg(
     return { ok: false, reason: 'already_credited' };
   }
 
+  await applyMonthlyAllowancePolicyBeforeRenewal({
+    orgId,
+    policy: contract.monthlyAllowancePolicy,
+    rolloverCap: contract.monthlyAllowanceRolloverCap,
+    allowanceAmount: credit,
+    periodKey: periodKey(now),
+    now,
+  });
+
+  const periodEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+
   const result = await creditOrgBank({
     orgId,
     amount: credit,
     sourceType: 'MONTHLY_ALLOWANCE',
     idempotencyKey: key,
+    expiresAt: periodEnd,
     metadata: {
       seatCount,
       visitsPerSeat: contract.visitsPerSeatPerMonth,

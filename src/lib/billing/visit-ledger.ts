@@ -39,6 +39,16 @@ export type DebitNoteInput = {
   orgUserId: string;
   noteId: string;
   visitDebitOrder: VisitDebitOrder;
+  allowOverage?: boolean;
+  createdByUserId?: string;
+};
+
+export type DebitOrgBankInput = {
+  orgId: string;
+  amount: number;
+  sourceType: VisitLedgerSourceType;
+  idempotencyKey?: string;
+  metadata?: Prisma.InputJsonValue;
   createdByUserId?: string;
 };
 
@@ -99,6 +109,54 @@ async function creditOrgBankTx(
 
 export async function creditOrgBank(input: CreditOrgBankInput) {
   return prisma.$transaction((tx) => creditOrgBankTx(tx, input));
+}
+
+async function debitOrgBankTx(tx: VisitLedgerTx, input: DebitOrgBankInput) {
+  if (input.amount <= 0) {
+    throw new VisitLedgerError('Debit amount must be positive', 'invalid_amount');
+  }
+
+  if (input.idempotencyKey) {
+    const existing = await tx.visitLedgerEntry.findUnique({
+      where: { idempotencyKey: input.idempotencyKey },
+      select: { id: true, orgBankBalanceAfter: true },
+    });
+    if (existing) {
+      return { orgBankBalance: existing.orgBankBalanceAfter };
+    }
+  }
+
+  const org = await tx.organization.findUnique({
+    where: { id: input.orgId },
+    select: { visitBankBalance: true },
+  });
+  if (!org || org.visitBankBalance < input.amount) {
+    throw new VisitLedgerError('Insufficient org bank balance', 'insufficient_balance');
+  }
+
+  const updatedOrg = await tx.organization.update({
+    where: { id: input.orgId },
+    data: { visitBankBalance: { decrement: input.amount } },
+    select: { visitBankBalance: true },
+  });
+
+  await tx.visitLedgerEntry.create({
+    data: {
+      orgId: input.orgId,
+      amount: -input.amount,
+      orgBankBalanceAfter: updatedOrg.visitBankBalance,
+      sourceType: input.sourceType,
+      idempotencyKey: input.idempotencyKey,
+      metadata: input.metadata,
+      createdByUserId: input.createdByUserId,
+    },
+  });
+
+  return { orgBankBalance: updatedOrg.visitBankBalance };
+}
+
+export async function debitOrgBank(input: DebitOrgBankInput) {
+  return prisma.$transaction((tx) => debitOrgBankTx(tx, input));
 }
 
 async function transferBankToWalletTx(tx: VisitLedgerTx, input: TransferInput) {
@@ -237,7 +295,7 @@ async function debitForNoteTx(tx: VisitLedgerTx, input: DebitNoteInput) {
 
   let wallet = orgUser.visitWalletBalance;
   let bank = org.visitBankBalance;
-  let debitedFrom: 'wallet' | 'bank';
+  let debitedFrom: 'wallet' | 'bank' | 'overage';
 
   if (input.visitDebitOrder === 'USER_WALLET_THEN_BANK' && wallet >= 1) {
     wallet -= 1;
@@ -253,6 +311,31 @@ async function debitForNoteTx(tx: VisitLedgerTx, input: DebitNoteInput) {
       where: { id: input.orgId },
       data: { visitBankBalance: bank },
     });
+  } else if (input.allowOverage) {
+    debitedFrom = 'overage';
+    await tx.visitLedgerEntry.create({
+      data: {
+        orgId: input.orgId,
+        orgUserId: input.orgUserId,
+        amount: -1,
+        orgBankBalanceAfter: bank,
+        userWalletBalanceAfter: wallet,
+        sourceType: 'NOTE_DEBIT',
+        sourceId: input.noteId,
+        idempotencyKey,
+        metadata: { debitedFrom: 'overage', overage: true },
+        createdByUserId: input.createdByUserId,
+      },
+    });
+
+    return {
+      debited: true,
+      duplicate: false,
+      orgBankBalance: bank,
+      userWalletBalance: wallet,
+      debitedFrom,
+      overage: true,
+    };
   } else {
     throw new VisitLedgerError('Insufficient visit balance', 'insufficient_balance');
   }
@@ -278,6 +361,7 @@ async function debitForNoteTx(tx: VisitLedgerTx, input: DebitNoteInput) {
     orgBankBalance: bank,
     userWalletBalance: wallet,
     debitedFrom,
+    overage: false,
   };
 }
 

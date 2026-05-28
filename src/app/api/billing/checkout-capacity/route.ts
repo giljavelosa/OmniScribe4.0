@@ -262,6 +262,7 @@ export async function POST(req: Request) {
     }
 
     const tier = await resolveSoloTier(catalogItemId!);
+    const { payload } = await getActiveCatalogPayload();
     const sharedMetadata = {
       orgId: org.id,
       purchaseType,
@@ -269,23 +270,46 @@ export async function POST(req: Request) {
       visitCredit: String(tier.monthlyVisitCredit),
     };
 
+    const lineItems: NonNullable<
+      Parameters<typeof stripe.checkout.sessions.create>[0]
+    >['line_items'] = [
+      {
+        quantity: 1,
+        price_data: {
+          currency: 'usd',
+          unit_amount: tier.monthlyPriceCents,
+          recurring: { interval: 'month' },
+          product_data: {
+            name: `OmniScribe — ${tier.label}`,
+            description: `${tier.monthlyVisitCredit} visits credited to your bank each month`,
+          },
+        },
+      },
+    ];
+
+    if (payload.defaultOveragePriceCents > 0) {
+      lineItems.push({
+        price_data: {
+          currency: 'usd',
+          unit_amount: payload.defaultOveragePriceCents,
+          recurring: {
+            interval: 'month',
+            usage_type: 'metered',
+            aggregate_usage: 'sum',
+          } as { interval: 'month'; usage_type: 'metered'; aggregate_usage: 'sum' },
+          product_data: {
+            name: 'OmniScribe — visit overage',
+            description: 'Per visit beyond your monthly bank credit',
+            metadata: { role: 'visit_overage' },
+          },
+        },
+      });
+    }
+
     const session = await stripe.checkout.sessions.create({
       mode: 'subscription',
       customer: customerId,
-      line_items: [
-        {
-          quantity: 1,
-          price_data: {
-            currency: 'usd',
-            unit_amount: tier.monthlyPriceCents,
-            recurring: { interval: 'month' },
-            product_data: {
-              name: `OmniScribe — ${tier.label}`,
-              description: `${tier.monthlyVisitCredit} visits credited to your bank each month`,
-            },
-          },
-        },
-      ],
+      line_items: lineItems,
       subscription_data: { metadata: sharedMetadata },
       metadata: sharedMetadata,
       allow_promotion_codes: true,

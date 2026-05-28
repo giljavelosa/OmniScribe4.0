@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma';
 import { getOrgUserAvailableVisits } from '@/lib/billing/visit-ledger';
 import { ensureOrganizationCommercialContract } from '@/lib/billing/ensure-contract';
 import { contractExpiryWarning } from '@/lib/billing/monthly-allowance';
+import { getTrialExpiryState } from '@/lib/billing/commercial-mode';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -41,6 +42,7 @@ export async function GET(req: Request) {
       : 0;
 
   const expiry = contractExpiryWarning(contract?.contractEnd ?? null);
+  const trialExpiry = getTrialExpiryState(contract);
 
   return NextResponse.json({
     data: {
@@ -50,6 +52,9 @@ export async function GET(req: Request) {
       availableVisits: available,
       commercialModel: contract?.commercialModel ?? null,
       trialEndsAt: contract?.trialEndsAt?.toISOString() ?? null,
+      trialExpired: trialExpiry?.expired ?? false,
+      trialDaysLeft: trialExpiry?.daysLeft ?? null,
+      trialUrgent: trialExpiry?.urgent ?? false,
       contractEnd: contract?.contractEnd?.toISOString() ?? null,
       allowUserVisitRequests: contract?.allowUserVisitRequests ?? false,
       expiryWarning:

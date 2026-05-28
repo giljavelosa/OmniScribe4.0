@@ -72,6 +72,25 @@ test.describe('Signup — trial kind selection', () => {
   });
 });
 
+test.describe('Admin capacity — allocate flow', () => {
+  test.use({ storageState: authStatePath('admin') });
+
+  test('GET /admin/capacity shows bank balance and user wallets', async ({ page }) => {
+    await page.goto('/admin/capacity');
+    await expect(page.getByRole('heading', { name: /^visit capacity$/i })).toBeVisible();
+    await expect(page.getByText('Org visit bank', { exact: true })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('User wallets', { exact: true })).toBeVisible();
+    await expect(page.getByText(/visits$/i).first()).toBeVisible();
+  });
+
+  test('allocate button is present for seeded clinician wallet', async ({ page }) => {
+    await page.goto('/admin/capacity');
+    await expect(page.getByRole('button', { name: /^allocate$/i }).first()).toBeVisible({
+      timeout: 10_000,
+    });
+  });
+});
+
 test.describe('Owner commercial contract — catalog defaults', () => {
   test.use({ storageState: authStatePath('owner') });
 

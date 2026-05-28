@@ -28,6 +28,7 @@
     "invite-sweep": "node scripts/invite-sweep.mjs",
     "rollup-refresh": "node scripts/rollup-refresh.mjs",
     "billing:monthly-allowance": "node --env-file=.env --import=tsx scripts/billing-monthly-allowance.ts",
+    "billing:visit-overage-report": "node --env-file=.env --import=tsx scripts/billing-visit-overage-report.ts",
     "postinstall": "node scripts/postinstall.mjs"
   },
   "prisma": {
