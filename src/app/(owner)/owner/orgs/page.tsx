@@ -2,9 +2,10 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 
 import { prisma } from '@/lib/prisma';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardHeader, CardTitle } from '@/components/ui/card';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { Button } from '@/components/ui/button';
+import { ScrollableTablePanel } from '@/components/ui/scrollable-table-panel';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Organizations' };
@@ -18,22 +19,22 @@ export default async function OwnerOrgsPage() {
   });
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
+    <div className="flex flex-col flex-1 min-h-0 gap-4">
+      <div className="shrink-0 flex items-center justify-between">
         <h1 className="text-2lg font-semibold">Organizations</h1>
         <Button asChild>
           <Link href="/owner/orgs/new">+ New Organization</Link>
         </Button>
       </div>
 
-      <Card>
-        <CardHeader>
+      <Card className="flex flex-col flex-1 min-h-0 gap-0 py-0 overflow-hidden">
+        <CardHeader className="shrink-0 pb-4">
           <CardTitle className="text-md">{orgs.length} org{orgs.length === 1 ? '' : 's'}</CardTitle>
         </CardHeader>
-        <CardContent className="overflow-x-auto p-0">
+        <ScrollableTablePanel className="flex-1 min-h-0 mx-6 mb-6 border-0 rounded-none">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
+              <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground sticky top-0 z-10 bg-card backdrop-blur-sm">
                 <th className="text-left px-4 py-2 font-medium">Name</th>
                 <th className="text-left px-4 py-2 font-medium">Division</th>
                 <th className="text-left px-4 py-2 font-medium">Compliance</th>
@@ -74,7 +75,7 @@ export default async function OwnerOrgsPage() {
               )}
             </tbody>
           </table>
-        </CardContent>
+        </ScrollableTablePanel>
       </Card>
     </div>
   );

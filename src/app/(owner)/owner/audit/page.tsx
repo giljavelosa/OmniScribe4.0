@@ -26,8 +26,8 @@ export default async function OwnerAuditPage() {
   const knownActions = distinctActions.map((r) => r.action);
 
   return (
-    <div className="space-y-4">
-      <h1 className="text-2lg font-semibold">Audit</h1>
+    <div className="flex flex-col flex-1 min-h-0 gap-4">
+      <h1 className="shrink-0 text-2lg font-semibold">Audit</h1>
       <PlatformAuditTable knownActions={knownActions} knownOrgs={orgs} />
     </div>
   );

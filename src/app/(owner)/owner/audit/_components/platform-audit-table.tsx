@@ -11,6 +11,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { StatusBadge } from '@/components/ui/status-badge';
 import { StatusBanner } from '@/components/ui/status-banner';
 import { AuditMetadataDiff } from '@/components/audit/audit-metadata-diff';
+import {
+  SCROLLABLE_TABLE_HEAD_ROW,
+  ScrollableTablePanel,
+} from '@/components/ui/scrollable-table-panel';
 
 type AuditRow = {
   id: string;
@@ -96,13 +100,14 @@ export function PlatformAuditTable({
   }
 
   return (
-    <Card>
-      <CardHeader>
+    <Card className="flex flex-col flex-1 min-h-0 gap-0 py-0 overflow-hidden">
+      <CardHeader className="shrink-0 pb-4">
         <CardTitle className="text-md">{title}</CardTitle>
         <CardDescription>{description}</CardDescription>
       </CardHeader>
-      <CardContent className="space-y-3">
-        <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
+      <CardContent className="flex flex-col flex-1 min-h-0 gap-3 overflow-hidden pb-6">
+        <div className="shrink-0 space-y-3">
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
           <div className="space-y-1">
             <Label className="text-xs" htmlFor="po-from">From</Label>
             <Input id="po-from" type="date" value={filter.from} onChange={(e) => setFilter({ ...filter, from: e.target.value })} disabled={loading} />
@@ -154,11 +159,12 @@ export function PlatformAuditTable({
         </div>
 
         {error && <StatusBanner variant="danger">{error}</StatusBanner>}
+        </div>
 
-        <div className="overflow-x-auto rounded-md border border-border">
+        <ScrollableTablePanel className="flex-1 min-h-0">
           <table className="w-full text-xs">
             <thead>
-              <tr className="border-b border-border bg-muted/30 text-[10px] uppercase tracking-wide text-muted-foreground">
+              <tr className={SCROLLABLE_TABLE_HEAD_ROW}>
                 <th className="text-left px-3 py-2 font-medium">When</th>
                 <th className="text-left px-3 py-2 font-medium">Organization</th>
                 <th className="text-left px-3 py-2 font-medium">Actor</th>
@@ -188,10 +194,10 @@ export function PlatformAuditTable({
               )}
             </tbody>
           </table>
-        </div>
+        </ScrollableTablePanel>
 
         {nextCursor && (
-          <div className="flex justify-center">
+          <div className="shrink-0 flex justify-center">
             <Button type="button" variant="outline" size="sm" onClick={() => load({ append: true, cursor: nextCursor })} disabled={loading}>
               Load more
             </Button>

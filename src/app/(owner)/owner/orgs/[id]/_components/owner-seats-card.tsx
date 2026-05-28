@@ -8,8 +8,10 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { StatusBadge } from '@/components/ui/status-badge';
+import { StatusBadge, type StatusBadgeProps } from '@/components/ui/status-badge';
 import { StatusBanner } from '@/components/ui/status-banner';
+
+type OrgRole = 'ORG_ADMIN' | 'SITE_ADMIN' | 'CLINICIAN' | 'VIEWER';
 
 type Seat = {
   id: string;
@@ -18,6 +20,28 @@ type Seat = {
   createdAt: string;
   assignedToOrgUserId: string | null;
   assignedToEmail: string | null;
+  assignedToRole: OrgRole | null;
+};
+
+const ROLE_ORDER: Record<OrgRole, number> = {
+  ORG_ADMIN: 0,
+  SITE_ADMIN: 1,
+  CLINICIAN: 2,
+  VIEWER: 3,
+};
+
+const ROLE_LABEL: Record<OrgRole, string> = {
+  ORG_ADMIN: 'Org admin',
+  SITE_ADMIN: 'Site admin',
+  CLINICIAN: 'Clinician',
+  VIEWER: 'Viewer',
+};
+
+const ROLE_VARIANT: Record<OrgRole, StatusBadgeProps['variant']> = {
+  ORG_ADMIN: 'violet',
+  SITE_ADMIN: 'info',
+  CLINICIAN: 'neutral',
+  VIEWER: 'neutral',
 };
 
 type Summary = { totalSeats: number; assignedSeats: number };
@@ -84,13 +108,41 @@ export function OwnerSeatsCard({ orgId }: { orgId: string }) {
             <p className="text-sm text-muted-foreground">No seats allocated yet.</p>
           ) : (
             <ul className="space-y-1 text-sm">
-              {seats.map((s) => (
-                <li key={s.id} className="flex items-center gap-2">
-                  <StatusBadge variant="neutral" noIcon>{s.tier}</StatusBadge>
-                  <span className="font-mono text-xs">{s.assignedToEmail ?? '(unassigned)'}</span>
-                  <span className="ml-auto text-xs text-muted-foreground">expires {new Date(s.expiresAt).toLocaleDateString()}</span>
-                </li>
-              ))}
+              {[...seats]
+                .sort((a, b) => {
+                  // Unassigned seats sink to the bottom; otherwise sort by
+                  // role (org admins first), then email.
+                  const aRole = a.assignedToRole;
+                  const bRole = b.assignedToRole;
+                  if (aRole === null && bRole === null) return 0;
+                  if (aRole === null) return 1;
+                  if (bRole === null) return -1;
+                  const roleDiff = ROLE_ORDER[aRole] - ROLE_ORDER[bRole];
+                  if (roleDiff !== 0) return roleDiff;
+                  return (a.assignedToEmail ?? '').localeCompare(b.assignedToEmail ?? '');
+                })
+                .map((s) => (
+                  <li key={s.id} className="flex items-center gap-2">
+                    {s.assignedToRole ? (
+                      <StatusBadge variant={ROLE_VARIANT[s.assignedToRole]} noIcon>
+                        {ROLE_LABEL[s.assignedToRole]}
+                      </StatusBadge>
+                    ) : (
+                      <StatusBadge variant="neutral" noIcon>
+                        Unassigned
+                      </StatusBadge>
+                    )}
+                    <span className="font-mono text-xs">
+                      {s.assignedToEmail ?? '(unassigned)'}
+                    </span>
+                    <span className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
+                      <span className="rounded border border-border px-1.5 py-0.5 uppercase tracking-wide">
+                        {s.tier}
+                      </span>
+                      <span>expires {new Date(s.expiresAt).toLocaleDateString()}</span>
+                    </span>
+                  </li>
+                ))}
             </ul>
           )}
         </CardContent>

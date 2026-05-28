@@ -34,7 +34,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const seats = await prisma.seat.findMany({
     where: { orgId },
     orderBy: { createdAt: 'desc' },
-    include: { assignedTo: { include: { user: { select: { email: true } } } } },
+    include: {
+      assignedTo: {
+        select: { id: true, role: true, user: { select: { email: true } } },
+      },
+    },
   });
 
   return NextResponse.json({
@@ -45,6 +49,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       createdAt: s.createdAt.toISOString(),
       assignedToOrgUserId: s.assignedTo?.id ?? null,
       assignedToEmail: s.assignedTo?.user?.email ?? null,
+      assignedToRole: s.assignedTo?.role ?? null,
     })),
     summary: {
       totalSeats: seats.length,

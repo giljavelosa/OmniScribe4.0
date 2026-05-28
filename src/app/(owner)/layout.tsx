@@ -14,8 +14,8 @@ export default async function OwnerLayout({ children }: { children: ReactNode })
   if (session.user.platformRole !== 'PLATFORM_OWNER') redirect('/home');
 
   return (
-    <div className="flex-1 flex flex-col">
-      <header className="border-b border-border bg-card">
+    <div className="flex flex-col h-[100dvh] max-h-[100dvh] overflow-hidden">
+      <header className="shrink-0 border-b border-border bg-card">
         <div className="mx-auto max-w-6xl px-4 h-13 flex items-center justify-between">
           <div className="flex items-center gap-6">
             <BrandWordmark />
@@ -35,7 +35,9 @@ export default async function OwnerLayout({ children }: { children: ReactNode })
           </Link>
         </div>
       </header>
-      <main className="flex-1 mx-auto w-full max-w-6xl px-4 py-6">{children}</main>
+      <main className="flex-1 min-h-0 overflow-hidden flex flex-col mx-auto w-full max-w-6xl px-4 py-6">
+        {children}
+      </main>
     </div>
   );
 }

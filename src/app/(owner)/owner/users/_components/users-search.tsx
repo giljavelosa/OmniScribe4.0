@@ -7,6 +7,10 @@ import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { StatusBanner } from '@/components/ui/status-banner';
+import {
+  SCROLLABLE_TABLE_HEAD_ROW,
+  ScrollableTablePanel,
+} from '@/components/ui/scrollable-table-panel';
 
 type OwnerUser = {
   id: string;
@@ -60,15 +64,16 @@ export function UsersSearch() {
   }, [queryString]);
 
   return (
-    <Card>
-      <CardHeader>
+    <Card className="flex flex-col flex-1 min-h-0 gap-0 py-0 overflow-hidden">
+      <CardHeader className="shrink-0 pb-4">
         <CardTitle className="text-md">Cross-org user search</CardTitle>
         <CardDescription>
           Owner-only. Every search writes a PLATFORM_USERS_VIEWED row to PlatformAuditLog.
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-3">
-        <div className="flex items-end gap-2">
+      <CardContent className="flex flex-col flex-1 min-h-0 gap-3 overflow-hidden pb-6">
+        <div className="shrink-0 space-y-3">
+          <div className="flex items-end gap-2">
           <div className="flex-1 space-y-1.5">
             <Label htmlFor="users-q" className="text-xs">Email search</Label>
             <Input
@@ -87,11 +92,12 @@ export function UsersSearch() {
         </div>
 
         {error && <StatusBanner variant="danger">{error}</StatusBanner>}
+        </div>
 
-        <div className="overflow-x-auto rounded-md border border-border">
+        <ScrollableTablePanel className="flex-1 min-h-0">
           <table className="w-full text-xs">
             <thead>
-              <tr className="border-b border-border bg-muted/30 text-[10px] uppercase tracking-wide text-muted-foreground">
+              <tr className={SCROLLABLE_TABLE_HEAD_ROW}>
                 <th className="text-left px-3 py-2 font-medium">Email</th>
                 <th className="text-left px-3 py-2 font-medium">Name</th>
                 <th className="text-left px-3 py-2 font-medium">Orgs</th>
@@ -142,10 +148,10 @@ export function UsersSearch() {
               )}
             </tbody>
           </table>
-        </div>
+        </ScrollableTablePanel>
 
         {nextCursor && (
-          <div className="flex justify-center">
+          <div className="shrink-0 flex justify-center">
             <Button
               type="button"
               variant="outline"

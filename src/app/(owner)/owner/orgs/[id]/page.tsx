@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { BaaForm } from './_components/baa-form';
 import { OwnerSeatsCard } from './_components/owner-seats-card';
+import { PeopleCard } from './_components/people-card';
 import { SubscriptionForm } from './_components/subscription-form';
 import { UsageChart } from './_components/usage-chart';
 import { TransactionsTimeline } from './_components/transactions-timeline';
@@ -157,6 +158,8 @@ export default async function OwnerOrgPage({ params }: { params: Promise<{ id: s
           <TransactionsTimeline orgId={org.id} />
         </CardContent>
       </Card>
+
+      <PeopleCard orgId={org.id} />
 
       <OwnerSeatsCard orgId={org.id} />
     </div>

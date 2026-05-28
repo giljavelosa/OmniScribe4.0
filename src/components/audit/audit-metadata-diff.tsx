@@ -1,6 +1,9 @@
 'use client';
 
+import type { ReactNode } from 'react';
 import { ArrowRight } from 'lucide-react';
+
+import { cn } from '@/lib/cn';
 
 /**
  * AuditMetadataDiff — Unit 34.
@@ -24,7 +27,9 @@ export function AuditMetadataDiff({ metadata }: { metadata: unknown }) {
   if (metadata == null) return <span className="text-muted-foreground">—</span>;
   if (typeof metadata !== 'object') {
     return (
-      <pre className="whitespace-pre-wrap break-all text-[11px]">{String(metadata)}</pre>
+      <MetadataScrollBox>
+        <pre className="whitespace-pre-wrap break-all text-[11px]">{String(metadata)}</pre>
+      </MetadataScrollBox>
     );
   }
 
@@ -33,7 +38,7 @@ export function AuditMetadataDiff({ metadata }: { metadata: unknown }) {
   if (changes) {
     const otherKeys = Object.keys(meta).filter((k) => k !== 'changes');
     return (
-      <div className="space-y-1">
+      <MetadataScrollBox className="space-y-1">
         <table className="text-[11px] border-separate border-spacing-x-2">
           <tbody>
             {Object.entries(changes).map(([field, { before, after }]) => (
@@ -57,15 +62,36 @@ export function AuditMetadataDiff({ metadata }: { metadata: unknown }) {
             {otherKeys.map((k) => `${k}=${formatValue(meta[k])}`).join(' · ')}
           </p>
         )}
-      </div>
+      </MetadataScrollBox>
     );
   }
 
   // Fallback: legacy opaque metadata.
   return (
-    <pre className="whitespace-pre-wrap break-all text-[11px]">
-      {JSON.stringify(metadata, null, 0)}
-    </pre>
+    <MetadataScrollBox>
+      <pre className="whitespace-pre-wrap break-all text-[11px]">
+        {JSON.stringify(metadata, null, 0)}
+      </pre>
+    </MetadataScrollBox>
+  );
+}
+
+function MetadataScrollBox({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        'max-h-32 overflow-y-auto rounded-sm border border-border/50 bg-muted/20 p-1.5',
+        className,
+      )}
+    >
+      {children}
+    </div>
   );
 }
 
