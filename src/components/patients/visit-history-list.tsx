@@ -173,6 +173,9 @@ export function VisitHistoryList({ visits }: { visits: VisitHistoryRow[] }) {
             </Button>
           ) : (
             <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-2xs uppercase tracking-wide text-muted-foreground">
+                Group by
+              </span>
               <div className="flex gap-1 flex-wrap" role="tablist" aria-label="Visit history view">
                 {VIEW_MODES.map((m) => (
                   <Button
@@ -203,7 +206,10 @@ export function VisitHistoryList({ visits }: { visits: VisitHistoryRow[] }) {
           )}
         </div>
         {!showCollapsedPreview && divisionsPresent.length > 1 && (
-          <div className="flex gap-1 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-2xs uppercase tracking-wide text-muted-foreground">
+              Filter
+            </span>
             <Button
               type="button"
               variant={divisionFilter === null ? 'default' : 'outline'}

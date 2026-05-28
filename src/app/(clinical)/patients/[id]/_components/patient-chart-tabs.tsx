@@ -8,7 +8,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { StatusBanner } from '@/components/ui/status-banner';
+import { SectionLabel } from '@/components/ui/section-label';
 import { UserAvatar } from '@/components/ui/user-avatar';
+import { cn } from '@/lib/cn';
 import { VisitHistoryList } from '@/components/patients/visit-history-list';
 import { AwaitingRoutingBanner } from './awaiting-routing-banner';
 import { InlineDemographics } from '@/components/patients/inline-demographics';
@@ -122,6 +124,16 @@ const DIVISION_DISPLAY = [
   { key: 'BEHAVIORAL_HEALTH', label: 'Behavioral Health' },
 ];
 
+/** Floating segmented tabs — muted rail with bordered button silhouettes. */
+const CHART_TAB_TRIGGER = cn(
+  'flex-none h-9 rounded-md border border-foreground/15 px-4',
+  'text-sm font-medium text-muted-foreground shadow-none',
+  'hover:border-foreground/25 hover:bg-background/70 hover:text-foreground',
+  'data-[state=active]:border-foreground/30 data-[state=active]:bg-background',
+  'data-[state=active]:font-semibold data-[state=active]:text-foreground',
+  'data-[state=active]:shadow-sm after:hidden',
+);
+
 function computeAge(dobIso: string): string {
   const dob = new Date(dobIso);
   const now = new Date();
@@ -154,13 +166,11 @@ type OpenSheet =
 /**
  * PatientChartTabs — Sprint 0.9 + 0.10 chart.
  *
- * Sticky header: identity anchor (row 1) + compact stat strip (row 1.5) +
- * Safety Band with allergies + active problems (row 2).
+ * Sticky header: identity anchor + safety band. Stats and division
+ * badges live in tab labels — not duplicated in the chrome.
  *
- * Overview cockpit (Option D): promoted Snapshot inline row showing actual
- * measure values + trend arrows, followed by a clean 2×2 tile grid for
- * Medications / Open follow-ups / Last visit / Prior records. Every tile
- * and the snapshot row open a right-side ChartDetailSheet drill-down.
+ * Overview cockpit: clinical snapshot + tile grid first; Cleo's read
+ * as a compact assistant strip below the actionable chart data.
  */
 export function PatientChartTabs({
   patient,
@@ -201,6 +211,7 @@ export function PatientChartTabs({
   );
 
   const activeCaseCount = casesForPanel.filter((c) => c.status === 'ACTIVE').length;
+  const showCasesTab = casesForPanel.length > 0;
   const viewerDivision = divisionForProfession(viewingProfession);
 
   const activeProblems: ProblemRow[] = Array.from(
@@ -217,12 +228,6 @@ export function PatientChartTabs({
   );
 
   // Cockpit tile headlines
-  const measureCount = snapshotStrip?.measures.length ?? 0;
-  const snapshotHeadline =
-    measureCount > 0
-      ? `${measureCount} measure${measureCount === 1 ? '' : 's'}`
-      : 'No measures yet';
-
   const openFollowUpCount = followUps.filter((f) => f.status === 'OPEN').length;
   const followUpsHeadline =
     openFollowUpCount > 0 ? `Open follow-ups (${openFollowUpCount})` : 'None open';
@@ -245,102 +250,43 @@ export function PatientChartTabs({
     <>
       <div>
         {/* ── Sticky mini-header ──────────────────────────────────────────────
-            Tier 1: identity anchor + Start Visit button (row 1).
-            Tier 1: Safety Band — allergies + active problems (row 2). */}
-        <div className="sticky top-0 z-30 bg-background/95 backdrop-blur-sm border-b shadow-sm">
-          <div className="mx-auto max-w-6xl px-4 pt-3 pb-1">
-            {/* Row 1: patient identity + action */}
-            <div className="flex items-center gap-3 flex-wrap">
-              <div className="flex items-center gap-2 flex-1 min-w-0">
-                <UserAvatar
-                  firstName={patient.firstName}
-                  lastName={patient.lastName}
-                  size="sm"
-                  className="shrink-0"
-                />
-                <div className="flex items-center gap-2 flex-wrap min-w-0">
-                  <span className="font-semibold leading-tight truncate">
-                    {patient.firstName} {patient.lastName}
-                  </span>
-                  <StatusBadge variant="neutral" noIcon>
-                    {patient.sex} · {age}
-                  </StatusBadge>
-                  {patient.mrn && (
-                    <span className="hidden sm:inline text-xs text-muted-foreground font-mono">
-                      MRN {patient.mrn}
-                    </span>
-                  )}
-                  {activeStripEntries.map((d) => (
-                    <StatusBadge key={d.key} variant="neutral" noIcon className="hidden lg:inline-flex">
-                      {d.label}
-                    </StatusBadge>
-                  ))}
+            Identity + Start Visit on row 1; Safety Band on row 2. */}
+        <div className="sticky top-0 z-30 bg-background/95 backdrop-blur-sm border-b">
+          <div className="mx-auto max-w-6xl px-4 py-3">
+            <div className="flex items-start gap-3">
+              <UserAvatar
+                firstName={patient.firstName}
+                lastName={patient.lastName}
+                size="md"
+                className="shrink-0"
+              />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <h1 className="text-md font-semibold leading-tight truncate">
+                      {patient.firstName} {patient.lastName}
+                    </h1>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {patient.sex} · {age}
+                      {patient.mrn && (
+                        <>
+                          {' · '}
+                          <span className="font-mono">MRN {patient.mrn}</span>
+                        </>
+                      )}
+                    </p>
+                  </div>
+                  <StartVisitButton
+                    patientId={patient.id}
+                    activeCases={activeCasesForPicker}
+                    viewerDivision={viewerDivision}
+                    sites={startVisitSites}
+                    defaultSiteId={startVisitDefaultSiteId}
+                  />
                 </div>
               </div>
-              <StartVisitButton
-                patientId={patient.id}
-                activeCases={activeCasesForPicker}
-                viewerDivision={viewerDivision}
-                sites={startVisitSites}
-                defaultSiteId={startVisitDefaultSiteId}
-              />
             </div>
 
-            {/* Row 1.5: Compact stat strip — non-zero values only, so it
-                collapses cleanly for patients with no history yet. Order
-                prioritizes the most clinically actionable signal first
-                (open follow-ups) over reference counts (total visits). */}
-            {(() => {
-              const stats: Array<{ key: string; n: number; one: string; many: string }> = [];
-              if (openFollowUpCount > 0) {
-                stats.push({
-                  key: 'fu',
-                  n: openFollowUpCount,
-                  one: 'open follow-up',
-                  many: 'open follow-ups',
-                });
-              }
-              if (activeCaseCount > 0) {
-                stats.push({
-                  key: 'cases',
-                  n: activeCaseCount,
-                  one: 'active case',
-                  many: 'active cases',
-                });
-              }
-              if (totalVisits > 0) {
-                stats.push({
-                  key: 'v',
-                  n: totalVisits,
-                  one: 'visit',
-                  many: 'visits',
-                });
-              }
-              if (externalContextItems.length > 0) {
-                stats.push({
-                  key: 'pr',
-                  n: externalContextItems.length,
-                  one: 'prior record',
-                  many: 'prior records',
-                });
-              }
-              if (stats.length === 0) return null;
-              return (
-                <div className="flex items-center gap-3 flex-wrap text-xs text-muted-foreground py-0.5">
-                  {stats.map((s, i) => (
-                    <span key={s.key} className="flex items-center gap-3">
-                      {i > 0 && <span aria-hidden="true" className="text-border">·</span>}
-                      <span>
-                        <span className="font-medium text-foreground">{s.n}</span>{' '}
-                        {s.n === 1 ? s.one : s.many}
-                      </span>
-                    </span>
-                  ))}
-                </div>
-              );
-            })()}
-
-            {/* Row 2: Safety Band */}
             <SafetyBand
               activeProblems={activeProblems}
               onOpenProblems={() => setOpenSheet('problems')}
@@ -349,96 +295,101 @@ export function PatientChartTabs({
         </div>
 
         {/* ── Tab content ─────────────────────────────────────────────────── */}
-        <div className="mx-auto max-w-6xl px-4 py-6">
+        <div className="mx-auto max-w-6xl px-4 py-5">
           {episodeCreatedFlash && (
             <StatusBanner variant="success" className="mb-6">
               Episode created — start visit again to link to it.
             </StatusBanner>
           )}
 
-          <Tabs defaultValue="overview" className="space-y-6">
-            <TabsList>
-              <TabsTrigger value="overview">Overview</TabsTrigger>
-              {casesForPanel.length > 0 && (
-                <TabsTrigger value="cases">
+          <Tabs defaultValue="overview" className="space-y-5">
+            <TabsList
+              className={cn(
+                'inline-flex h-auto w-fit max-w-full flex-wrap items-center justify-start gap-1.5 p-1.5',
+                'rounded-xl border border-foreground/15 bg-muted shadow-sm',
+              )}
+            >
+              <TabsTrigger value="overview" className={CHART_TAB_TRIGGER}>
+                Overview
+              </TabsTrigger>
+              {showCasesTab && (
+                <TabsTrigger value="cases" className={CHART_TAB_TRIGGER}>
                   Cases{activeCaseCount > 0 ? ` (${activeCaseCount})` : ''}
                 </TabsTrigger>
               )}
-              <TabsTrigger value="visits">
+              <TabsTrigger value="visits" className={CHART_TAB_TRIGGER}>
                 Visits{totalVisits > 0 ? ` (${totalVisits})` : ''}
               </TabsTrigger>
-              <TabsTrigger value="profile">Profile</TabsTrigger>
+              <TabsTrigger value="profile" className={CHART_TAB_TRIGGER}>
+                Profile
+              </TabsTrigger>
             </TabsList>
 
             {/* ── Overview cockpit ─────────────────────────────────────────── */}
-            <TabsContent value="overview" className="space-y-5">
-              {/* Sprint 0.14 — Miss Cleo's read. Mounts at the TOP per spec
-                  decision 6 (same anchor priority as the safety band). The
-                  card is purely informational; tapping the CTA dispatches a
-                  global event that CopilotShell listens for and opens the
-                  Sheet (see copilot-shell.tsx: 'cleo:open-sheet'). */}
-              <CleoReadCard
-                patientFirstName={patient.firstName}
-                data={cleoRead}
-                onAskOpen={() => {
-                  if (typeof window === 'undefined') return;
-                  window.dispatchEvent(new CustomEvent('cleo:open-sheet'));
-                }}
-              />
-              {/* Division summary line — kept per spec */}
-              {totalVisits > 0 && (
-                <div className="flex items-center gap-2 flex-wrap text-sm">
-                  <span className="text-muted-foreground">
-                    {totalVisits} signed visit{totalVisits === 1 ? '' : 's'} · Active in:
-                  </span>
-                  {activeStripEntries.map((d) => (
-                    <StatusBadge key={d.key} variant="neutral" noIcon>
-                      {d.label} ({visitsByDivision[d.key]})
-                    </StatusBadge>
-                  ))}
-                  {otherCount > 0 && (
-                    <StatusBadge variant="neutral" noIcon>
-                      Other ({otherCount})
-                    </StatusBadge>
+            <TabsContent value="overview" className="space-y-6 mt-0">
+              <section className="space-y-3">
+                <div className="flex items-end justify-between gap-3">
+                  <SectionLabel>At a glance</SectionLabel>
+                  {totalVisits > 0 && (
+                    <p className="text-2xs text-muted-foreground">
+                      {totalVisits} signed visit{totalVisits === 1 ? '' : 's'}
+                      {activeStripEntries.length > 0 && (
+                        <>
+                          {' · '}
+                          {activeStripEntries
+                            .map((d) => `${d.label} (${visitsByDivision[d.key]})`)
+                            .join(' · ')}
+                          {otherCount > 0 ? ` · Other (${otherCount})` : ''}
+                        </>
+                      )}
+                    </p>
                   )}
                 </div>
-              )}
 
-              {/* Promoted snapshot — spans full width; shows actual measure
-                  values + trend arrows instead of just a count tile. The
-                  whole card is the click target → SnapshotDetailSheet. */}
-              <SnapshotInlineStrip
-                strip={snapshotStrip}
-                onClick={() => setOpenSheet('snapshot')}
-              />
+                <SnapshotInlineStrip
+                  strip={snapshotStrip}
+                  onClick={() => setOpenSheet('snapshot')}
+                />
 
-              {/* Remaining 4 tiles — clean 2×2 grid */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                <CockpitTile
-                  label="Medications"
-                  headline="Not recorded — connect an EHR"
-                  onClick={() => setOpenSheet('medications')}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <CockpitTile
+                    label="Medications"
+                    headline="Not recorded — connect an EHR"
+                    onClick={() => setOpenSheet('medications')}
+                  />
+                  <CockpitTile
+                    label="Open follow-ups"
+                    headline={followUpsHeadline}
+                    onClick={() => setOpenSheet('followUps')}
+                  />
+                  <CockpitTile
+                    label="Last visit"
+                    headline={lastVisitHeadline}
+                    onClick={() => setOpenSheet('lastVisit')}
+                  />
+                  <CockpitTile
+                    label="Prior records"
+                    headline={priorRecordsHeadline}
+                    onClick={() => setOpenSheet('priorRecords')}
+                  />
+                </div>
+              </section>
+
+              <section className="space-y-2">
+                <SectionLabel>Assistant</SectionLabel>
+                <CleoReadCard
+                  patientFirstName={patient.firstName}
+                  data={cleoRead}
+                  onAskOpen={() => {
+                    if (typeof window === 'undefined') return;
+                    window.dispatchEvent(new CustomEvent('cleo:open-sheet'));
+                  }}
                 />
-                <CockpitTile
-                  label="Open follow-ups"
-                  headline={followUpsHeadline}
-                  onClick={() => setOpenSheet('followUps')}
-                />
-                <CockpitTile
-                  label="Last visit"
-                  headline={lastVisitHeadline}
-                  onClick={() => setOpenSheet('lastVisit')}
-                />
-                <CockpitTile
-                  label="Prior records"
-                  headline={priorRecordsHeadline}
-                  onClick={() => setOpenSheet('priorRecords')}
-                />
-              </div>
+              </section>
             </TabsContent>
 
-            {casesForPanel.length > 0 && (
-              <TabsContent value="cases" className="space-y-3">
+            {showCasesTab && (
+              <TabsContent value="cases" className="space-y-3 mt-0">
                 {/* Sprint 0.18 — proactive nudge stack. Lives ADJACENT
                     to the active-case hero (not inside it) per spec:
                     the hero is "your active case" — singular, primary;
@@ -458,13 +409,13 @@ export function PatientChartTabs({
             )}
 
             {/* ── Visits ───────────────────────────────────────────────────── */}
-            <TabsContent value="visits" className="space-y-3">
+            <TabsContent value="visits" className="space-y-3 mt-0">
               <AwaitingRoutingBanner visits={visits} />
               <VisitHistoryList visits={visits} />
             </TabsContent>
 
             {/* ── Profile ──────────────────────────────────────────────────── */}
-            <TabsContent value="profile" className="space-y-4">
+            <TabsContent value="profile" className="space-y-4 mt-0">
               <InlineDemographics
                 patient={{
                   id: patient.id,
@@ -482,57 +433,71 @@ export function PatientChartTabs({
                 availableSites={startVisitSites}
               />
 
-              {/* EHR link panel — Server Component, rendered in the parent page and
-                  passed here as ReactNode so auth/prisma calls stay on the server. */}
-              {ehrPanel}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+                {/* EHR link panel — Server Component, rendered in the parent page and
+                    passed here as ReactNode so auth/prisma calls stay on the server. */}
+                {ehrPanel}
 
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-md">Addresses + coverage</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3 text-sm">
-                  {addresses.length === 0 ? (
-                    <p className="text-muted-foreground">No addresses on file.</p>
-                  ) : (
-                    <ul className="space-y-1">
-                      {addresses.map((a) => (
-                        <li key={a.id} className="text-muted-foreground">
-                          <StatusBadge variant="neutral" noIcon className="mr-2">
-                            {a.kind}
-                          </StatusBadge>
-                          {a.line1}
-                          {a.line2 ? `, ${a.line2}` : ''}, {a.city}, {a.state} {a.postalCode}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                  {coverages.length === 0 ? (
-                    <p className="text-muted-foreground">No coverage on file.</p>
-                  ) : (
-                    <ul className="space-y-1">
-                      {coverages.map((c) => (
-                        <li key={c.id} className="text-muted-foreground">
-                          <StatusBadge
-                            variant={
-                              c.status === 'ACTIVE'
-                                ? 'success'
-                                : c.status === 'TERMINATED'
-                                  ? 'danger'
-                                  : 'warning'
-                            }
-                            noIcon
-                            className="mr-2"
-                          >
-                            {c.status}
-                          </StatusBadge>
-                          {c.carrier} · member {c.memberId}
-                          {c.planName ? ` (${c.planName})` : ''}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </CardContent>
-              </Card>
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-md">Contact &amp; insurance</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-5">
+                    <section className="space-y-2">
+                      <SectionLabel>Address</SectionLabel>
+                      {addresses.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">No address on file.</p>
+                      ) : (
+                        <ul className="space-y-2">
+                          {addresses.map((a) => (
+                            <li key={a.id} className="flex items-start gap-2 text-sm">
+                              <StatusBadge variant="neutral" noIcon className="text-2xs shrink-0">
+                                {a.kind}
+                              </StatusBadge>
+                              <span className="text-foreground">
+                                {a.line1}
+                                {a.line2 ? `, ${a.line2}` : ''}, {a.city}, {a.state} {a.postalCode}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </section>
+
+                    <section className="space-y-2">
+                      <SectionLabel>Insurance</SectionLabel>
+                      {coverages.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">No coverage on file.</p>
+                      ) : (
+                        <ul className="space-y-2">
+                          {coverages.map((c) => (
+                            <li key={c.id} className="flex items-start gap-2 text-sm">
+                              <StatusBadge
+                                variant={
+                                  c.status === 'ACTIVE'
+                                    ? 'success'
+                                    : c.status === 'TERMINATED'
+                                      ? 'danger'
+                                      : 'warning'
+                                }
+                                noIcon
+                                className="text-2xs shrink-0"
+                              >
+                                {c.status}
+                              </StatusBadge>
+                              <span className="text-foreground">
+                                {c.carrier} · member{' '}
+                                <span className="font-mono">{c.memberId}</span>
+                                {c.planName ? ` · ${c.planName}` : ''}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </section>
+                  </CardContent>
+                </Card>
+              </div>
             </TabsContent>
           </Tabs>
         </div>

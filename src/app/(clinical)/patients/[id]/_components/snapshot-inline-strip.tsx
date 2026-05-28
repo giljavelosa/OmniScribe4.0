@@ -32,11 +32,11 @@ export function SnapshotInlineStrip({ strip, onClick }: Props) {
     <button
       type="button"
       onClick={onClick}
-      className="w-full text-left rounded-xl border border-border bg-card shadow-sm px-4 py-3 hover:bg-muted/40 transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none min-h-[var(--touch-min)]"
+      className="w-full text-left rounded-xl border border-border/80 bg-card px-4 py-3.5 hover:border-primary/20 hover:bg-muted/30 transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none min-h-[var(--touch-min)] shadow-none"
     >
-      <div className="flex items-center justify-between gap-2 mb-2">
-        <p className="text-xs uppercase tracking-wide text-muted-foreground">Snapshot</p>
-        <ChevronRight className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+      <div className="flex items-center justify-between gap-2 mb-2.5">
+        <p className="text-2xs uppercase tracking-wide text-muted-foreground font-medium">Snapshot</p>
+        <ChevronRight className="h-4 w-4 text-muted-foreground/70" aria-hidden="true" />
       </div>
 
       {measures.length === 0 ? (
@@ -44,13 +44,13 @@ export function SnapshotInlineStrip({ strip, onClick }: Props) {
           No measures yet — they appear after the next signed note.
         </p>
       ) : (
-        <div className="flex flex-wrap gap-x-6 gap-y-2">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-3">
           {measures.map((m) => {
             const { glyph, colorClass, label } = trendInfo(m.trend);
             return (
-              <div key={m.measureKey} className="space-y-0.5">
-                <p className="text-xs text-muted-foreground leading-none">{m.label}</p>
-                <p className="text-sm font-semibold tabular-nums leading-tight">
+              <div key={m.measureKey} className="space-y-1">
+                <p className="text-2xs text-muted-foreground leading-none">{m.label}</p>
+                <p className="text-base font-semibold tabular-nums leading-tight">
                   {m.value}
                   {m.unit && (
                     <span className="text-xs font-normal text-muted-foreground ml-0.5">{m.unit}</span>

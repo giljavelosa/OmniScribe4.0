@@ -4,7 +4,7 @@ import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { Pencil } from 'lucide-react';
 
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -114,13 +114,8 @@ export function InlineDemographics({
 
   return (
     <Card>
-      <CardHeader className="flex flex-row items-start justify-between gap-3">
-        <div>
-          <CardTitle className="text-md">Demographics</CardTitle>
-          <CardDescription>
-            Edits audit-log under PATIENT_DEMOGRAPHICS_EDITED with changed-field names only.
-          </CardDescription>
-        </div>
+      <CardHeader className="flex flex-row items-center justify-between gap-3">
+        <CardTitle className="text-md">Demographics</CardTitle>
         {!editing && (
           <Button type="button" variant="ghost" size="sm" onClick={() => setEditing(true)}>
             <Pencil className="size-3" aria-hidden="true" />
@@ -130,11 +125,11 @@ export function InlineDemographics({
       </CardHeader>
       <CardContent className="space-y-3">
         {!editing ? (
-          <dl className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
+          <dl className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-4">
             <Field label="Name" value={`${patient.firstName} ${patient.lastName}`} />
-            <Field label="MRN" value={patient.mrn ?? '—'} mono />
             <Field label="DOB" value={new Date(patient.dob).toLocaleDateString()} />
-            <Field label="Sex" value={patient.sex} />
+            <Field label="Sex" value={sexLabel(patient.sex)} />
+            <Field label="MRN" value={patient.mrn ?? '—'} mono />
             <Field label="Phone" value={patient.phone ?? '—'} mono />
             <Field label="Email" value={patient.email ?? '—'} mono />
             <Field label="Preferred language" value={patient.preferredLanguage ?? '—'} />
@@ -222,11 +217,18 @@ export function InlineDemographics({
   );
 }
 
+function sexLabel(value: string): string {
+  const match = SEX_OPTIONS.find((s) => s.value === value);
+  return match?.label ?? value;
+}
+
 function Field({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
-    <div className="space-y-0.5">
-      <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</dt>
-      <dd className={mono ? 'font-mono' : undefined}>{value}</dd>
+    <div className="space-y-1">
+      <dt className="text-2xs uppercase tracking-wide text-muted-foreground">{label}</dt>
+      <dd className={mono ? 'text-sm font-mono text-foreground' : 'text-sm text-foreground'}>
+        {value}
+      </dd>
     </div>
   );
 }

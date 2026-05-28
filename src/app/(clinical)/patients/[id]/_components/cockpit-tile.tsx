@@ -31,15 +31,15 @@ export function CockpitTile({ label, headline, onClick }: Props) {
           onClick();
         }
       }}
-      className="min-h-[4.5rem] px-4 py-3 flex items-center gap-3 cursor-pointer hover:bg-muted/40 transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none select-none"
+      className="min-h-[4.25rem] px-4 py-3.5 flex items-center gap-3 cursor-pointer border-border/80 shadow-none hover:border-primary/20 hover:bg-muted/30 transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none select-none"
     >
-      <div className="flex-1 min-w-0 space-y-0.5">
-        <p className="text-xs uppercase tracking-wide text-muted-foreground leading-none">
+      <div className="flex-1 min-w-0 space-y-1">
+        <p className="text-2xs uppercase tracking-wide text-muted-foreground leading-none">
           {label}
         </p>
-        <p className="text-sm font-medium leading-snug truncate">{headline}</p>
+        <p className="text-sm font-medium leading-snug text-foreground/90">{headline}</p>
       </div>
-      <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+      <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground/70" aria-hidden="true" />
     </Card>
   );
 }

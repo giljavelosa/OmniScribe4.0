@@ -1,8 +1,12 @@
 'use client';
 
-import { StatusBadge } from '@/components/ui/status-badge';
+import { AlertTriangle } from 'lucide-react';
 
-const MAX_VISIBLE_PROBLEMS = 3;
+import { StatusBadge } from '@/components/ui/status-badge';
+import { cn } from '@/lib/cn';
+
+const MAX_VISIBLE_PROBLEMS = 2;
+const MAX_LABEL_CHARS = 42;
 
 export type ProblemRow = {
   id: string;
@@ -16,6 +20,11 @@ type Props = {
   onOpenProblems: () => void;
 };
 
+function truncateLabel(label: string): string {
+  if (label.length <= MAX_LABEL_CHARS) return label;
+  return `${label.slice(0, MAX_LABEL_CHARS - 1)}…`;
+}
+
 /**
  * SafetyBand — Tier-1 safety strip rendered inside the sticky patient
  * mini-header (Sprint 0.9).  Persists across all four chart tabs.
@@ -24,50 +33,65 @@ type Props = {
  *   The absence of data must be visible — silent omission is a patient-safety
  *   risk. FHIR wire-up in Phase 2.
  * - Active problems: episode-derived diagnoses (ACTIVE + RECERT_DUE).
- *   Truncated to 3 with "+N more" that opens the ProblemsSheet.
+ *   Truncated to 2 with "+N more" that opens the ProblemsSheet.
  *
- * One line on desktop; wraps gracefully on mobile. Kept visually quiet
- * (small text, no heavy borders) so it never competes with content.
+ * One compact row on desktop; wraps gracefully on mobile.
  */
 export function SafetyBand({ activeProblems, onOpenProblems }: Props) {
   const visible = activeProblems.slice(0, MAX_VISIBLE_PROBLEMS);
   const overflow = activeProblems.length - MAX_VISIBLE_PROBLEMS;
 
   return (
-    <div className="flex items-center gap-1.5 flex-wrap py-1.5">
-      {/* Allergies — Phase 1: always "not recorded" */}
-      <StatusBadge variant="warning" className="text-xs">
-        Allergies not recorded
-      </StatusBadge>
-
-      {activeProblems.length > 0 && (
-        <span className="text-xs text-muted-foreground" aria-hidden="true">
-          ·
-        </span>
+    <div
+      className={cn(
+        'mt-2 rounded-lg border px-3 py-2',
+        'border-[var(--status-warning-border)] bg-[var(--status-warning-bg)]/40',
       )}
+    >
+      <div className="flex items-start gap-2.5 min-w-0">
+        <AlertTriangle
+          className="size-3.5 shrink-0 mt-0.5 text-[var(--status-warning-fg)]"
+          aria-hidden
+        />
+        <div className="flex-1 min-w-0 space-y-1">
+          <p className="text-2xs uppercase tracking-wide text-muted-foreground font-medium">
+            Safety
+          </p>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs leading-snug">
+            <StatusBadge variant="warning" className="text-2xs shrink-0">
+              Allergies not recorded
+            </StatusBadge>
 
-      {/* Active problems — episode-derived */}
-      {visible.map((p) => (
-        <StatusBadge key={p.id} variant="neutral" noIcon className="text-xs">
-          {p.label}
-        </StatusBadge>
-      ))}
-
-      {overflow > 0 && (
-        <button
-          type="button"
-          onClick={onOpenProblems}
-          className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
-        >
-          +{overflow} more
-        </button>
-      )}
-
-      {activeProblems.length === 0 && (
-        <StatusBadge variant="neutral" noIcon className="text-xs">
-          No active problems
-        </StatusBadge>
-      )}
+            {activeProblems.length > 0 ? (
+              <>
+                <span className="text-muted-foreground/60 hidden sm:inline" aria-hidden>
+                  |
+                </span>
+                {visible.map((p) => (
+                  <span
+                    key={p.id}
+                    className="text-foreground/90 truncate max-w-[min(100%,20rem)]"
+                    title={p.label}
+                  >
+                    {truncateLabel(p.label)}
+                  </span>
+                ))}
+                {overflow > 0 && (
+                  <button
+                    type="button"
+                    onClick={onOpenProblems}
+                    className="text-muted-foreground underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm shrink-0"
+                  >
+                    +{overflow} more
+                  </button>
+                )}
+              </>
+            ) : (
+              <span className="text-muted-foreground">No active problems on file</span>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

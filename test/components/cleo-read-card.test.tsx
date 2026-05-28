@@ -68,7 +68,7 @@ describe('CleoReadCard — populated', () => {
     expect(onAsk).toHaveBeenCalledOnce();
   });
 
-  it('caps the pattern list to 4 + still shows the total count', () => {
+  it('caps the pattern list to 3 + still shows the overflow count', () => {
     const many: CleoReadCardData = {
       ...data,
       patterns: Array.from({ length: 7 }).map((_, i) => ({
@@ -79,13 +79,11 @@ describe('CleoReadCard — populated', () => {
     render(
       <CleoReadCard patientFirstName="J" data={many} onAskOpen={() => {}} />,
     );
-    expect(screen.getByText(/patterns noted \(7\)/i)).toBeInTheDocument();
-    // First four are rendered.
-    for (let i = 1; i <= 4; i += 1) {
+    expect(screen.getByText(/\+4 more patterns/i)).toBeInTheDocument();
+    for (let i = 1; i <= 3; i += 1) {
       expect(screen.getByText(`Pattern ${i}`)).toBeInTheDocument();
     }
-    // Fifth is not.
-    expect(screen.queryByText('Pattern 5')).toBeNull();
+    expect(screen.queryByText('Pattern 4')).toBeNull();
   });
 
   it('hides the CTA when no onAskOpen is supplied', () => {
@@ -95,15 +93,13 @@ describe('CleoReadCard — populated', () => {
 });
 
 describe('CleoReadCard — empty', () => {
-  it('renders the learning-stub + "get started" CTA', () => {
+  it('renders the learning-stub + Ask CTA', () => {
     const onAsk = vi.fn();
     render(
       <CleoReadCard patientFirstName="James" data={null} onAskOpen={onAsk} />,
     );
-    expect(screen.getByText(/just learning this patient/i)).toBeInTheDocument();
-    expect(
-      screen.getByRole('button', { name: /ask me a question to get started/i }),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/still learning james.+chart/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^ask$/i })).toBeInTheDocument();
   });
 
   it('fires onAskOpen on the empty-state CTA', async () => {
@@ -112,9 +108,7 @@ describe('CleoReadCard — empty', () => {
     render(
       <CleoReadCard patientFirstName="James" data={null} onAskOpen={onAsk} />,
     );
-    await user.click(
-      screen.getByRole('button', { name: /ask me a question to get started/i }),
-    );
+    await user.click(screen.getByRole('button', { name: /^ask$/i }));
     expect(onAsk).toHaveBeenCalledOnce();
   });
 });

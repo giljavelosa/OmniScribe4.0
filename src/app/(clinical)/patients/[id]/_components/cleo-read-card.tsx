@@ -3,20 +3,18 @@
 import { ArrowRight, Sparkles } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { COPILOT_DISPLAY_NAME } from '@/services/copilot/persona';
 
 /**
  * Sprint 0.14 — "Cleo's read" chart card.
  *
- * 30-second answer surface — mounts at the TOP of the Overview tab,
- * ABOVE the existing cockpit tiles. Sourced from the server-fetched
- * `CopilotPatientState` for the viewing clinician.
+ * 30-second answer surface on the Overview tab. Sourced from the
+ * server-fetched `CopilotPatientState` for the viewing clinician.
  *
- * Empty state (no state row): a minimal "I'm just learning this patient"
- * stub + an entry CTA to the Ask Sheet. The state gets lazily built on
- * first Ask interaction.
+ * Empty state: compact horizontal strip — does not dominate the cockpit.
+ * Populated state: tight card with patterns + CTA.
  *
  * Rule 24: this card surfaces observed patterns + case awareness; it
  * NEVER recommends clinical action. The CTA opens the Sheet — every
@@ -59,36 +57,31 @@ type Props = {
 };
 
 export function CleoReadCard({ patientFirstName, data, onAskOpen }: Props) {
-  // Empty state — no CopilotPatientState row yet for this clinician.
-  // Lazily built on first Ask interaction (per spec decision 7).
   if (!data) {
     return (
-      <Card className="border-primary/30 bg-primary/[0.02]">
-        <CardHeader className="pb-2">
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Sparkles className="size-4 text-primary" aria-hidden />
-            {COPILOT_DISPLAY_NAME}&apos;s read · {patientFirstName}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <p className="text-sm text-muted-foreground">
-            I&apos;m just learning this patient — open the Ask sheet to get
-            started.
+      <div className="flex items-center gap-3 rounded-xl border border-primary/15 bg-primary/[0.03] px-4 py-3">
+        <Sparkles className="size-4 shrink-0 text-primary" aria-hidden />
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium leading-tight">
+            {COPILOT_DISPLAY_NAME}&apos;s read
           </p>
-          {onAskOpen && (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={onAskOpen}
-              className="gap-1.5"
-            >
-              <span>Ask me a question to get started</span>
-              <ArrowRight className="size-3.5" aria-hidden />
-            </Button>
-          )}
-        </CardContent>
-      </Card>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Still learning {patientFirstName}&apos;s chart — ask a question to build context.
+          </p>
+        </div>
+        {onAskOpen && (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={onAskOpen}
+            className="shrink-0 gap-1"
+          >
+            Ask
+            <ArrowRight className="size-3.5" aria-hidden />
+          </Button>
+        )}
+      </div>
     );
   }
 
@@ -104,74 +97,68 @@ export function CleoReadCard({ patientFirstName, data, onAskOpen }: Props) {
     );
   }
 
-  const topPatterns = data.patterns.slice(0, 4);
+  const topPatterns = data.patterns.slice(0, 3);
 
   return (
-    <Card className="border-primary/30 bg-primary/[0.02]">
-      <CardHeader className="pb-2">
-        <CardTitle className="flex items-center justify-between gap-2 text-base">
-          <span className="flex items-center gap-2">
-            <Sparkles className="size-4 text-primary" aria-hidden />
-            {COPILOT_DISPLAY_NAME}&apos;s read · {patientFirstName}
-          </span>
+    <Card className="border-primary/15 bg-primary/[0.02] shadow-none">
+      <CardContent className="p-4 space-y-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-start gap-2 min-w-0">
+            <Sparkles className="size-4 shrink-0 text-primary mt-0.5" aria-hidden />
+            <div className="min-w-0">
+              <p className="text-sm font-medium leading-tight">
+                {COPILOT_DISPLAY_NAME}&apos;s read · {patientFirstName}
+              </p>
+              {headlineParts.length > 0 && (
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {headlineParts.join(' · ')}
+                </p>
+              )}
+            </div>
+          </div>
           {data.lastRebuiltAt && (
-            <span className="text-[10px] uppercase tracking-wide text-muted-foreground font-normal">
-              Updated {formatAgo(data.lastRebuiltAt)}
+            <span className="text-2xs uppercase tracking-wide text-muted-foreground shrink-0">
+              {formatAgo(data.lastRebuiltAt)}
             </span>
           )}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {(headlineParts.length > 0 || data.cases.topCaseLabel) && (
-          <div className="flex flex-wrap items-center gap-2 text-sm">
-            {headlineParts.length > 0 && (
-              <p className="text-muted-foreground">{headlineParts.join(' · ')}</p>
-            )}
-            {data.cases.topCaseLabel && (
-              <StatusBadge variant="success" noIcon>
-                Your active case: {data.cases.topCaseLabel}
-              </StatusBadge>
-            )}
-          </div>
+        </div>
+
+        {data.cases.topCaseLabel && (
+          <StatusBadge variant="success" noIcon className="text-2xs">
+            Your active case: {data.cases.topCaseLabel}
+          </StatusBadge>
         )}
 
-        {topPatterns.length > 0 && (
-          <div className="space-y-1">
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">
-              Patterns noted ({data.patterns.length})
-            </p>
-            <ul className="space-y-1 text-sm">
-              {topPatterns.map((p, i) => (
-                <li key={`${p.kind}-${i}`} className="flex items-start gap-1.5">
-                  <span aria-hidden className="text-muted-foreground mt-0.5">
-                    ·
-                  </span>
-                  <span>{p.label}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        {topPatterns.length === 0 && headlineParts.length === 0 && (
-          <p className="text-sm text-muted-foreground">
-            Nothing new to flag — chart is current.
-          </p>
-        )}
+        {topPatterns.length > 0 ? (
+          <ul className="space-y-1 text-sm text-foreground/90">
+            {topPatterns.map((p, i) => (
+              <li key={`${p.kind}-${i}`} className="flex items-start gap-2">
+                <span aria-hidden className="text-muted-foreground mt-1.5 size-1 rounded-full bg-muted-foreground shrink-0" />
+                <span className="leading-snug">{p.label}</span>
+              </li>
+            ))}
+            {data.patterns.length > topPatterns.length && (
+              <li className="text-xs text-muted-foreground pl-3">
+                +{data.patterns.length - topPatterns.length} more pattern
+                {data.patterns.length - topPatterns.length === 1 ? '' : 's'}
+              </li>
+            )}
+          </ul>
+        ) : headlineParts.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Nothing new to flag — chart is current.</p>
+        ) : null}
 
         {onAskOpen && (
-          <div className="pt-1">
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={onAskOpen}
-              className="gap-1.5"
-            >
-              <span>Ask me anything</span>
-              <ArrowRight className="size-3.5" aria-hidden />
-            </Button>
-          </div>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={onAskOpen}
+            className="h-8 px-0 gap-1 text-primary hover:text-primary"
+          >
+            Ask me anything
+            <ArrowRight className="size-3.5" aria-hidden />
+          </Button>
         )}
       </CardContent>
     </Card>

@@ -126,7 +126,7 @@ export function CasesPanel({
           <div>
             <CardTitle className="text-md">Cases</CardTitle>
             <CardDescription>
-              ICD-anchored care arcs. Your division expands first.
+              Care grouped by diagnosis. Your division opens first.
             </CardDescription>
           </div>
           {canEdit && (
@@ -304,7 +304,7 @@ function CaseCard({
             </div>
             {caseRow.secondaryIcd && (
               <p className="text-xs text-muted-foreground">
-                Sec: {caseRow.secondaryIcd}
+                Secondary: {caseRow.secondaryIcd}
                 {caseRow.secondaryIcdLabel ? ` · ${caseRow.secondaryIcdLabel}` : ''}
               </p>
             )}
@@ -397,8 +397,8 @@ function DivisionSection({
   if (expanded) {
     return (
       <div className="space-y-2">
-        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          [{DIVISION_LABEL[division]}]
+        <p className="text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
+          {DIVISION_LABEL[division]}
         </p>
         {children}
       </div>
@@ -406,7 +406,9 @@ function DivisionSection({
   }
   return (
     <p className="text-xs text-muted-foreground">
-      <span className="font-semibold">[{DIVISION_LABEL[division]}]</span> {summary}
+      <span className="font-semibold text-foreground/80">{DIVISION_LABEL[division]}</span>
+      {' · '}
+      {summary}
     </p>
   );
 }
