@@ -50,7 +50,7 @@ export function visitCapacityRequiredResponse(reason: Exclude<CapacityGateResult
     no_contract: 'Visit capacity is not configured for this organization.',
     trial_expired: 'Your trial has ended. Ask your org admin to choose a plan or contact support.',
     contract_expired: 'Your organization contract has expired. Ask your org admin to renew.',
-    no_visits: 'No visits remain in your organization bank or personal wallet. Ask your org admin for more visits or buy a top-up.',
+    no_visits: 'No visits remain in your organization bank or personal wallet. Ask your org admin for more visits or buy a top-up under Admin → Billing.',
   };
 
   return NextResponse.json(

@@ -28,7 +28,7 @@ test.describe('Usage — discoverability from /home', () => {
     // Pill is an <a> with href="/account/usage". The icon-then-numbers
     // layout means we look for the link by aria-label.
     const pill = page.getByRole('link', {
-      name: /drafts.*this month|drafts used this month/i,
+      name: /drafts.*this month|drafts used this month|visits available/i,
     });
     await expect(pill.first()).toBeVisible();
     await expect(pill.first()).toHaveAttribute('href', '/account/usage');
@@ -37,7 +37,7 @@ test.describe('Usage — discoverability from /home', () => {
   test('clicking the pill navigates to /account/usage', async ({ page }) => {
     await page.goto('/home');
     await page
-      .getByRole('link', { name: /drafts.*this month|drafts used this month/i })
+      .getByRole('link', { name: /drafts.*this month|drafts used this month|visits available/i })
       .first()
       .click();
     await page.waitForURL('**/account/usage');
@@ -59,12 +59,12 @@ test.describe('Usage — page renders', () => {
   test('GET /account/usage shows the structural content', async ({ page }) => {
     await page.goto('/account/usage');
     await expect(page).toHaveURL(/\/account\/usage$/);
-    // Page heading is a real <h1>.
     await expect(page.getByRole('heading', { name: /^usage$/i })).toBeVisible();
-    // CardTitles render as <div> (not heading). Match by text.
-    await expect(page.getByText('This period', { exact: true })).toBeVisible();
-    await expect(page.getByText('Effective cost', { exact: true })).toBeVisible();
-    await expect(page.getByText('Last 6 months', { exact: true })).toBeVisible();
+    // Demo Clinic uses visit-bank billing — capacity section loads client-side.
+    // Legacy orgs still render draft-economics cards server-side.
+    const visitCapacity = page.getByText('Visit capacity', { exact: true });
+    const legacyPeriod = page.getByText('This period', { exact: true });
+    await expect(visitCapacity.or(legacyPeriod)).toBeVisible({ timeout: 10_000 });
   });
 
   // Note: auth-gate redirect coverage for /account/* is identical to the

@@ -17,6 +17,7 @@ import {
 } from '@/lib/billing/recommend-plan';
 import { countOrgDraftsSince } from '@/lib/billing/draft-counter';
 import { VisitBankSection } from '@/components/billing/visit-bank-section';
+import { loadOrgUsageBillingMode } from '@/lib/billing/commercial-mode';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Usage' };
@@ -51,6 +52,8 @@ export default async function AccountUsagePage() {
   const session = await auth();
   if (!session?.user?.orgId) redirect('/login');
   const orgId = session.user.orgId;
+  const isOrgAdmin =
+    session.user.role === 'ORG_ADMIN' || session.user.role === 'SITE_ADMIN';
 
   const org = await prisma.organization.findUnique({
     where: { id: orgId },
@@ -58,6 +61,7 @@ export default async function AccountUsagePage() {
   });
   if (!org) redirect('/home');
 
+  const usageMode = await loadOrgUsageBillingMode(orgId);
   const policy = getPlanPolicy(org.billingPlan);
   const seatCount = await prisma.orgUser.count({
     where: { orgId, isActive: true },
@@ -94,175 +98,182 @@ export default async function AccountUsagePage() {
       <header className="space-y-1">
         <h1 className="text-2lg font-semibold">Usage</h1>
         <p className="text-sm text-muted-foreground">
-          {org.name} · {policy.label} plan · last 30 days
+          {org.name}
+          {usageMode.visitBankPrimary
+            ? ' · Visit bank · last 30 days'
+            : ` · ${policy.label} plan · last 30 days`}
         </p>
       </header>
 
-      <VisitBankSection />
+      <VisitBankSection isOrgAdmin={isOrgAdmin} />
 
-      {org.billingPlan === 'TRIAL' && (
+      {!usageMode.visitBankPrimary && org.billingPlan === 'TRIAL' && (
         <StatusBanner variant="info">
           You&apos;re on a trial. Pick a plan from the comparison below to
           continue after your trial ends.
         </StatusBanner>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-md">This period</CardTitle>
-            <CardDescription>
-              Drafts the AI generated for this account in the last 30 days.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              <div className="flex items-baseline gap-3">
-                <span className="text-3xl font-mono tabular-nums">
-                  {draftsThisPeriod.toLocaleString()}
-                </span>
-                <span className="text-sm text-muted-foreground">
-                  drafts
+      {!usageMode.visitBankPrimary && (
+        <>
+          <div className="grid gap-6 lg:grid-cols-2">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-md">This period</CardTitle>
+                <CardDescription>
+                  Drafts the AI generated for this account in the last 30 days.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3">
+                  <div className="flex items-baseline gap-3">
+                    <span className="text-3xl font-mono tabular-nums">
+                      {draftsThisPeriod.toLocaleString()}
+                    </span>
+                    <span className="text-sm text-muted-foreground">
+                      drafts
+                      {draftsIncluded !== UNLIMITED && (
+                        <> of {draftsIncluded.toLocaleString()} included</>
+                      )}
+                    </span>
+                  </div>
                   {draftsIncluded !== UNLIMITED && (
-                    <> of {draftsIncluded.toLocaleString()} included</>
+                    <ProgressBar
+                      numerator={draftsThisPeriod}
+                      denominator={draftsIncluded}
+                    />
                   )}
-                </span>
-              </div>
-              {draftsIncluded !== UNLIMITED && (
-                <ProgressBar
-                  numerator={draftsThisPeriod}
-                  denominator={draftsIncluded}
+                  {overage > 0 && (
+                    <p className="text-sm text-muted-foreground">
+                      <strong>{overage.toLocaleString()}</strong> overage drafts at{' '}
+                      ${(policy.overageRateCents / 100).toFixed(2)} = $
+                      {(overageCostCents / 100).toFixed(2)} this period.
+                    </p>
+                  )}
+                  {overage === 0 && draftsIncluded !== UNLIMITED && (
+                    <p className="text-sm text-muted-foreground">
+                      You&apos;re within your bundle. No overage charges.
+                    </p>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-md">Effective cost</CardTitle>
+                <CardDescription>
+                  What you&apos;re paying per draft right now.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <EffectiveCost
+                  billingPlan={org.billingPlan}
+                  draftsThisPeriod={draftsThisPeriod}
+                  overageCostCents={overageCostCents}
                 />
-              )}
-              {overage > 0 && (
-                <p className="text-sm text-muted-foreground">
-                  <strong>{overage.toLocaleString()}</strong> overage drafts at{' '}
-                  ${(policy.overageRateCents / 100).toFixed(2)} = $
-                  {(overageCostCents / 100).toFixed(2)} this period.
-                </p>
-              )}
-              {overage === 0 && draftsIncluded !== UNLIMITED && (
-                <p className="text-sm text-muted-foreground">
-                  You&apos;re within your bundle. No overage charges.
-                </p>
-              )}
-            </div>
-          </CardContent>
-        </Card>
+              </CardContent>
+            </Card>
+          </div>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-md">Effective cost</CardTitle>
-            <CardDescription>
-              What you&apos;re paying per draft right now.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <EffectiveCost
-              billingPlan={org.billingPlan}
-              draftsThisPeriod={draftsThisPeriod}
-              overageCostCents={overageCostCents}
-            />
-          </CardContent>
-        </Card>
-      </div>
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-md">Last 6 months</CardTitle>
+              <CardDescription>Drafts per calendar month — your usage curve.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <MonthlySparkline data={monthlyHistory} />
+            </CardContent>
+          </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-md">Last 6 months</CardTitle>
-          <CardDescription>Drafts per calendar month — your usage curve.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <MonthlySparkline data={monthlyHistory} />
-        </CardContent>
-      </Card>
-
-      {soloComparison && soloRecommendation && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-md">
-              Plan economics — based on this month
-            </CardTitle>
-            <CardDescription>
-              At {draftsThisPeriod.toLocaleString()} drafts/month, here&apos;s
-              what you would pay on each Solo plan. Your current plan is
-              highlighted; the cheapest fit is marked with{' '}
-              <StatusBadge variant="success" noIcon className="text-[10px]">Best</StatusBadge>.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
-                  <th className="py-2 font-medium">Plan</th>
-                  <th className="py-2 font-medium">Base</th>
-                  <th className="py-2 font-medium">Drafts incl.</th>
-                  <th className="py-2 font-medium">Overage</th>
-                  <th className="py-2 font-medium text-right">Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {soloComparison.map((row) => {
-                  const isCurrent = row.plan === org.billingPlan;
-                  const isBest = row.plan === soloRecommendation.plan;
-                  return (
-                    <tr key={row.plan} className="border-b border-border/40">
-                      <td className="py-2 flex items-center gap-2">
-                        {row.label}
-                        {isCurrent && (
-                          <StatusBadge variant="info" noIcon className="text-[10px]">
-                            Current
-                          </StatusBadge>
-                        )}
-                        {isBest && !isCurrent && (
-                          <StatusBadge variant="success" noIcon className="text-[10px]">
-                            Best
-                          </StatusBadge>
-                        )}
-                      </td>
-                      <td className="py-2 font-mono text-xs">
-                        ${(row.basePriceCents / 100).toFixed(0)}
-                      </td>
-                      <td className="py-2 font-mono text-xs">
-                        {row.draftsIncluded === UNLIMITED
-                          ? '∞'
-                          : row.draftsIncluded.toLocaleString()}
-                      </td>
-                      <td className="py-2 font-mono text-xs">
-                        {row.overageDrafts === 0
-                          ? '—'
-                          : `${row.overageDrafts} × $${(
-                              row.overageCostCents / row.overageDrafts / 100
-                            ).toFixed(2)} = $${(
-                              row.overageCostCents / 100
-                            ).toFixed(2)}`}
-                      </td>
-                      <td className="py-2 font-mono text-xs text-right">
-                        ${(row.totalCostCents / 100).toFixed(2)}
-                      </td>
+          {soloComparison && soloRecommendation && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-md">
+                  Plan economics — based on this month
+                </CardTitle>
+                <CardDescription>
+                  At {draftsThisPeriod.toLocaleString()} drafts/month, here&apos;s
+                  what you would pay on each Solo plan. Your current plan is
+                  highlighted; the cheapest fit is marked with{' '}
+                  <StatusBadge variant="success" noIcon className="text-[10px]">Best</StatusBadge>.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
+                      <th className="py-2 font-medium">Plan</th>
+                      <th className="py-2 font-medium">Base</th>
+                      <th className="py-2 font-medium">Drafts incl.</th>
+                      <th className="py-2 font-medium">Overage</th>
+                      <th className="py-2 font-medium text-right">Total</th>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-            {soloRecommendation.plan !== org.billingPlan && (
-              <p className="mt-3 text-sm text-muted-foreground">
-                Switching to <strong>{soloRecommendation.label}</strong> would
-                save you{' '}
-                <strong>
-                  $
-                  {(
-                    (soloComparison.find((r) => r.plan === org.billingPlan)
-                      ?.totalCostCents ?? 0) / 100 -
-                    soloRecommendation.totalCostCents / 100
-                  ).toFixed(2)}
-                </strong>{' '}
-                this month. (Your usage may vary — pick the plan that matches
-                your typical month, not your busiest one.)
-              </p>
-            )}
-          </CardContent>
-        </Card>
+                  </thead>
+                  <tbody>
+                    {soloComparison.map((row) => {
+                      const isCurrent = row.plan === org.billingPlan;
+                      const isBest = row.plan === soloRecommendation.plan;
+                      return (
+                        <tr key={row.plan} className="border-b border-border/40">
+                          <td className="py-2 flex items-center gap-2">
+                            {row.label}
+                            {isCurrent && (
+                              <StatusBadge variant="info" noIcon className="text-[10px]">
+                                Current
+                              </StatusBadge>
+                            )}
+                            {isBest && !isCurrent && (
+                              <StatusBadge variant="success" noIcon className="text-[10px]">
+                                Best
+                              </StatusBadge>
+                            )}
+                          </td>
+                          <td className="py-2 font-mono text-xs">
+                            ${(row.basePriceCents / 100).toFixed(0)}
+                          </td>
+                          <td className="py-2 font-mono text-xs">
+                            {row.draftsIncluded === UNLIMITED
+                              ? '∞'
+                              : row.draftsIncluded.toLocaleString()}
+                          </td>
+                          <td className="py-2 font-mono text-xs">
+                            {row.overageDrafts === 0
+                              ? '—'
+                              : `${row.overageDrafts} × $${(
+                                  row.overageCostCents / row.overageDrafts / 100
+                                ).toFixed(2)} = $${(
+                                  row.overageCostCents / 100
+                                ).toFixed(2)}`}
+                          </td>
+                          <td className="py-2 font-mono text-xs text-right">
+                            ${(row.totalCostCents / 100).toFixed(2)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                {soloRecommendation.plan !== org.billingPlan && (
+                  <p className="mt-3 text-sm text-muted-foreground">
+                    Switching to <strong>{soloRecommendation.label}</strong> would
+                    save you{' '}
+                    <strong>
+                      $
+                      {(
+                        (soloComparison.find((r) => r.plan === org.billingPlan)
+                          ?.totalCostCents ?? 0) / 100 -
+                        soloRecommendation.totalCostCents / 100
+                      ).toFixed(2)}
+                    </strong>{' '}
+                    this month. (Your usage may vary — pick the plan that matches
+                    your typical month, not your busiest one.)
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          )}
+        </>
       )}
     </div>
   );

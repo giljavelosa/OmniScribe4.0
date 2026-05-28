@@ -11,7 +11,8 @@ import {
   getPlanPolicy,
   UNLIMITED,
 } from '@/lib/billing/plan-policy';
-import type { BillingPlan } from '@prisma/client';
+import type { BillingPlan, CommercialModel } from '@prisma/client';
+import { usesVisitBankBilling } from '@/lib/billing/commercial-mode';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Pricing insights' };
@@ -38,6 +39,14 @@ export const metadata: Metadata = { title: 'Pricing insights' };
  */
 
 const MS_PER_DAY = 86_400_000;
+
+const COMMERCIAL_MODEL_LABELS: Record<CommercialModel, string> = {
+  TRIAL: 'Trial',
+  SOLO_VISIT_BANK: 'Solo visit bank',
+  ORG_VISIT_BANK: 'Org visit bank',
+  ENTERPRISE_PER_SEAT: 'Enterprise',
+  LEGACY_SKU: 'Legacy SKU',
+};
 
 /** Estimated marginal cost per draft (cents). Pulled from the cost
  *  analysis in `references/strategic/stripe-pricing-skus.md` — Soniox
@@ -66,9 +75,21 @@ export default async function OwnerPricingInsightsPage() {
   const now = new Date();
   const since = new Date(now.getTime() - 30 * MS_PER_DAY);
 
-  // 1. Org counts by plan + per-org seat counts.
+  // 1. Org counts by plan + per-org seat counts + visit-bank contracts.
   const orgs = await prisma.organization.findMany({
-    select: { id: true, name: true, billingPlan: true },
+    select: {
+      id: true,
+      name: true,
+      billingPlan: true,
+      visitBankBalance: true,
+      commercialContract: {
+        select: {
+          commercialModel: true,
+          capacityEnforcementEnabled: true,
+          committedSeats: true,
+        },
+      },
+    },
   });
   const seatCounts = await prisma.orgUser.groupBy({
     by: ['orgId'],
@@ -93,6 +114,19 @@ export default async function OwnerPricingInsightsPage() {
     draftsByOrg.set(r.orgId, (draftsByOrg.get(r.orgId) ?? 0) + 1);
   }
 
+  // 2b. Visit-bank consumption — distinct note debits in the last 30 days.
+  const visitDebitRows = await prisma.visitLedgerEntry.groupBy({
+    by: ['orgId'],
+    where: {
+      sourceType: 'NOTE_DEBIT',
+      createdAt: { gte: since },
+    },
+    _count: { _all: true },
+  });
+  const visitsUsedByOrg = new Map(
+    visitDebitRows.map((row) => [row.orgId, row._count._all]),
+  );
+
   // 3. Per-org metrics.
   const perOrg = orgs.map((org) => {
     const drafts = draftsByOrg.get(org.id) ?? 0;
@@ -103,7 +137,7 @@ export default async function OwnerPricingInsightsPage() {
       draftsIncluded === UNLIMITED ? 0 : Math.max(0, drafts - draftsIncluded);
     const overageCents = overage * policy.overageRateCents;
     const baseCents =
-      PLAN_BASE_PRICE_CENTS[org.billingPlan] *
+      (PLAN_BASE_PRICE_CENTS[org.billingPlan] ?? 0) *
       (policy.perSeat ? Math.max(seats, policy.seatMin) : 1);
     const revenueCents = baseCents + overageCents;
     const costCents = drafts * ESTIMATED_DRAFT_COST_CENTS;
@@ -157,14 +191,34 @@ export default async function OwnerPricingInsightsPage() {
     .sort((a, b) => b.drafts - a.drafts)
     .slice(0, 10);
 
+  const visitBankOrgs = orgs
+    .filter((org) => usesVisitBankBilling(org.commercialContract))
+    .map((org) => ({
+      orgId: org.id,
+      orgName: org.name,
+      commercialModel: org.commercialContract!.commercialModel,
+      modelLabel: COMMERCIAL_MODEL_LABELS[org.commercialContract!.commercialModel],
+      visitBankBalance: org.visitBankBalance,
+      visitsUsed30d: visitsUsedByOrg.get(org.id) ?? 0,
+      committedSeats: org.commercialContract!.committedSeats,
+      legacyPlanLabel: getPlanPolicy(org.billingPlan).label,
+    }))
+    .sort((a, b) => b.visitsUsed30d - a.visitsUsed30d);
+
+  const totalVisitsUsed30d = visitBankOrgs.reduce((sum, row) => sum + row.visitsUsed30d, 0);
+  const totalBankBalance = visitBankOrgs.reduce((sum, row) => sum + row.visitBankBalance, 0);
+
   return (
     <div className="space-y-6">
       <header className="space-y-1">
         <h1 className="text-2lg font-semibold">Pricing insights</h1>
         <p className="text-sm text-muted-foreground">
-          Internal — last 30 days · {totalActiveOrgs.toLocaleString()} orgs ·
-          ${(totalRevenueCents / 100).toLocaleString()} revenue · $
-          {(totalCostCents / 100).toLocaleString()} cost · gross margin{' '}
+          Internal — last 30 days · {totalActiveOrgs.toLocaleString()} orgs ·{' '}
+          {visitBankOrgs.length.toLocaleString()} on visit bank ·{' '}
+          {totalVisitsUsed30d.toLocaleString()} visits used ·{' '}
+          {totalBankBalance.toLocaleString()} visits in bank · $
+          {(totalRevenueCents / 100).toLocaleString()} legacy-plan revenue · $
+          {(totalCostCents / 100).toLocaleString()} est. draft cost · gross margin{' '}
           {overallMarginPct.toFixed(1)}%.
         </p>
       </header>
@@ -278,6 +332,65 @@ export default async function OwnerPricingInsightsPage() {
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-md">Visit bank orgs</CardTitle>
+          <CardDescription>
+            Orgs on the Unit 51 visit-bank model — bank balance, visits consumed in the last 30
+            days, and commercial model. Legacy BillingPlan label shown for cross-check until the
+            bridge is fully retired.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
+                <th className="py-2 font-medium">Org</th>
+                <th className="py-2 font-medium">Model</th>
+                <th className="py-2 font-medium text-right">Bank</th>
+                <th className="py-2 font-medium text-right">Used 30d</th>
+                <th className="py-2 font-medium text-right">Seats</th>
+                <th className="py-2 font-medium">Legacy plan</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visitBankOrgs.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="py-6 text-center text-sm text-muted-foreground">
+                    No visit-bank contracts yet.
+                  </td>
+                </tr>
+              ) : (
+                visitBankOrgs.map((row) => (
+                  <tr key={row.orgId} className="border-b border-border/40">
+                    <td className="py-2 truncate max-w-[180px]">{row.orgName}</td>
+                    <td className="py-2">
+                      <StatusBadge variant="info" noIcon className="text-[10px]">
+                        {row.modelLabel}
+                      </StatusBadge>
+                    </td>
+                    <td className="py-2 text-right font-mono text-xs">
+                      {row.visitBankBalance.toLocaleString()}
+                    </td>
+                    <td className="py-2 text-right font-mono text-xs">
+                      {row.visitsUsed30d.toLocaleString()}
+                    </td>
+                    <td className="py-2 text-right font-mono text-xs">
+                      {row.committedSeats.toLocaleString()}
+                    </td>
+                    <td className="py-2">
+                      <StatusBadge variant="neutral" noIcon className="text-[10px]">
+                        {row.legacyPlanLabel}
+                      </StatusBadge>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

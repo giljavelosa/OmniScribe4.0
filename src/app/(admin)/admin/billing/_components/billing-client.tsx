@@ -50,6 +50,7 @@ export function BillingClient() {
   const [tier, setTier] = useState('solo-standard');
   const [bundleId, setBundleId] = useState('bundle-500');
   const [pending, startAction] = useTransition();
+  const [legacyOpen, setLegacyOpen] = useState(false);
 
   function load() {
     setError(null);
@@ -231,30 +232,48 @@ export function BillingClient() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-md">Legacy seat subscription</CardTitle>
-          <CardDescription>
-            {state
-              ? state.stripeCustomerLinked
-                ? `${state.activeSeats} seat${state.activeSeats === 1 ? '' : 's'} · ${state.assignedSeats} assigned`
-                : 'No legacy seat subscription.'
-              : 'Loading…'}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {state?.stripeCustomerLinked ? (
-            <Button type="button" variant="outline" onClick={openPortal} disabled={pending || stripeOff}>
-              Manage legacy billing
-            </Button>
-          ) : (
-            <p className="text-xs text-muted-foreground">
-              Per-seat Stripe subscriptions from the pre-visit-bank model. New customers should use
-              visit-bank plans above.
-            </p>
+      {state?.stripeCustomerLinked && (
+        <Card className="border-dashed bg-muted/20">
+          <CardHeader className="pb-2">
+            <button
+              type="button"
+              className="flex w-full items-center justify-between text-left"
+              onClick={() => setLegacyOpen((open) => !open)}
+              aria-expanded={legacyOpen}
+            >
+              <div>
+                <CardTitle className="text-sm font-medium text-muted-foreground">
+                  Previous billing model (per-seat only)
+                </CardTitle>
+                <CardDescription className="text-xs mt-1">
+                  Only needed if your org still has an old seat subscription. New plans use visit
+                  bank above.
+                </CardDescription>
+              </div>
+              <span className="text-xs text-muted-foreground shrink-0 ml-3">
+                {legacyOpen ? 'Hide' : 'Show'}
+              </span>
+            </button>
+          </CardHeader>
+          {legacyOpen && (
+            <CardContent className="pt-0 space-y-2">
+              <p className="text-sm text-muted-foreground">
+                {state.activeSeats} seat{state.activeSeats === 1 ? '' : 's'} ·{' '}
+                {state.assignedSeats} assigned
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={openPortal}
+                disabled={pending || stripeOff}
+              >
+                Manage legacy seat billing
+              </Button>
+            </CardContent>
           )}
-        </CardContent>
-      </Card>
+        </Card>
+      )}
     </div>
   );
 }

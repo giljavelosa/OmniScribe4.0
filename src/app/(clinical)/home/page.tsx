@@ -25,7 +25,9 @@ import { SchedulingCard } from '@/components/clinical/scheduling-card';
 import { TodayStatusTiles } from '@/components/home/today-status-tiles';
 import { AiCommandPanel } from '@/components/home/ai-command-panel';
 import { DraftUsagePill } from '@/components/billing/draft-usage-pill';
+import { VisitCapacityPill } from '@/components/billing/visit-capacity-pill';
 import { countOrgDraftsLast30Days } from '@/lib/billing/draft-counter';
+import { loadClinicianCapacitySummary } from '@/lib/billing/commercial-mode';
 import { HomeSearchForm } from './_components/home-search-form';
 
 const ADMIN_ROLES: OrgRole[] = ['ORG_ADMIN', 'SITE_ADMIN'];
@@ -162,9 +164,10 @@ export default async function HomePage({
   // count (per-seat plans need it for bundle math). Two cheap queries
   // in parallel; the pill renders muted/warning/danger based on
   // proportion-of-bundle.
-  const [draftsThisPeriod, activeSeatCount] = await Promise.all([
+  const [draftsThisPeriod, activeSeatCount, capacitySummary] = await Promise.all([
     countOrgDraftsLast30Days(orgId),
     prisma.orgUser.count({ where: { orgId, isActive: true } }),
+    loadClinicianCapacitySummary(orgId, clinicianOrgUserId),
   ]);
   const role = session.user.role;
   const platformRole = session.user.platformRole;
@@ -339,14 +342,23 @@ export default async function HomePage({
         {/* 0.5. Live draft-usage pill — clinician sees their plan
             consumption above the fold like a battery icon. Click →
             /account/usage for the breakdown. */}
-        {billingPlan && (
+        {(capacitySummary || billingPlan) && (
           <div className="px-4 pt-3 pb-1 bg-card flex justify-end">
-            <DraftUsagePill
-              draftsUsed={draftsThisPeriod}
-              billingPlan={billingPlan}
-              seatCount={activeSeatCount}
-              compact
-            />
+            {capacitySummary ? (
+              <VisitCapacityPill
+                availableVisits={capacitySummary.availableVisits}
+                compact
+              />
+            ) : (
+              billingPlan && (
+                <DraftUsagePill
+                  draftsUsed={draftsThisPeriod}
+                  billingPlan={billingPlan}
+                  seatCount={activeSeatCount}
+                  compact
+                />
+              )
+            )}
           </div>
         )}
 
@@ -524,13 +536,22 @@ export default async function HomePage({
             {/* Live draft-usage pill — proportion of bundle, color-coded.
                 Click → /account/usage. Hidden when billingPlan is null
                 (legacy seed orgs where the column hasn't been backfilled). */}
-            {billingPlan && (
-              <DraftUsagePill
-                draftsUsed={draftsThisPeriod}
-                billingPlan={billingPlan}
-                seatCount={activeSeatCount}
-                className="shrink-0"
-              />
+            {(capacitySummary || billingPlan) && (
+              capacitySummary ? (
+                <VisitCapacityPill
+                  availableVisits={capacitySummary.availableVisits}
+                  className="shrink-0"
+                />
+              ) : (
+                billingPlan && (
+                  <DraftUsagePill
+                    draftsUsed={draftsThisPeriod}
+                    billingPlan={billingPlan}
+                    seatCount={activeSeatCount}
+                    className="shrink-0"
+                  />
+                )
+              )
             )}
           </div>
 

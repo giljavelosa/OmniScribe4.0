@@ -9,6 +9,7 @@ import { prisma } from '@/lib/prisma';
 import { writeAuditLog } from '@/lib/audit/log';
 import { creditOrgBank } from '@/lib/billing/visit-ledger';
 import { ensureOrganizationCommercialContract } from '@/lib/billing/ensure-contract';
+import { billingPlanForSoloTierId } from '@/lib/billing/commercial-mode';
 
 export type CapacityPurchaseMetadata = {
   orgId: string;
@@ -92,7 +93,15 @@ export async function fulfillMonthlyTierCheckout(
   if (typeof session.subscription === 'string') {
     await prisma.organization.update({
       where: { id: meta.orgId },
-      data: { stripeSubscriptionId: session.subscription },
+      data: {
+        stripeSubscriptionId: session.subscription,
+        billingPlan: billingPlanForSoloTierId(meta.catalogItemId),
+      },
+    });
+  } else {
+    await prisma.organization.update({
+      where: { id: meta.orgId },
+      data: { billingPlan: billingPlanForSoloTierId(meta.catalogItemId) },
     });
   }
 

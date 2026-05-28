@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useState, useTransition } from 'react';
 
 import { VisitRequestButton } from '@/components/billing/visit-request-button';
@@ -18,7 +19,7 @@ type CapacityView = {
   expiryWarning: { daysLeft: number; level: 'warn' | 'urgent' } | null;
 };
 
-export function VisitBankSection() {
+export function VisitBankSection({ isOrgAdmin = false }: { isOrgAdmin?: boolean }) {
   const [data, setData] = useState<CapacityView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [, startLoad] = useTransition();
@@ -75,6 +76,18 @@ export function VisitBankSection() {
             year: 'numeric',
           })}
           .
+          {isOrgAdmin ? (
+            <>
+              {' '}
+              Subscribe or buy visit bundles from{' '}
+              <Link href="/admin/billing" className="underline font-medium">
+                Billing
+              </Link>
+              .
+            </>
+          ) : (
+            <> Ask your org admin to choose a plan before the trial ends.</>
+          )}
         </StatusBanner>
       )}
 

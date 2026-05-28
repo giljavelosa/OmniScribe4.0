@@ -13,6 +13,7 @@ import { OrgRole, Division, BillingPlan } from '@prisma/client';
 const requireAdminOrgRole = vi.fn();
 const userFindUnique = vi.fn();
 const orgFindUnique = vi.fn();
+const contractFindUnique = vi.fn();
 const orgUserCount = vi.fn();
 const inviteCount = vi.fn();
 const inviteCreate = vi.fn();
@@ -26,6 +27,9 @@ vi.mock('@/lib/prisma', () => ({
   prisma: {
     user: { findUnique: (...a: unknown[]) => userFindUnique(...a) },
     organization: { findUnique: (...a: unknown[]) => orgFindUnique(...a) },
+    organizationCommercialContract: {
+      findUnique: (...a: unknown[]) => contractFindUnique(...a),
+    },
     orgUser: { count: (...a: unknown[]) => orgUserCount(...a) },
     invite: {
       count: (...a: unknown[]) => inviteCount(...a),
@@ -67,6 +71,7 @@ beforeEach(() => {
   });
   userFindUnique.mockReset().mockResolvedValue(null);
   orgFindUnique.mockReset();
+  contractFindUnique.mockReset().mockResolvedValue(null);
   orgUserCount.mockReset();
   inviteCount.mockReset().mockResolvedValue(0);
   inviteCreate.mockReset().mockResolvedValue({ id: 'inv_1' });

@@ -8,7 +8,7 @@ import { sendTransactional } from '@/lib/email/transport';
 import { buildInviteEmail } from '@/lib/email/templates/invite';
 import { writeAuditLog } from '@/lib/audit/log';
 import { OrgRole, Division } from '@prisma/client';
-import { canAddSeat } from '@/lib/billing/plan-policy';
+import { canAddOrgMember } from '@/lib/billing/commercial-mode';
 
 export const runtime = 'nodejs';
 
@@ -57,10 +57,22 @@ export async function POST(req: Request) {
   // spam invites past the cap by sending them faster than recipients
   // accept. Each active OrgUser AND each unconsumed unexpired invite
   // represents one potential clinician seat the org has committed to.
-  const org = await prisma.organization.findUnique({
-    where: { id: orgUser.orgId },
-    select: { billingPlan: true, name: true },
-  });
+  const [org, contract] = await Promise.all([
+    prisma.organization.findUnique({
+      where: { id: orgUser.orgId },
+      select: { billingPlan: true, name: true },
+    }),
+    prisma.organizationCommercialContract.findUnique({
+      where: { orgId: orgUser.orgId },
+      select: {
+        commercialModel: true,
+        capacityEnforcementEnabled: true,
+        committedSeats: true,
+        trialEndsAt: true,
+        visitDebitOrder: true,
+      },
+    }),
+  ]);
   if (!org) {
     return NextResponse.json({ error: { code: 'not_found' } }, { status: 404 });
   }
@@ -77,7 +89,11 @@ export async function POST(req: Request) {
     }),
   ]);
   const currentSeatCount = activeOrgUsers + pendingInvites;
-  const seatCheck = canAddSeat(org.billingPlan, currentSeatCount);
+  const seatCheck = canAddOrgMember({
+    billingPlan: org.billingPlan,
+    contract,
+    currentSeatCount,
+  });
   if (!seatCheck.ok) {
     return NextResponse.json(
       {

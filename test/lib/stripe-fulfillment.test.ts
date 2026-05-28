@@ -119,7 +119,7 @@ describe('fulfillMonthlyTierCheckout', () => {
     expect(orgUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 'org_1' },
-        data: { stripeSubscriptionId: 'sub_1' },
+        data: { stripeSubscriptionId: 'sub_1', billingPlan: 'SOLO_PRO' },
       }),
     );
     expect(contractUpdate).toHaveBeenCalled();
