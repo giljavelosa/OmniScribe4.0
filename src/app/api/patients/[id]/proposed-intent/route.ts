@@ -50,7 +50,7 @@ export const runtime = 'nodejs';
  *        when authenticated; on any internal error the response degrades
  *        to `{ intent: UNSPECIFIED, ..., confidence: 'low' }` so visit
  *        start is never blocked by proposer latency (Decision 7).
- *   401 / 403 — standard auth failures (unauthenticated, no_org, MFA, etc.)
+ *   401 / 403 — standard auth failures (unauthenticated, no_org, etc.)
  *   404 not_found — patient doesn't exist or isn't org-scoped to viewer
  *
  * Cache: 60s in-memory TTL per (patientId, episodeId, clinicianOrgUserId).

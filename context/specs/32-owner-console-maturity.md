@@ -111,7 +111,7 @@ type ImpersonationContext = {
 ```
 
 Begin endpoint (`POST /api/owner/orgs/[id]/impersonate`):
-1. Verify `requirePlatformOwner()` + MFA.
+1. Verify `requirePlatformOwner()`.
 2. Body: `{ targetUserId: string, reason: string (≥10 chars) }`.
 3. Verify targetUserId is an active OrgUser of the org.
 4. Write `IMPERSONATION_BEGAN` to PlatformAuditLog.

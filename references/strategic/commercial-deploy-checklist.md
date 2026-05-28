@@ -33,4 +33,4 @@ Use before pointing production traffic at a new environment or going live with a
 
 - [ ] Demo seed **not** applied to production.
 - [ ] Org provisioned with correct division, seats, and admin invite/password flow tested.
-- [ ] MFA expectation communicated to customer security contact.
+- [ ] Auth posture communicated to customer security contact (email + password login; 4-digit signing PIN for sign-time re-auth; WebAuthn/hardware-key is a future option, not current).

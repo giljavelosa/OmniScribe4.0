@@ -11,10 +11,10 @@ All surfaces are admin- or owner-only. Standard admin/owner layout from `ui-cont
 - **`/owner/orgs`** — list with BAA status column (`✓ executed` success badge / `⚠ pending` warning badge)
 - **`/owner/orgs/new`** — provisioning sheet with BAA fields **required** (form refuses submit without them)
 - **`/owner/orgs/[id]`** — org detail with BAA section editable, seat allocation, subscription view, impersonation control
-- **`/admin/users`** — full user CRUD with row actions (Edit, Reset MFA, Send password reset, Deactivate)
+- **`/admin/users`** — full user CRUD with row actions (Edit, Send password reset, Deactivate)
 - **`/admin/sites`** — site list with "+ Add Site"; per-site detail page with nested Rooms CRUD
 - **`/admin/audit`** — audit log table with filters, search, CSV export
-- **`/admin/org-settings`** — force MFA, default note style, default templates per division, voice enrollment policy, audit retention, communication preferences
+- **`/admin/org-settings`** — default note style, default templates per division, voice enrollment policy, audit retention, communication preferences
 
 Read [`journeys/07-admin-onboards-a-clinic.md`](../../journeys/07-admin-onboards-a-clinic.md) for the end-to-end flow this unit enables. Read [`references/audit-admin-state-of-play.md`](../../references/audit-admin-state-of-play.md) for the canonical commercial-readiness audit.
 
@@ -113,25 +113,24 @@ Action handler:
 5. Write `PlatformAuditLog` entry `ORG_PROVISIONED`
 6. Redirect to `/owner/orgs/[id]`
 
-### D. Admin: MFA reset
+### D. Admin: password reset (admin-initiated)
 
-(API endpoint already in Unit 01 §E.) UI: in `/admin/users` row dropdown:
+(API endpoint `POST /api/admin/users/[id]/send-password-reset` already in Unit 01 §E.) UI: in `/admin/users` row dropdown:
 
 ```tsx
-<DropdownMenuItem onSelect={() => setShowMfaResetDialog(true)}>Reset MFA</DropdownMenuItem>
+<DropdownMenuItem onSelect={() => setShowPasswordResetDialog(true)}>Send password reset</DropdownMenuItem>
 
-<AlertDialog open={showMfaResetDialog} onOpenChange={setShowMfaResetDialog}>
+<AlertDialog open={showPasswordResetDialog} onOpenChange={setShowPasswordResetDialog}>
   <AlertDialogContent>
     <AlertDialogHeader>
-      <AlertDialogTitle>Reset MFA for {user.name}?</AlertDialogTitle>
+      <AlertDialogTitle>Send password reset to {user.name}?</AlertDialogTitle>
       <AlertDialogDescription>
-        The user will lose access to their current MFA device and must enroll a new one on next sign-in. All current sessions will be invalidated.
+        The user will receive a single-use reset link (valid ~1 hour). All current sessions will be invalidated once they reset.
       </AlertDialogDescription>
     </AlertDialogHeader>
-    <FormField label="Reason for reset" name="reason" type="textarea" required placeholder="e.g. 'User reported lost phone'" />
     <AlertDialogFooter>
       <AlertDialogCancel>Cancel</AlertDialogCancel>
-      <AlertDialogAction onClick={confirmMfaReset}>Reset MFA</AlertDialogAction>
+      <AlertDialogAction onClick={confirmSendPasswordReset}>Send reset email</AlertDialogAction>
     </AlertDialogFooter>
   </AlertDialogContent>
 </AlertDialog>
@@ -205,7 +204,6 @@ Audit `AUDIT_LOG_VIEWED` (yes — we audit the audit log being viewed) and `AUDI
 ### G. Admin: Org settings
 
 `src/app/(admin)/admin/org-settings/page.tsx` — form for:
-- Force MFA (boolean)
 - Default note style (NoteStyle enum)
 - Default templates per division (rule: when patient division X + status Y, use template Z)
 - Voice enrollment policy ('encourage' / 'required' / 'disabled')
@@ -220,7 +218,7 @@ Action handler writes `ORG_SETTINGS_UPDATED` audit with field-name list (no PHI;
 For these mutations, capture `before` and `after` fields in `AuditLog.metadata`:
 - Sign (`NOTE_SIGNED`): before = note status (DRAFT → SIGNED), follow-up sweep decisions
 - BAA updated (`BAA_UPDATED`): before/after field values
-- MFA reset (`MFA_RESET`): before = mfaEnabled true, reason
+- Password reset initiated by admin (`PASSWORD_RESET_INITIATED_BY_ADMIN`): targetUserId
 - Role changes (`USER_ROLE_CHANGED`): before/after role
 - Sensitivity tier changed (`NOTE_SENSITIVITY_CHANGED`): before/after tier
 
@@ -242,8 +240,8 @@ it('rejects expired invites with 410 Gone', async () => {
 ### J. Customer self-onboarding wizard
 
 Implemented in Unit 01 §F. This unit verifies:
-- Wizard is resumable if interrupted (state recoverable from `Invite.consumedAt` + `User.mfaEnabled`)
-- Audit log captures every step (`ONBOARDING_OPENED`, `USER_CREATED`, `MFA_ENROLLED`, `ONBOARDING_COMPLETED`)
+- Wizard is resumable if interrupted (state recoverable from `Invite.consumedAt` + whether the `User` record exists)
+- Audit log captures every step (`ONBOARDING_OPENED`, `USER_CREATED`, `ONBOARDING_COMPLETED`)
 - Wizard works on iPad + iPhone + desktop (manual cross-device test)
 
 ### K. Stripe integration for seat allocation
@@ -267,17 +265,16 @@ UI: `/admin/seats` page with allocation form + utilization view (rest of seats s
 - [ ] Platform owner can populate BAA fields on `/owner/orgs/[id]`; `baaCountersignedBy` auto-set to owner; PlatformAuditLog `BAA_UPDATED` entry created.
 - [ ] Owner Org list shows BAA-status column; filterable by status.
 - [ ] Owner provisioning form rejects submission without BAA fields populated.
-- [ ] Admin can reset a user's MFA: AlertDialog with reason → email sent → sessions invalidated → user re-enrolls on next sign-in → audit entry exists.
-- [ ] Admin can send password reset email: user receives link → resets → audit exists.
+- [ ] Admin can send password reset email: AlertDialog confirm → user receives single-use link → resets → sessions invalidated → audit entry exists.
 - [ ] Sites CRUD works (create, edit, archive, restore); only org admin can mutate.
 - [ ] Rooms CRUD works nested under Sites.
 - [ ] Customer self-onboarding wizard completes end-to-end on staging.
 - [ ] Expired invite tokens return 410 Gone; test covers this.
 - [ ] All admin/owner routes audit-log every mutation with PHI-free metadata.
-- [ ] Audit log enrichment: Sign, MFA reset, BAA acceptance, role changes, sensitivity tier changes capture before/after in metadata.
+- [ ] Audit log enrichment: Sign, admin-initiated password reset, BAA acceptance, role changes, sensitivity tier changes capture before/after in metadata.
 - [ ] Admin audit log surface works (search, filter, CSV export).
-- [ ] Org settings page saves correctly; settings drive correct downstream behavior (force-MFA blocks sign-in until enrolled; default templates apply on `/prepare`).
+- [ ] Org settings page saves correctly; settings drive correct downstream behavior (default templates apply on `/prepare`).
 - [ ] Stripe integration: seat allocation reflects in subscription; provisioning is atomic with Stripe customer creation.
 - [ ] `npm run build` + `npm run lint` pass.
-- [ ] Three-lens evaluation: Clinician (onboarding wizard is friendly), Compliance (BAA tracking + MFA reset + audit enrichment satisfies HIPAA business-associate posture), Auditor (every admin action reconstructable from `AuditLog` + `PlatformAuditLog`).
+- [ ] Three-lens evaluation: Clinician (onboarding wizard is friendly), Compliance (BAA tracking + admin-initiated password reset + audit enrichment satisfies HIPAA business-associate posture), Auditor (every admin action reconstructable from `AuditLog` + `PlatformAuditLog`).
 - [ ] `progress-tracker.md` updated; commercial-readiness blockers from `references/audit-admin-state-of-play.md` now closed.

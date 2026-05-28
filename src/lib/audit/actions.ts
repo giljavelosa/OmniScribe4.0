@@ -14,6 +14,9 @@
 export type AuditAction =
   | 'USER_SIGNED_IN'
   | 'USER_SIGNED_IN_FAILED'
+  // Legacy MFA actions — MFA was removed in Sprint 0.20 (auth is now password +
+  // a 4-digit signing PIN). No new code writes these; they are retained (never
+  // rename, per above) so historical AuditLog rows still resolve.
   | 'MFA_VERIFIED'
   | 'MFA_VERIFY_FAILED'
   | 'MFA_ENROLLED'

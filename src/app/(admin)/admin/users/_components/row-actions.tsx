@@ -31,9 +31,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Label } from '@/components/ui/label';
-import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
 import { StatusBanner } from '@/components/ui/status-banner';
 
 type Props = {
@@ -46,7 +43,7 @@ type Props = {
   currentEnrollments: Array<{ siteId: string; isPrimary: boolean }>;
 };
 
-type DialogKey = 'reset-mfa' | 'send-reset' | 'deactivate' | 'sites' | null;
+type DialogKey = 'send-reset' | 'deactivate' | 'sites' | null;
 
 export function RowActions({
   userId,
@@ -58,8 +55,6 @@ export function RowActions({
 }: Props) {
   const router = useRouter();
   const [open, setOpen] = useState<DialogKey>(null);
-  const [reason, setReason] = useState('');
-  const [adminToken, setAdminToken] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const [selectedSites, setSelectedSites] = useState<string[]>(
@@ -74,8 +69,6 @@ export function RowActions({
 
   function close() {
     setOpen(null);
-    setReason('');
-    setAdminToken('');
     setError(null);
     setSelectedSites(currentEnrollments.map((e) => e.siteId));
     setPrimarySite(currentEnrollments.find((e) => e.isPrimary)?.siteId ?? null);
@@ -116,26 +109,6 @@ export function RowActions({
         } else {
           setError('Could not save site enrollment.');
         }
-        return;
-      }
-      close();
-      router.refresh();
-    });
-  }
-
-  function resetMfa() {
-    setError(null);
-    startTransition(async () => {
-      const res = await fetch(`/api/admin/users/${userId}/reset-mfa`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason, adminMfaToken: adminToken }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        if (body?.error?.code === 'invalid_admin_mfa') setError('Your authenticator code was rejected.');
-        else if (body?.error?.code === 'reason_too_short') setError('Reason must be at least 10 characters.');
-        else setError('Could not reset authenticator.');
         return;
       }
       close();
@@ -185,7 +158,6 @@ export function RowActions({
           {showSitesItem && (
             <DropdownMenuItem onClick={() => setOpen('sites')}>Manage sites</DropdownMenuItem>
           )}
-          <DropdownMenuItem onClick={() => setOpen('reset-mfa')}>Reset authenticator</DropdownMenuItem>
           <DropdownMenuItem onClick={() => setOpen('send-reset')}>Send password reset</DropdownMenuItem>
           <DropdownMenuSeparator />
           {isActive ? (
@@ -260,35 +232,6 @@ export function RowActions({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      <AlertDialog open={open === 'reset-mfa'} onOpenChange={(o) => !o && close()}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Reset authenticator for {email}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              They&apos;ll be required to re-enroll their authenticator on next sign-in. Their active
-              sessions are invalidated immediately. This action is audited.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <div className="space-y-3">
-            <div className="space-y-2">
-              <Label htmlFor="reason">Reason (≥ 10 characters)</Label>
-              <Textarea id="reason" value={reason} onChange={(e) => setReason(e.target.value)} rows={3} disabled={pending} />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="adminToken">Your current authenticator code</Label>
-              <Input id="adminToken" inputMode="numeric" value={adminToken} onChange={(e) => setAdminToken(e.target.value)} disabled={pending} />
-            </div>
-            {error && <StatusBanner variant="danger">{error}</StatusBanner>}
-          </div>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={resetMfa} disabled={pending || reason.length < 10 || adminToken.length !== 6}>
-              {pending ? 'Resetting…' : 'Reset authenticator'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
 
       <AlertDialog open={open === 'send-reset'} onOpenChange={(o) => !o && close()}>
         <AlertDialogContent>

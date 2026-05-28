@@ -19,7 +19,7 @@ export const metadata: Metadata = {
  * /telehealth/room/[scheduleId] — clinician-side telehealth surface.
  *
  * Auth chain:
- *   (clinical)/layout.tsx already enforces NextAuth + MFA. This page adds:
+ *   (clinical)/layout.tsx already enforces NextAuth sign-in. This page adds:
  *     - schedule exists in the signed-in org
  *     - TelehealthSession exists for the schedule (1:1) and is ACTIVE
  *     - session.noteId is set (Unit 16 always sets it on start)

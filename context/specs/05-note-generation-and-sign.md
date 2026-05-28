@@ -9,7 +9,7 @@ Build the LLM abstraction (sole AI ingress + PHI guard), the division-aware mast
 UI surfaces:
 - **`/processing/[noteId]`** — transient screen with `<ProcessingIndicator>` (3-gear spinner) + escalating empathy copy
 - **`/review/[noteId]`** — section accordions with inline TipTap editor, `<SectionProgressStrip>`, regenerate buttons, readiness panel, follow-up sweep area (full sweep in Unit 06)
-- **`/sign/[noteId]`** — read-only final preview, attestation, MFA re-verify modal, sign-time follow-up sweep modal (Unit 06)
+- **`/sign/[noteId]`** — read-only final preview, attestation, signing-PIN re-verification modal (4-digit, with unlock window), sign-time follow-up sweep modal (Unit 06)
 
 References: [`journeys/02-typical-visit.md`](../../journeys/02-typical-visit.md) Steps 4–5, [`journeys/04-section-regenerate.md`](../../journeys/04-section-regenerate.md), [`references/section-progress-spec.md`](../../references/section-progress-spec.md), [`references/section-progress-ui-spec.md`](../../references/section-progress-ui-spec.md).
 
@@ -323,12 +323,12 @@ Derived to UI via `src/lib/notes/derive-progress-strip.ts`.
 - If not ready → redirect to `/review` with warning
 - Show human-readable preview (compose sections via `composeFinalView(draftJson, template)`)
 - Show open-follow-up sweep modal (Unit 06) if any prior-visit FollowUps still `OPEN`
-- Show MFA challenge if `org.forceMfa || lastMfaVerifiedAt > 1h`
+- Show signing-PIN challenge if outside the active unlock window (`/api/auth/pin/verify`; errors `pin_not_set`, `pin_required`, `invalid_pin`)
 - On "Sign Note":
 
 ```ts
 await prisma.$transaction(async (tx) => {
-  // 1. Re-verify MFA (if challenged)
+  // 1. Re-verify signing PIN (if challenged)
   // 2. Set Note.status = SIGNED, freeze finalJson
   await tx.note.update({
     where: { id: noteId },
@@ -361,7 +361,7 @@ await writeAuditLog({
   action: 'NOTE_SIGNED',
   resourceType: 'Note',
   resourceId: noteId,
-  metadata: { mfaReverified: true, /* PHI-free */ },
+  metadata: { pinReverified: true, /* PHI-free */ },
 });
 ```
 
@@ -399,11 +399,11 @@ Transient screen. Subscribes to SSE `/api/notes/[id]/stream?include=status`. Ren
 - [ ] `AWS_BEARER_TOKEN_BEDROCK` is the only env var holding the Bedrock key.
 - [ ] Full happy path: cleaned transcript → ai-generation worker → sections stream via SSE → review UI renders progress → clinician edits one section → regenerates another (preserving the edit) → sign → `finalJson` frozen → post-sign artifacts generated → next visit's brief precompute enqueued.
 - [ ] Section status transitions: `empty → generating → populated`, `populated → edited` on clinician edit, `populated → failed` on worker exception.
-- [ ] Sign re-verifies MFA when `org.forceMfa || lastVerified > 1h`.
+- [ ] Sign re-verifies the signing PIN when outside the active unlock window.
 - [ ] `Note.finalJson` writes appear ONLY in the sign route (grep verified); attempts to write `draftJson` after sign throw.
 - [ ] `Note.inferenceLog` captures model, region, tokens, latency, retry count — PHI-free.
 - [ ] Audit log entries for every generation, every regenerate, every sign, every artifact generation.
 - [ ] Section regenerate uses `ai-generation` queue (NOT a new queue) with `type: 'regenerate-section'` discriminator (rule 18).
 - [ ] Atomic JSON merge for section replacement (other sections untouched; regression test).
-- [ ] Three-lens evaluation: Clinician (review respects edits; sign is intentional with re-MFA), Compliance (sign attested + auditable; finalJson immutable; division-appropriate prompts), Auditor (full reconstructability via inferenceLog + transcriptRaw + audit log).
+- [ ] Three-lens evaluation: Clinician (review respects edits; sign is intentional with signing-PIN re-verification), Compliance (sign attested + auditable; finalJson immutable; division-appropriate prompts), Auditor (full reconstructability via inferenceLog + transcriptRaw + audit log).
 - [ ] `progress-tracker.md` updated.

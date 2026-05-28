@@ -522,7 +522,7 @@ The moment a note becomes a permanent legal record. Currently the only barrier i
 
 **Critical changes:**
 
-- **Three signature methods with biometric as primary.** Touch ID / Face ID / Windows Hello via WebAuthn is the recommended primary path — fast, phishing-resistant, and modern expectation for high-stakes actions. PIN as secondary (6-digit, same component as MFA flow). Type-your-name stays as a legacy fallback for orgs/users that require it. Currently type-name is the *only* method.
+- **Three signature methods with biometric as primary.** Touch ID / Face ID / Windows Hello via WebAuthn is the recommended primary path — fast, phishing-resistant, and modern expectation for high-stakes actions. The 4-digit signing PIN as secondary (the sign-time re-auth mechanism, with a time-boxed unlock window). Type-your-name stays as a legacy fallback for orgs/users that require it. Currently type-name is the *only* method.
 - **Note preview collapsible on the sign page.** "Show full note ↗" expands. Currently the sign page shows zero note content — clinician has to navigate back to verify. Inline preview gives an at-a-glance check.
 - **Attestation language with explicit checkbox.** "I attest that this note accurately reflects the encounter and is consistent with my professional licensure and scope of practice." Required by many state licensure boards. Active acknowledgment, not passive.
 - **Step indicator** (3 of 3) frames signing as the final step in a deliberate workflow.
@@ -552,11 +552,11 @@ The moment a note becomes a permanent legal record. Currently the only barrier i
 - The `/sign/[noteId]` page is currently 668 lines. Worth a refactor during the redesign: extract `<SignSummary>`, `<SignatureMethodPicker>`, `<SignAttestation>`, `<SignSuccessState>`, `<GoalVerificationDialog>` (using `<AlertDialog>`).
 - Goal verification modal already exists conceptually — keep the logic, swap the modal pattern.
 
-### Auth flow (login, MFA, register, signup)
+### Auth flow (login, register, signup)
 
-The first impression for every user. Small surface area but high-stakes — a clinician evaluating OmniScribe via a marketing link sees this page first. Currently inconsistent (Login has a card, MFA doesn't), missing standard affordances (Forgot password, Resend code, password visibility toggle), and uses a fragile letter-spacing trick for the MFA code input.
+The first impression for every user. Small surface area but high-stakes — a clinician evaluating OmniScribe via a marketing link sees this page first. Authentication is email + password only (no MFA/two-factor; sign-time re-auth uses the 4-digit signing PIN, covered in the Sign flow section). Currently the login page is missing standard affordances (Forgot password, password visibility toggle).
 
-**Goal:** Look like a polished, trusted clinical product on first paint. Make recovery paths obvious. Match modern auth UX (autofill, paste-safe codes, magic link).
+**Goal:** Look like a polished, trusted clinical product on first paint. Make recovery paths obvious. Match modern auth UX (autofill, magic link).
 
 **Critical changes — Login:**
 
@@ -571,17 +571,17 @@ The first impression for every user. Small surface area but high-stakes — a cl
 - **Replace "Start free testing"** with "Start a free trial" — convention users pattern-match to.
 - **Rate-limit lockout messaging** — "Too many attempts. Try again in 5 minutes." Currently absent from code.
 
-**Critical changes — MFA:**
+**Critical changes — Signing PIN (set + verify):**
 
-- **Six separate code boxes** instead of single input with `letter-spacing` trick. Auto-advance on input, paste dispatches across all six, iOS/Android autofill works natively, screen readers announce position properly.
-- **Add Resend code + Use backup code** affordances. Currently no path forward when the primary code doesn't arrive or the authenticator is unavailable.
-- **"Trouble verifying? Contact support →"** in the footer. Critical fallback.
-- **Same card wrapper as Login.** Currently MFA has no card; Login has `rounded-[28px] border bg-card/95 shadow-xl`. Unify visual containers across the auth flow.
+- **Four separate digit boxes** instead of a single input with a `letter-spacing` trick. Auto-advance on input, paste dispatches across all four, screen readers announce position properly.
+- **Clear unlock-window framing.** After a successful PIN entry, signing stays unlocked for a time-boxed window; the UI should state how long the window lasts so re-entry doesn't feel arbitrary.
+- **"Forgot your PIN? Reset it"** affordance. The PIN can be re-set from the profile surface; surface a path when the clinician blanks at sign time.
+- **Same card wrapper as Login.** Reuse the `rounded-[28px] border bg-card/95 shadow-xl` container so the PIN setup/verify screens match the rest of the auth flow.
 
 **Critical changes — Layout consistency:**
 
-- All auth pages (Login, MFA, Register, Forgot, Reset) share the same `AuthLayout` card structure with the same header (brand + contextual subtitle).
-- Header subtitle is contextual per page: Login = "Sign in to continue to your workspace"; MFA = "Two-factor verification"; Register = "Create your workspace"; Forgot = "Recover your account."
+- All auth pages (Login, Register, Forgot, Reset) and the signing-PIN setup/verify screens share the same `AuthLayout` card structure with the same header (brand + contextual subtitle).
+- Header subtitle is contextual per page: Login = "Sign in to continue to your workspace"; Register = "Create your workspace"; Forgot = "Recover your account"; Signing PIN = "Confirm it's you to sign."
 
 **Future enhancements:**
 
@@ -592,7 +592,7 @@ The first impression for every user. Small surface area but high-stakes — a cl
 **Engineering notes:**
 
 - The `text-red-600/70` error pattern appears in 6+ files across the codebase. Phase 0 (design tokens) replaces all of them with the `<ErrorBanner>` component or `text-destructive`.
-- Six-box MFA input is a common React pattern — use `react-otp-input` or build a small `<OtpInput>` component. Each box has `inputMode="numeric"`, `maxLength={1}`, `autoComplete="one-time-code"` so iOS / Android SMS autofill triggers.
+- A per-digit signing-PIN input is a common React pattern — use `react-otp-input` or build a small `<OtpInput>` component (four cells for the PIN). Each box has `inputMode="numeric"`, `maxLength={1}`, `autoComplete="one-time-code"` so native autofill triggers.
 - Trust signals should be data-driven, not hardcoded. Pull from a config: orgs without SOC 2 attestation shouldn't show that pill.
 - Magic link backend already exists if NextAuth.js v5 email provider is configured — UI just exposes it.
 
@@ -1072,10 +1072,10 @@ Login:
 - Replace "Start free testing" with "Start a free trial"
 - Rate-limit lockout messaging
 
-MFA:
-- Six separate code boxes with autofill + paste support
-- Resend code + Use backup code links
-- Contact support fallback
+Signing PIN (set + verify):
+- Four separate digit boxes with autofill + paste support
+- Unlock-window duration stated clearly
+- "Forgot your PIN? Reset it" fallback (re-set from profile)
 - Same card wrapper as Login
 
 Layout:
@@ -1215,7 +1215,7 @@ These are the design recommendations I'd want product to confirm before locking 
 
 2. **The crossover breakpoint.** I picked 900px. Confirm this against the actual device mix. If you have a lot of 1024×768 iPad portrait users, 900px is right. If most tablet users are on Pro (1366×1024) in landscape, you could push the breakpoint higher.
 
-3. **Sign confirmation pattern.** I assumed biometric/PIN. Confirm what your auth stack supports — if Face ID/Touch ID isn't available on web, fall back to MFA prompt. Don't ship Sign without a confirmation step.
+3. **Sign confirmation pattern.** I assumed biometric/PIN. Confirm what your auth stack supports — if Face ID/Touch ID isn't available on web, fall back to the 4-digit signing-PIN prompt (the current sign-time re-auth mechanism). Don't ship Sign without a confirmation step.
 
 4. **AI alert false-positive tolerance.** The AI alert system is high-leverage but only if alerts are accurate. A noisy alert system trains clinicians to dismiss them, which is worse than no alert system. Recommend a 2-week silent eval (capture flagged issues without showing them to users, hand-review accuracy) before launching the surface.
 

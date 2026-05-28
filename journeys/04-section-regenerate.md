@@ -86,7 +86,7 @@ Tariq scrolls up. The Assessment section still has his CKD-progression paragraph
 
 ### Step 5 — Sign, 11:16 AM
 
-He scrolls to bottom. Open-follow-ups from last visit are addressed (Met / Carry as appropriate). He taps **Sign Note**, MFA challenges him, he signs.
+He scrolls to bottom. Open-follow-ups from last visit are addressed (Met / Carry as appropriate). He taps **Sign Note**, enters his 4-digit signing PIN (his unlock window had lapsed), he signs.
 
 Total time on this regenerate exchange: ~30 seconds (read → decide → tap → wait 8 seconds → confirm → keep going).
 

@@ -19,15 +19,8 @@
 - **Access**: Public
 - **Layout**: Standalone (centered card, no chrome)
 - **Key elements**: Email input, password input, "Sign in" button, "Forgot password" link, "Don't have an invite?" support contact
-- **Primary actions**: Sign in (gates MFA challenge if enabled)
+- **Primary actions**: Sign in (email + password) → land at `/home`
 - **Audited**: Yes (`SIGN_IN_ATTEMPTED`, `SIGN_IN_SUCCEEDED`, `SIGN_IN_FAILED`)
-
-### `/mfa-challenge`
-- **Access**: Authenticated user without `mfaVerified: true` in current session
-- **Layout**: Standalone
-- **Key elements**: 6-digit TOTP input, "Use recovery code instead" link, "Sign out" link
-- **Primary actions**: Verify TOTP → land at `/home`
-- **Audited**: Yes (`MFA_VERIFIED`, `MFA_FAILED`)
 
 ### `/password-reset/request`
 - **Access**: Public
@@ -45,10 +38,10 @@
 
 ### `/onboarding/[token]`
 - **Access**: Public (with valid invite token)
-- **Layout**: Standalone (4-step wizard)
-- **Key elements**: Steps welcome → password → MFA enrollment (with QR + recovery codes) → done
-- **Primary actions**: Set password, enroll MFA, sign in
-- **Audited**: Yes (`ONBOARDING_OPENED`, `USER_CREATED`, `MFA_ENROLLED`, `ONBOARDING_COMPLETED`)
+- **Layout**: Standalone (multi-step wizard)
+- **Key elements**: Steps welcome → set password → set 4-digit signing PIN → done
+- **Primary actions**: Set password, set signing PIN, sign in
+- **Audited**: Yes (`ONBOARDING_OPENED`, `USER_CREATED`, `ONBOARDING_COMPLETED`)
 - **Detail**: Journey 01
 
 ---
@@ -108,8 +101,8 @@
 ### `/sign/[noteId]`
 - **Access**: Authenticated clinician with `NOTE_SIGN` feature
 - **Layout**: Clinical
-- **Key elements**: Read-only final preview (composed from `draftJson`), attestation block, MFA challenge modal (if `forceMfa` or `lastMfaVerifiedAt > 1h`), sign-time follow-up sweep modal (if any prior-visit FollowUps still OPEN), large "Sign Note" CTA, "Cancel" outlined button
-- **Primary actions**: Sweep open follow-ups, re-verify MFA, sign → land at `/home`
+- **Key elements**: Read-only final preview (composed from `draftJson`), attestation block, signing-PIN modal (4-digit; prompted when the unlock window has expired), sign-time follow-up sweep modal (if any prior-visit FollowUps still OPEN), large "Sign Note" CTA, "Cancel" outlined button
+- **Primary actions**: Sweep open follow-ups, re-verify signing PIN, sign → land at `/home`
 - **Audited**: Yes (`NOTE_SIGNED`, `FOLLOWUP_CLOSED` × N from sweep)
 - **Detail**: Journey 02 Step 5
 
@@ -149,8 +142,8 @@
 ### `/profile`
 - **Access**: Authenticated user (self)
 - **Layout**: Clinical
-- **Key elements**: Avatar, name, email, profession, specialty, default note style, MFA status, voice profile status, "Sign out" button
-- **Primary actions**: Edit profile, manage MFA, manage voice profile
+- **Key elements**: Avatar, name, email, profession, specialty, default note style, signing-PIN status, voice profile status, "Sign out" button
+- **Primary actions**: Edit profile, set/reset signing PIN, manage voice profile
 - **Audited**: Yes (`PROFILE_VIEWED`, `PROFILE_UPDATED`)
 
 ### `/profile/voice`
@@ -199,9 +192,9 @@
 ### `/admin/users`
 - **Access**: Org admin with `TEAM_MEMBERS_MANAGE`
 - **Layout**: Admin
-- **Key elements**: User list (name, email, role, division, profession, seat status, last sign-in), filters, "+ Invite user" button, per-row dropdown (Edit, Reset MFA, Send password reset, Deactivate)
-- **Primary actions**: Invite, edit role/permissions, reset MFA, reset password, deactivate
-- **Audited**: Yes (`USER_INVITED`, `USER_UPDATED`, `MFA_RESET`, `PASSWORD_RESET_INITIATED_BY_ADMIN`, `USER_DEACTIVATED`)
+- **Key elements**: User list (name, email, role, division, profession, seat status, last sign-in), filters, "+ Invite user" button, per-row dropdown (Edit, Send password reset, Deactivate)
+- **Primary actions**: Invite, edit role/permissions, send password reset, deactivate
+- **Audited**: Yes (`USER_INVITED`, `USER_UPDATED`, `PASSWORD_RESET_INITIATED_BY_ADMIN`, `USER_DEACTIVATED`)
 
 ### `/admin/sites`
 - **Access**: Org admin
@@ -255,7 +248,7 @@
 ### `/admin/org-settings`
 - **Access**: Org admin (`SUPER_ADMIN` / `ORG_ADMIN`)
 - **Layout**: Admin
-- **Key elements**: Force MFA toggle, default note style, default templates per division, voice enrollment policy, audit retention, communication preferences (Twilio config), feature flags
+- **Key elements**: Default note style, default templates per division, voice enrollment policy, audit retention, communication preferences (Twilio config), feature flags
 - **Primary actions**: Configure org-wide policies
 - **Audited**: Yes (`ORG_SETTINGS_UPDATED` with field list)
 
@@ -288,7 +281,7 @@
 ### `/owner/users`
 - **Access**: `PLATFORM_OWNER`
 - **Layout**: Owner
-- **Key elements**: All users across all orgs, search by email/name/orgId, impersonate, reset MFA cross-org (rare; emergency)
+- **Key elements**: All users across all orgs, search by email/name/orgId, impersonate, send password reset cross-org (rare; emergency)
 - **Primary actions**: Cross-org user support
 - **Audited**: Yes in `PlatformAuditLog`
 
@@ -359,7 +352,7 @@
 
 | Wave | Build units | Screens |
 |---|---|---|
-| Wave 0 — Foundation | 01–05 | `/login`, `/mfa-challenge`, `/password-reset/*`, `/onboarding/[token]`, `/home`, `/patients`, `/patients/[id]` (basic), `/prepare`, `/capture`, `/processing`, `/review`, `/sign`, `/admin/users` (basic) |
+| Wave 0 — Foundation | 01–05 | `/login`, `/password-reset/*`, `/onboarding/[token]`, `/home`, `/patients`, `/patients/[id]` (basic), `/prepare`, `/capture`, `/processing`, `/review`, `/sign`, `/admin/users` (basic) |
 | Wave 1 — Copilot + commercial ready | 06–09 | Adds Brief surface to `/prepare` + `/capture`, adds copilot beacon + Watch cards, completes `/admin/sites`, `/admin/templates`, `/admin/seats`, `/admin/billing`, `/admin/voice`, `/admin/audit`, `/admin/org-settings`, `/admin/dashboard`, full `/owner/*` console with BAA |
 | Wave 2 — UX maturity | 10–14 | Polish to `/review`, `/sign`, `/patients/[id]` |
 | Wave 3 — Telehealth | 15–18 | `/v/[magicToken]`, `/telehealth/waiting/[scheduleId]`, `/telehealth/room/[scheduleId]` |

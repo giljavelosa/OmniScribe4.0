@@ -2,7 +2,7 @@
  * Onboarding step — "Where do you work?"
  * Spec: context/specs/clinician-site-enrollment.md §UI/Clinician onboarding
  *
- * Inserted between authenticator setup and landing on /home. Skipped for
+ * Inserted between sign-in and landing on /home. Skipped for
  * ORG_ADMIN+ (they implicitly cover every site) and for users who already
  * have at least one enrollment (admins typically pre-enrol on invite — only
  * the un-enrolled fall through).

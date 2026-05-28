@@ -14,7 +14,7 @@ Both admin tiers are far more shipped than expected. Platform admin (`/ops/`, `/
 ## The four hard blockers
 
 1. **Customer-side (downstream) BAA tracking on `Organization`.** Schema migration adds `baaExecutedAt`, `baaVersion`, `baaCountersignedBy`, `complianceProfile` enum. Surface in `/ops/dashboard/organizations` create + edit + list.
-2. **MFA reset + password reset actions in `(admin)/users` edit form.** Today, locked-out clinicians require a database fix. Two buttons + two API routes + audit logging.
+2. **Admin-initiated password reset action in `(admin)/users` edit form.** Today, locked-out clinicians require a database fix. One button + one API route + audit logging. (Password reset is the recovery path; MFA was removed in Sprint 0.20, so there is no separate MFA reset.)
 3. **Sites edit/delete + room CRUD in `(admin)/sites/page.tsx`.** Currently STUBBED — only create works. First customer address typo trips it.
 4. **Pick one auth model and stop fork-coding.** Legacy `OrgUser.role + canManagePatients` and new `TeamMembership + MembershipFeatureGrant` tables both run in production with a `hasMembershipTables()` runtime check. Recommend: commit to `TeamMembership` (forward direction). Migration can come later — just stop adding new code that branches on the check.
 
@@ -37,7 +37,7 @@ When the schema gap says "BAA tracking," it means **downstream** BAAs (between O
 
 ## Soft blockers (ship without, but feel pain in 30-60 days)
 
-- Customer self-onboarding flow (today: operator creates org with admin → admin gets one-time password → admin signs in. No "accept invite, set password, enroll MFA" wizard.)
+- Customer self-onboarding flow (today: operator creates org with admin → admin gets one-time password → admin signs in. No "accept invite, set password, set signing PIN" wizard.)
 - Invoice history viewer in `(admin)/billing` (Stripe portal covers it for now)
 - Audit log enrichment with before/after state (HIPAA covered-entity expectation; defer until customer compliance officer asks)
 - Per-org LLM cost rollup in ops dashboard (cursor-task 28 territory)
@@ -45,7 +45,7 @@ When the schema gap says "BAA tracking," it means **downstream** BAAs (between O
 
 ## Non-blockers (defer)
 
-- WebAuthn / passkeys (TOTP acceptable v1)
+- WebAuthn / passkeys / hardware-key (out of scope; v1 auth is password + 4-digit signing PIN — a future option, not current)
 - In-app pricing / discount / setup-fee config (`/owner/` console explicitly defers)
 - Feature flag operationalization (UI exists, flag semantics unclear)
 - Phase 04 follow-ups (per-clinician regenerate rate-limiting, edit-debounce timing, etc.)
@@ -54,13 +54,13 @@ When the schema gap says "BAA tracking," it means **downstream** BAAs (between O
 
 **Phase 15a — Commercial blockers (1.5-2 weeks):**
 - Schema migration: downstream-BAA tracking fields on `Organization`
-- MFA reset + password reset actions on `(admin)/users`
+- Admin-initiated password reset action on `(admin)/users` (account-recovery path; no separate MFA reset — MFA removed Sprint 0.20)
 - Auth-model decision doc (commit to `TeamMembership`, stop fork-coding new branches)
 - Verify invite `expiresAt` enforcement in code; patch if missing
 
 **Phase 15b — Sites + onboarding polish (1-1.5 weeks):**
 - Complete `(admin)/sites/page.tsx`: edit, delete, room CRUD
-- Customer self-onboarding wizard (invite-acceptance page, password set, MFA enrollment)
+- Customer self-onboarding wizard (invite-acceptance page, password set, signing-PIN setup)
 
 **Phase 15c — Compliance polish (defer until first customer signs):**
 - Audit log enrichment (before/after state)
@@ -71,7 +71,7 @@ When the schema gap says "BAA tracking," it means **downstream** BAAs (between O
 
 ## Confirmed shipped admin surfaces (don't re-audit)
 
-**Team admin (`(admin)/`):** users (full minus MFA/password reset), seats (team mode), billing (Stripe-bounded), manage-templates, voice (typed-name confirmation — gold standard), documentation. Shell uses `canManageTeam` gate via `/api/admin/shell`.
+**Team admin (`(admin)/`):** users (full minus admin-initiated password reset), seats (team mode), billing (Stripe-bounded), manage-templates, voice (typed-name confirmation — gold standard), documentation. Shell uses `canManageTeam` gate via `/api/admin/shell`.
 
 **Platform admin (`/ops/`):** signin, dashboard overview, organizations (full provisioning), users (impersonation + audit + 1-hour TTL), announcements, usage, subscriptions, transactions (Stripe sync), templates, prompts (read-only), health (queue depth + errors), audit, settings (password + IP allowlist + invite). 14 pages total.
 
@@ -102,13 +102,13 @@ When commercial-readiness work touches admin UI, **do not redesign from scratch*
 - `local_07a5fcd9-1f30-4f29-83e0-6c24acd54b3a` — "Omniscribe design critique follow-up"
 - `local_94180baf-ac37-4892-b17c-cde22bb82cba` — "Design critique for Omniscribe AI"
 
-**Critical insight: admin UI parity work and admin redesign work are the same work.** When commercial-readiness 15a/15b lands, evaluate Option B: bundle redesign + functional gaps in the same PRs (e.g., when adding MFA reset buttons to Team admin, do the redesign Phase 11 layout). Requires building `<AdminPageShell>` and `<AdminTable>` first as foundation. Option A (separate redesign phase before commercial) is cleaner but slower.
+**Critical insight: admin UI parity work and admin redesign work are the same work.** When commercial-readiness 15a/15b lands, evaluate Option B: bundle redesign + functional gaps in the same PRs (e.g., when adding the password-reset button to Team admin, do the redesign Phase 11 layout). Requires building `<AdminPageShell>` and `<AdminTable>` first as foundation. Option A (separate redesign phase before commercial) is cleaner but slower.
 
 **The Ops Console naming collision** flagged in the spec: current "Platform Admin" label collides with Org Admin / Site Admin / Platform Owner. Redesign renames to a distinct purple "Ops" mode pill. Worth resolving before commercial shipping so customer admins and your operator role are visually distinct.
 
 ## When to revisit this doc
 
 - When Gil signals readiness to start commercial-readiness phase (after current FHIR / Templates work or whenever)
-- When a specific customer asks about BAA tracking, MFA reset, or compliance officer-grade audit logs
+- When a specific customer asks about BAA tracking, account recovery / password reset, or compliance officer-grade audit logs
 - When Phase 04, Phase 14, and any FHIR work that's blocking-NextGen are all closed out
 - When admin UI work begins — read the design archive before writing any code

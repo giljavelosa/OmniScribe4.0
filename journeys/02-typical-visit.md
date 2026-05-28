@@ -142,14 +142,14 @@ Maya scrolls down. The **Open follow-ups from last visit** section (driven by th
 
 ### Step 5 — Sign, 10:15–10:17 AM
 
-**Screen: `/sign/[noteId]`** — Read-only final preview. Big "Sign Note" button (filled teal primary). The MFA challenge appears (her last MFA check was at 7am login — re-verify for sensitive actions). She types her 6-digit TOTP from Authy. Tap **Sign Note**.
+**Screen: `/sign/[noteId]`** — Read-only final preview. Big "Sign Note" button (filled teal primary). She's prompted for her 4-digit signing PIN (her unlock window had expired since her last signing). She types her PIN, which opens a fresh unlock window. Tap **Sign Note**.
 
 **Behind the scenes**, in one transaction:
 - `Note.status = SIGNED`
 - `Note.finalJson = canonicalize(draftJson)` (immutable from this moment — anti-regression rule 3)
 - `Note.signedAt = now()`, `signedByUserId = maya.userId`, `authorOrgUserId = orgUser.id`
 - FollowUp closures applied (Met for walks, Carry for labs)
-- Audit log: `NOTE_SIGNED` with `mfaReverified: true`, no PHI
+- Audit log: `NOTE_SIGNED` with `pinVerified: true`, no PHI
 
 Then asynchronously:
 - `note-brief` job enqueued (precompute James's next-visit brief — runs in ~30 seconds)
@@ -179,7 +179,7 @@ Maya taps the toast. A printable view opens. The kiosk printer in the exam-room 
 | 6 | Transit `/processing` (SSE) | Wait for last sections to complete | (none) |
 | 7 | Land on `/review`; edit Plan section | `_sectionStatus[plan].status: populated → edited`; debounced PATCH `/api/notes/[id]/sections/plan` | `NOTE_EDITED` (PHI-free metadata: sectionId) |
 | 8 | Close follow-ups (Met + Carry) | `FollowUp` rows updated | `FOLLOWUP_CLOSED` × 2 |
-| 9 | Tap "Sign Note"; MFA challenge; confirm | Transaction freezes `finalJson`, sets signature fields | `NOTE_SIGNED` |
+| 9 | Tap "Sign Note"; signing-PIN prompt; confirm | Transaction freezes `finalJson`, sets signature fields | `NOTE_SIGNED` |
 | 10 | Background: brief + artifacts | `note-brief` + `post-sign-artifacts` jobs complete | `BRIEF_GENERATED`, `ARTIFACT_GENERATED × 1` (patient instructions) |
 
 ## Edge cases this journey would handle (verify in build)
@@ -191,7 +191,7 @@ Maya taps the toast. A printable view opens. The kiosk printer in the exam-room 
 - **AI generation worker fails mid-stream.** Affected section shows `⚠ failed`. Maya taps **Regenerate** on that section. Other sections remain populated/edited.
 - **Maya accidentally taps "Finish & Review" before she meant to.** No data lost. The note is in DRAFT; she can tap a "Resume Recording" button on the review screen to re-open capture (continues the same `Note`).
 - **Maya tries to leave the page without finishing.** `<AlertDialog>` (NOT native `confirm`) appears: "Recording in progress — discard or save?" Default action is "Keep recording" (primary teal).
-- **The note has 0 prior-visit follow-ups.** Sign-sweep modal does not appear — clinician goes straight to MFA challenge.
+- **The note has 0 prior-visit follow-ups.** Sign-sweep modal does not appear — clinician goes straight to the signing-PIN prompt (or signs directly if the unlock window is still active).
 - **Maya is impersonated by a platform owner doing support.** Every action is audited as the impersonator's `actingUserId`, with the impersonated user as `onBehalfOfUserId`. The impersonator cannot sign notes.
 
 ## Three-lens evaluation for this journey
@@ -209,7 +209,7 @@ Maya taps the toast. A printable view opens. The kiosk printer in the exam-room 
 - `/capture/[noteId]` — recording workspace (desktop two-pane OR mobile-tabbed)
 - `/processing/[noteId]` — transient transit screen
 - `/review/[noteId]` — section editor + readiness + follow-up close
-- `/sign/[noteId]` — attestation + MFA re-verify
+- `/sign/[noteId]` — attestation + signing-PIN re-verify
 - Patient-instructions printable view (post-sign artifact)
 - Copilot beacon (visible but not opened in this journey)
 

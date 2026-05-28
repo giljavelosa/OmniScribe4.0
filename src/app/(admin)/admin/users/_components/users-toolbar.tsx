@@ -75,7 +75,7 @@ export function UsersToolbar() {
         <SheetHeader>
           <SheetTitle>Invite user</SheetTitle>
           <SheetDescription>
-            They&apos;ll receive an email with a single-use 7-day link to set their password and set up their authenticator.
+            They&apos;ll receive an email with a single-use 7-day link to set their password and signing PIN.
           </SheetDescription>
         </SheetHeader>
 

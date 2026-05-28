@@ -15,9 +15,9 @@
 
 | Topic | Target posture | Evidence / pointers |
 |--------|----------------|---------------------|
-| Workforce access | Role-based access; MFA path for users | NextAuth + MFA enrollment; platform vs org roles |
+| Workforce access | Role-based access; password authentication + 4-digit signing PIN for sign-time re-auth (WebAuthn/hardware-key a future option) | NextAuth password login; signing PIN via `/api/auth/pin/*`; platform vs org roles |
 | Minimum necessary | Org/site scoping; clinical feature gates | `requireFeatureAccess`, org-scoped APIs |
-| Admin accountability | Org admin + ops actions logged | `AuditLog`; new actions `ADMIN_FORCE_PASSWORD_RESET`, `ADMIN_CLEAR_MFA`; platform `logPlatformAction` |
+| Admin accountability | Org admin + ops actions logged | `AuditLog`; actions include `ADMIN_FORCE_PASSWORD_RESET` (admin-initiated account recovery); platform `logPlatformAction` |
 
 ## 3. Physical & technical safeguards
 
@@ -27,7 +27,7 @@
 | Encryption at rest | RDS, S3 server-side encryption | AWS baseline |
 | Integrity | Signed notes immutable (`finalJson`) | `.cursorrules` / ingestion pipeline |
 | Audit controls | PHI access and sensitive admin events logged | `auditLog` writes (no silent swallow — rule 8) |
-| Authentication | Password + MFA capability; session invalidation on credential reset | User model; admin credential routes clear sessions |
+| Authentication | Password authentication + 4-digit signing PIN for sign-time re-auth (WebAuthn/hardware-key a future option); session invalidation on credential reset | User model (`signingPinHash`); admin credential routes clear sessions |
 
 ## 4. Product-specific (scribe)
 

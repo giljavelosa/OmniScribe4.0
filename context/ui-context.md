@@ -242,7 +242,7 @@ Rules:
 - `/capture/[noteId]` — Desktop or Mobile layout (above); section progress strip across both
 - `/processing/[noteId]` — transient reassurance screen (gear animation + escalating empathy)
 - `/review/[noteId]` — section-by-section editor; collapsible accordions; readiness panel right side
-- `/sign/[noteId]` — attestation surface; final read-only preview; MFA re-verify
+- `/sign/[noteId]` — attestation surface; final read-only preview; signing-PIN re-verify
 - `/patients/[id]` — **sticky anchor** (name + Start Visit) + **four tabs**: Overview / Episodes / Visits / Profile
 - `/visits/[noteId]` — **sticky header** + **four tabs**: Note / Handout / Transcript / Recording
 

@@ -1,6 +1,6 @@
 # Copy Standards — Plain English for clinician-facing strings
 
-OmniScribe's clinical surfaces are read by clinicians of varying tech literacy. Tech jargon (MFA, TOTP, SSO, JSON) is alienating and the wrong vocabulary even for sophisticated users. The opposite extreme — spelling out *every* abbreviation — is condescending and harder to scan for clinicians who use abbreviations every day (MRN, DOB, ICD, CPT).
+OmniScribe's clinical surfaces are read by clinicians of varying tech literacy. Tech jargon (SSO, JSON, SSE) is alienating and the wrong vocabulary even for sophisticated users. The opposite extreme — spelling out *every* abbreviation — is condescending and harder to scan for clinicians who use abbreviations every day (MRN, DOB, ICD, CPT).
 
 This doc defines the two lists and the principle.
 
@@ -10,7 +10,7 @@ This doc defines the two lists and the principle.
 
 Applies to: labels, headings, button text, placeholders, error messages, page titles, tooltip copy, email subjects, audit log displays, status banners.
 
-Does NOT apply to: code identifiers (`mfaSecret`, `signingPinHash`), JSDoc comments, internal logs (`console.warn`), git commit messages, audit log `action` enum values (e.g., `MFA_VERIFIED` — those are stable identifiers, the display surfaces translate).
+Does NOT apply to: code identifiers (`passwordHash`, `signingPinHash`), JSDoc comments, internal logs (`console.warn`), git commit messages, audit log `action` enum values (e.g., `NOTE_SIGNED` — those are stable identifiers, the display surfaces translate).
 
 ## Keep abbreviated (clinical standard — every clinician knows them)
 
@@ -29,9 +29,6 @@ Does NOT apply to: code identifiers (`mfaSecret`, `signingPinHash`), JSDoc comme
 
 | Tech term | Replacement (label) | Replacement (verb phrase) |
 |---|---|---|
-| MFA | "Authenticator" | "Set up authenticator", "Verify with authenticator" |
-| TOTP / OTP | "Authenticator code" | "Enter the 6-digit code from your authenticator" |
-| 2FA / Two-factor | "Authenticator" | same as above |
 | Admin | "Administration" | — |
 | Org / OrgUser | "Organization" / "User account" | — |
 | API | (avoid entirely user-facing) | — |
@@ -49,11 +46,8 @@ Does NOT apply to: code identifiers (`mfaSecret`, `signingPinHash`), JSDoc comme
 
 - "Sign note" (button) — not "Submit signature"
 - "Start visit (ad-hoc)" — not "Init encounter"
-- "Verify with authenticator" — not "Verify MFA"
-- "Reset authenticator" — not "Reset MFA"
-- "6-digit authenticator code" — not "6-digit MFA code"
-- "Set up authenticator" — not "Enroll MFA"
-- "Require authenticator at sign-in" — not "Force MFA at sign-in"
+- "Enter your signing PIN" — not "Verify PIN credential"
+- "Set up a 4-digit signing PIN" — not "Enroll signing PIN"
 
 ## How to enforce
 
@@ -64,8 +58,8 @@ Does NOT apply to: code identifiers (`mfaSecret`, `signingPinHash`), JSDoc comme
 ## Edge cases
 
 - **Email subjects / body** — same rules. Clinician opens it on a phone, not in a developer-aware context.
-- **Audit log display** — the action enum (`MFA_VERIFIED`) is the stable internal name; the UI translates to "Authenticator verified" in the audit table.
-- **Onboarding wizard step labels** — terse natural language: "Set password", "Set up authenticator", "Done".
+- **Audit log display** — the action enum (`NOTE_SIGNED`) is the stable internal name; the UI translates to "Note signed" in the audit table.
+- **Onboarding wizard step labels** — terse natural language: "Set password", "Set signing PIN", "Done".
 - **Help/empty-state copy** — full sentences, contractions allowed (more humane: "We couldn't find that" > "Resource not found").
 
 ## Out of scope (intentional)

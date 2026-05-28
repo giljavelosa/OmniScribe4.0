@@ -10,7 +10,7 @@ Unit 16 shipped the audio pipeline + the note-on-session-start hook. Unit 17 com
 
 ### Route group + path
 
-Lives under `(clinical)/telehealth/room/[scheduleId]/page.tsx` → URL `/telehealth/room/[scheduleId]`. Same auth gate as every other clinical surface (NextAuth + MFA chain via `(clinical)/layout.tsx`).
+Lives under `(clinical)/telehealth/room/[scheduleId]/page.tsx` → URL `/telehealth/room/[scheduleId]`. Same auth gate as every other clinical surface (NextAuth session via `(clinical)/layout.tsx`).
 
 ### Server-side gate
 

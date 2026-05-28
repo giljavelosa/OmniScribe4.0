@@ -15,7 +15,7 @@ Platform-owner-only. `(owner)/layout.tsx` already gates on `platformRole === 'PL
 - `/owner/orgs` — already exists from Unit 01 (BAA-status column + filter)
 - `/owner/orgs/new` — already exists from Unit 01 (BAA required)
 - `/owner/orgs/[id]` — existing BAA editor + NEW seat allocation section + NEW subscription view
-- `/owner/users` — NEW cross-org user search (email/name; org column; last sign-in; MFA enrolled)
+- `/owner/users` — NEW cross-org user search (email/name; org column; last sign-in)
 - `/owner/audit` — NEW cross-org audit log (filter by org / actor / action / resource; PHI-free metadata only; CSV export)
 - `/owner/announcements` — NEW SystemAnnouncement CRUD (title, body markdown, severity, target orgs, schedule window)
 - `/owner/health` — NEW health surface (DB ping, Redis ping, S3 reachability, Bedrock + Soniox + Resend provider checks, BullMQ queue depths)
@@ -59,7 +59,7 @@ Stripe is a real dependency (`STRIPE_SECRET_KEY` env var). For v1 we adopt the s
 
 ### C. UI
 
-`/owner/users` — search box + paginated table (email, name, primary org, last sign-in, MFA badge).
+`/owner/users` — search box + paginated table (email, name, primary org, last sign-in).
 
 `/owner/audit` — same layout as `/admin/audit` plus an "Org" filter dropdown hydrated from distinct `orgId`s. Org column added to the table.
 
@@ -117,7 +117,7 @@ Each check has a 5-second timeout enforced via `Promise.race`. Results are PHI-f
 
 ## Verify when done
 
-- [ ] `/owner/users` lists cross-org users with primary-org column + MFA badge.
+- [ ] `/owner/users` lists cross-org users with primary-org column.
 - [ ] `/owner/audit` filters by org + actor + action + resource; CSV exports correctly.
 - [ ] `/owner/announcements` CRUD works; created announcement is visible (storage tested — actual banner-render across the app is Unit 33+).
 - [ ] `/owner/health` page renders within 6s (5s timeout per check + render); each check shows ✓/✗ + latency.

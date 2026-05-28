@@ -71,7 +71,7 @@ The login page uses `text-red-600/70` for error messages. The /70 opacity drops 
 | Drafts list action buttons (Continue Setup / Resume / View / Review) aren't visually distinct as buttons | 🟡 Moderate | Use a single primary button per row, secondary actions in an overflow menu. Prevents the "is this a link?" hesitation |
 | Patient name truncates with no tooltip on hover | 🟢 Minor | Add `title={fullName}` or a Radix tooltip. Long names are common (hyphenated, double surnames) |
 | Delete confirmation has no loading state | 🟢 Minor | Disable the button and swap to a spinner; right now disabled-but-silent reads as "did my click register?" |
-| MFA code uses one long input with letter-spacing rather than 6 boxes | 🟢 Minor | Six discrete boxes is the dominant pattern (Apple, Stripe, banks). Users paste the whole code and the UI splits it. Lower friction, fewer mistakes |
+| Signing-PIN entry uses one long input with letter-spacing rather than discrete boxes | 🟢 Minor | Discrete per-digit boxes are the dominant pattern (Apple, Stripe, banks) for short codes. For the 4-digit signing PIN, four boxes lower friction and reduce mistakes |
 | No "Forgot password" link on login | 🟡 Moderate | Add it. Required for a v1 auth surface |
 | Polling interval (3s) on processing screen has no SSE / websocket fallback shown | 🟢 Minor (not strictly UX) | Worth noting because it shapes how "live" the UI feels |
 

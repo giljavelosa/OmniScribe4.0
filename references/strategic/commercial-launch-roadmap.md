@@ -26,8 +26,7 @@ The cheapest, lowest-risk, highest-leverage work in the sequence. Doesn't touch 
 - Filter chips (Status, Role)
 - Sheet-based edit (replacing inline edit)
 - AlertDialog for destructive actions (replacing native confirm())
-- **Add MFA reset action** (commercial blocker)
-- **Add password reset action** (commercial blocker)
+- **Add password reset action (admin-initiated)** (commercial blocker — this is the account-recovery path; MFA was removed in Sprint 0.20, so there is no separate MFA reset)
 - **Pick auth model: commit to `TeamMembership`** (technical hygiene)
 - Audit logging on all admin actions (rule 8)
 
@@ -55,7 +54,7 @@ The cheapest, lowest-risk, highest-leverage work in the sequence. Doesn't touch 
 ### RD-5 — Customer self-onboarding wizard (Weeks 5-6)
 - Invite-acceptance landing page
 - Password set flow (with password strength meter)
-- MFA enrollment wizard (TOTP via authenticator app, with QR code + setup key)
+- Signing-PIN setup step (4-digit, used for sign-time re-auth)
 - First-login org-setup checklist (sites, departments, first clinician invites)
 
 ### RD-6 — Goal tracking investigation + harden (Weeks 6-7)
@@ -77,7 +76,7 @@ The cheapest, lowest-risk, highest-leverage work in the sequence. Doesn't touch 
 - 52 — RD-0c (StatusBadge)
 - 53 — RD-0d (Label)
 - 54 — RD-0e (AdminPageShell + AdminTable)
-- 55 — RD-1 (Team admin page + MFA/password reset)
+- 55 — RD-1 (Team admin page + password reset)
 - 56 — RD-2 (Sites completion + room CRUD)
 - 57-59 — RD-3 (other tenant admin pages, sliced as needed)
 - 60-63 — RD-4 (owner console + BAA tracking)
@@ -101,7 +100,7 @@ Particular vigilance:
 - FHIR phases (F1-F6) — blocked on NextGen
 - Phase 14 Templates (template editing, section reordering, custom-section addition) — explicit deferral per Phase 04 locked decisions
 - Phase 04 follow-ups (per-clinician regenerate rate-limiting, edit-debounce timing, failure-state recovery across reload)
-- WebAuthn / passkeys (TOTP acceptable for v1)
+- WebAuthn / passkeys / hardware-key (out of scope; v1 auth is password + 4-digit signing PIN — a future option, not current)
 - In-app pricing / discount / setup-fee configuration (intentionally narrow per `/owner/` console copy)
 
 ## How to revisit this doc

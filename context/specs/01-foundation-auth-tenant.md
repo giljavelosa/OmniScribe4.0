@@ -2,6 +2,8 @@
 
 > **Wave 0.** The `Seat` model in this unit is **Wave 7 §01** (billing foundation) — see [`00-build-plan.md`](00-build-plan.md) Wave 7.
 
+> **Superseded (Sprint 0.20):** MFA/TOTP was removed; auth is now email+password with a 4-digit signing PIN for sign-time re-auth. The MFA content below (schema fields `mfaSecret`/`mfaEnabled`/`mfaRecoveryCodes`, `Organization.forceMfa`, `src/lib/mfa.ts`, `/mfa-challenge`, admin MFA reset, the wizard's MFA step) is retained for historical context only. The current tenancy/RBAC/PHI-scoping/BAA/onboarding foundation otherwise stands.
+
 ## Goal
 
 Build the multi-tenant identity, access-control, and BAA-tracking foundation that every subsequent unit depends on. After this unit, the product has Organizations (with BAA fields), Sites, Rooms, Users with role-based access, MFA TOTP, password reset, customer self-onboarding wizard, the `requireFeatureAccess` middleware, and PHI-scoping helpers — all backed by seed data that lets a developer sign in immediately.

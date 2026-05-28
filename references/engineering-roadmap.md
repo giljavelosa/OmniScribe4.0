@@ -58,7 +58,7 @@ These map to existing project rules — repeat them in any task you give Cursor:
 
 | Sprint | Phase | Task file | Effort |
 |---|---|---|---|
-| 13 | Auth flow polish (MFA boxes, magic link) | `cursor-tasks/10-auth-flow.md` | 1 sprint |
+| 13 | Auth flow polish (password login, magic link) | `cursor-tasks/10-auth-flow.md` | 1 sprint |
 | 14 | Sign / signature flow (biometric, attestation) | `cursor-tasks/11-sign-flow.md` | 1 sprint |
 | 15–16 | Marketing / signup landing | `cursor-tasks/12-marketing-landing.md` | 2 sprints |
 

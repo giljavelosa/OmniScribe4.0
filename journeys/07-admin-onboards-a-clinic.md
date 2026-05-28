@@ -71,7 +71,7 @@ She moves on to the next org.
 
 ### Step 4 — Maria accepts the invite, 10:30 AM
 
-She received the invite email at 10:00 AM, opens it now. Taps the link. Goes through the onboarding wizard (Journey 01 Steps 1–6: welcome → password → MFA → done).
+She received the invite email at 10:00 AM, opens it now. Taps the link. Goes through the onboarding wizard (Journey 01 Steps 1–6: welcome → password → signing PIN → done).
 
 She lands on `/home` at 10:35 AM. As a `SUPER_ADMIN` (because she's the first invited org admin), she also has access to the `/admin` console.
 
@@ -108,7 +108,7 @@ Submit. Invite generated, email sent. Repeats for 2 more.
 ### Step 7 — Maria configures org-wide settings, 10:42 AM
 
 **Screen: `/admin/org-settings`** — org-level configuration:
-- **Force MFA**: on (BH clinic; required)
+- **Signing PIN**: required for all clinicians (built-in — each clinician sets a 4-digit PIN to confirm note signing; not a configurable toggle)
 - **Default note style**: Hybrid
 - **Default template per division**: BEHAVIORAL_HEALTH → "Behavioral Health Intake" (for new patients), "BH Progress Note" (for established)
 - **Voice profile enrollment**: encourage (clinicians can opt out)
@@ -145,7 +145,7 @@ It works. The note signs cleanly. She's confident.
 - **Today's stats**: 1 note signed (her test note), 0 in-progress, 0 in DRAFTING
 - **Seat utilization**: 1/5 active (4 pending invite acceptance)
 - **Recent audit events**: Org provisioning + her setup actions
-- **Active features**: MFA enforced, BH templates active, voice enrollment enabled
+- **Active features**: signing PIN required, BH templates active, voice enrollment enabled
 - **Quick links**: Invite user, Add template, View audit log
 
 Maria takes a screenshot, sends to her team Slack: "We're live. Invites out. First patient visits tomorrow."
@@ -175,7 +175,7 @@ She marks Lakeshore as **onboarded** internally.
 ### Customer admin side (`AuditLog`)
 | Event | Action |
 |---|---|
-| First admin invite consumed | `INVITE_CONSUMED`, `USER_CREATED`, `MFA_ENROLLED`, `ONBOARDING_COMPLETED` |
+| First admin invite consumed | `INVITE_CONSUMED`, `USER_CREATED`, `SIGNING_PIN_SET`, `ONBOARDING_COMPLETED` |
 | Site + rooms created | `SITE_CREATED`, `ROOM_CREATED` |
 | Clinician invites | `USER_INVITED`, `SEAT_ASSIGNED` |
 | Org settings updated | `ORG_SETTINGS_UPDATED` (with field-name list, no values for PHI-sensitive fields) |
@@ -192,7 +192,7 @@ She marks Lakeshore as **onboarded** internally.
 
 **Seats are a pricing layer.** `Seat` rows exist independent of `OrgUser`. Owner allocates N seats per tier; org admin assigns specific seats to users on invite. Stripe billing tracks the *seat allocation*, not seat *utilization* — customers pay for allocated seats whether utilized or not (standard SaaS model).
 
-**Customer-self-onboarding wizard is the bridge.** The admin invite → password → MFA → first-login wizard (Journey 01) is what makes Step 4 above smooth. Without it, Maria would have to do something painful on day 1.
+**Customer-self-onboarding wizard is the bridge.** The admin invite → password → signing PIN → first-login wizard (Journey 01) is what makes Step 4 above smooth. Without it, Maria would have to do something painful on day 1.
 
 **The owner console BAA UI is unique to v1.** Per `audit-admin-state-of-play.md` this is a hard blocker for first paying customer. The owner CAN'T provision an org without filling in BAA fields. If she tries, the form rejects.
 
@@ -200,7 +200,7 @@ She marks Lakeshore as **onboarded** internally.
 
 - **Stripe creation fails during provisioning.** Org is NOT created; entire transaction rolls back; owner sees an error toast with specific Stripe error code. Try again after fixing the Stripe side.
 - **Invite to Maria expires before she accepts.** Owner sees on the org page: "Pending invite for Maria expired 2 days ago. [Resend]." Tap resend → new invite generated; old invite marked EXPIRED.
-- **Customer's first admin loses access.** Owner can `Reset MFA` (admin-initiated path; Maria gets an email + re-enrolls on next sign-in). Owner can `Reset password` similarly. Both audited.
+- **Customer's first admin loses access.** Owner can `Send password reset` (admin-initiated path; Maria gets an email + sets a new password, then can set a new signing PIN in Settings). Audited.
 - **Customer reduces seat count after upgrade.** Stripe handles proration; some assigned seats become unassigned at next billing cycle; users with unassigned seats become read-only until reassigned.
 - **Customer requests org deletion.** This is a contractual + data-handling decision, not a self-service feature. Owner-only; full data export + deletion follows org's BAA terms. Out of scope for the immediate journey; handled via support process.
 - **42 CFR Part 2 sensitivity** — when `complianceProfile = BH_42CFR2`, all BH notes default to `NoteSensitivityLevel.BEHAVIORAL_HEALTH`; only roles cleared for that tier can read them.
@@ -210,7 +210,7 @@ She marks Lakeshore as **onboarded** internally.
 
 **Clinician** — Maria can stand up her clinic in under 90 minutes without engineering help. She sees what's happening; the language is clinical, not bureaucratic.
 
-**Medicare Compliance Officer** — The compliance profile drives the right defaults (BH = 42 CFR Part 2 sensitivity). MFA is enforced. Audit retention is 7 years. BAA fields are populated.
+**Medicare Compliance Officer** — The compliance profile drives the right defaults (BH = 42 CFR Part 2 sensitivity). A signing PIN is required so every note signature is deliberate and attributable. Audit retention is 7 years. BAA fields are populated.
 
 **Insurance Auditor** — Every action from provision through go-live is logged in `PlatformAuditLog` + `AuditLog` with PHI-free metadata. The org's BAA execution is on file in the database.
 
@@ -228,16 +228,16 @@ She marks Lakeshore as **onboarded** internally.
 - [ ] Stripe customer + subscription created atomically with Org provision.
 - [ ] Compliance profile drives default templates + sensitivity + feature flags.
 - [ ] Auto-invite first admin (SUPER_ADMIN role) on org provision.
-- [ ] Customer admin can: create sites + rooms, invite users with role + division + permissions, configure org-wide MFA + defaults, customize templates.
+- [ ] Customer admin can: create sites + rooms, invite users with role + division + permissions, configure org-wide signing-PIN policy + defaults, customize templates.
 - [ ] Org dashboard shows utilization, recent audit events, active features.
-- [ ] Admin-initiated MFA reset + password reset works (per Unit 08).
+- [ ] Admin-initiated password reset works (per Unit 08).
 - [ ] Owner can view (read-only) any customer org's state.
 - [ ] All admin actions audited; PlatformAuditLog and AuditLog separate.
 - [ ] Three-lens evaluation passes.
 
 ## Related references
 
-- Admin commercial-readiness audit (BAA, MFA reset, Sites CRUD, onboarding wizard): [`references/audit-admin-state-of-play.md`](../references/audit-admin-state-of-play.md)
+- Admin commercial-readiness audit (BAA, password reset, Sites CRUD, onboarding wizard): [`references/audit-admin-state-of-play.md`](../references/audit-admin-state-of-play.md)
 - HIPAA controls matrix: [`references/strategic/hipaa-scribe-controls-matrix.md`](../references/strategic/hipaa-scribe-controls-matrix.md)
 - Commercial-readiness backlog: [`references/strategic/commercial-readiness-backlog.md`](../references/strategic/commercial-readiness-backlog.md)
 - Build units delivering this journey: [`context/specs/01-foundation-auth-tenant.md`](../context/specs/01-foundation-auth-tenant.md), [`context/specs/08-admin-and-compliance-ready.md`](../context/specs/08-admin-and-compliance-ready.md)

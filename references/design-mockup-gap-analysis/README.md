@@ -26,7 +26,7 @@ This folder is a deep, file-citation-level comparison of the 21 HTML mockups in 
 | Templates + doc defaults | 2 (`template_edit_full_page_mockup.html`, `documentation_defaults_redesign.html`) | `src/app/(clinical)/templates/`, `src/app/(admin)/manage-templates/`, `src/app/(admin)/documentation/`, `src/components/templates/*` | ~72 / 15 / 13 (template editor); ~67 / 25 / 8 (doc defaults) | Remaining gap is mostly template-editor IA depth + visual/token polish | [`templates.md`](./templates.md) |
 | Admin (team / overview) | 3 (`admin_overview_and_team_mockup.html`, `admin_team_responsive_v2.html`, `admin_team_desktop_and_ipad.html`) | `src/app/(admin)/{users,sites,seats,billing,voice}/page.tsx` + layout | **~75 / 17 / 8** | Remaining gaps are mostly visual fidelity polish (org switcher + fine spacing rhythm) with minor metric-governance refinements | [`admin.md`](./admin.md) |
 | Owner console | 1 (`owner_console_redesign.html`) | `src/app/owner/page.tsx` (+ layout) | **~78 / 14 / 8** | Remaining gaps are mostly final visual polish + edge-case billing completeness, not missing source-of-truth path | [`owner.md`](./owner.md) |
-| Auth + Sign | 2 (`auth_flow_redesign.html`, `sign_flow_redesign.html`) | `src/app/(auth)/{login,register,mfa}/page.tsx`, `src/app/signup/page.tsx`, `src/app/page.tsx`, `src/components/auth/register-form.tsx`, `src/app/(clinical)/sign/[noteId]/page.tsx` | **auth ~81/14/5; sign ~89/8/3** | Remaining deltas are mostly optional step chrome + strict visual rhythm polish | [`auth.md`](./auth.md) |
+| Auth + Sign | 2 (`auth_flow_redesign.html`, `sign_flow_redesign.html`) | `src/app/(auth)/{login,register}/page.tsx`, `src/app/signup/page.tsx`, `src/app/page.tsx`, `src/components/auth/register-form.tsx`, `src/app/(clinical)/sign/[noteId]/page.tsx` | **auth ~81/14/5; sign ~89/8/3** | The mockup's MFA card is obsolete (MFA removed in Sprint 0.20); auth is email + password with a 4-digit signing PIN at sign time. Remaining deltas are mostly optional step chrome + strict visual rhythm polish | [`auth.md`](./auth.md) |
 | Flag review | 1 (`flag_review_redesign.html`) | `src/components/review/flag-review-panel.tsx` (+ host page) | **~82 / 12 / 6** | Remaining gaps are mostly strict spacing/typography rhythm polish, not missing core interactions | [`flag-review.md`](./flag-review.md) |
 
 **Total mockups covered:** 20 of 21. (`admin_team_desktop_and_ipad.html` and `admin_team_responsive_v2.html` are responsive variants of the same admin team table mockup; both analyzed in `admin.md`. The 21st is `admin_overview_and_team_mockup.html`, also in `admin.md`.)
@@ -69,7 +69,7 @@ flowchart LR
     P_docs[admin/documentation/]
     P_admin[admin/users + sites + seats + billing + voice]
     P_owner[owner/]
-    P_auth[auth/login + auth/register + auth/mfa + signup]
+    P_auth[auth/login + auth/register + signup]
     P_sign[clinical/sign/&#91;noteId&#93;/]
     P_flag[components/review/flag-review-panel]
   end

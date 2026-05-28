@@ -124,10 +124,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 - **Reconstructable state on important mutations.** Sign, transfer, sensitive-tier change, BAA acceptance — capture enough metadata to reconstruct.
 - **Every PHI access logged.** Every read of patient or note data, every export, every print.
 
-## Authentication & MFA
+## Authentication
 
 - **Every API route gates with `requireFeatureAccess`.** No exceptions. Even GETs.
-- **MFA re-verification for sensitive actions.** Sign, payment changes, MFA reset, BAA acceptance.
+- **Signing-PIN re-verification for sensitive actions.** Sign, payment changes, BAA acceptance. (MFA/TOTP was removed in Sprint 0.20.)
 - **Password hashes via `bcryptjs`.** Never plaintext. Never log passwords or tokens.
 - **NextAuth session is JWT, stateless.** No session table.
 - **Invite tokens expire** — verify in code, not just DB constraint. Return 410 Gone for expired.

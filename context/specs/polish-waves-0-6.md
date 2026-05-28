@@ -135,7 +135,7 @@ Track in progress tracker under GA-readiness; parallel to polish PRs where possi
 
 ## Suggested polish sequence (sprints)
 
-1. **Sprint 0 — Login & session trust (P0):** D2 MFA redirect loops, post-sign-in cookie race, onboarding-sites gate, home blank guard — spec in [`context/specs/sprint-0-login-first.md`](sprint-0-login-first.md)
+1. **Sprint 0 — Login & session trust (P0):** post-sign-in cookie race, onboarding-sites gate, home blank guard — spec in [`context/specs/sprint-0-login-first.md`](sprint-0-login-first.md) (the original D2 MFA redirect-loop item is moot — MFA removed in Sprint 0.20; login is email+password landing on `/home`)
 2. **Sprint A — Trust & providers (P0):** W0-01/02, W3-01, W0-03, X-01/X-02 — spec in [`context/specs/sprint-a-fe-be.md`](sprint-a-fe-be.md)
 3. **Sprint B — Clinical daily (P1):** W2-01/02, W3-02/03, W1-01, W6-01
 4. **Sprint C — EHR + copilot stubs (P1):** W4-01/02, W5-01

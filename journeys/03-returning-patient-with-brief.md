@@ -149,7 +149,7 @@ Lena's edits today: minor tweaks to Subjective wording, no changes to Objective 
 
 She scrolls down to the **open follow-ups** section — both prior-visit items are already shown as **Met** (closed in capture). The sign-time sweep modal won't appear.
 
-She taps **Sign Note**, completes MFA challenge, signs.
+She taps **Sign Note**, enters her 4-digit signing PIN, signs.
 
 ### Step 5 — What happens next, 2:47 PM onward
 

@@ -42,7 +42,7 @@ export default async function CapturePage({ params }: { params: Promise<{ noteId
   });
   if (!note) notFound();
 
-  // The clinical layout enforces MFA + auth. The capture page additionally
+  // The clinical layout enforces sign-in auth. The capture page additionally
   // refuses if the note is already past capture (defense-in-depth alongside
   // the realtime-key 409).
   if (!['PREPARING', 'RECORDING', 'PAUSED'].includes(note.status)) {

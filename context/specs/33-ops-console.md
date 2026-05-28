@@ -28,7 +28,7 @@ separate console with different scope:
 | # | Decision | Value |
 |---|---|---|
 | 1 | New PlatformRole | Add `PLATFORM_OPS` to the enum. NONE / PLATFORM_OPS / PLATFORM_OWNER (owner is the strict superset — ops sees fewer things). |
-| 2 | Authz helper split | `requirePlatformOwner` (existing) stays OWNER-only — gates `/owner/*`. New `requirePlatformStaff` allows OPS OR OWNER — gates `/ops/*`. MFA-required for both. |
+| 2 | Authz helper split | `requirePlatformOwner` (existing) stays OWNER-only — gates `/owner/*`. New `requirePlatformStaff` allows OPS OR OWNER — gates `/ops/*`. Both gate on platform role (auth is email+password; no MFA gate). |
 | 3 | Route group | New `(ops)` route group at `src/app/(ops)/`. Layout enforces `requirePlatformStaff` at the page level. `/ops` (dashboard), `/ops/health`, `/ops/queues`, `/ops/audit`. |
 | 4 | Dashboard metrics | Computed on-demand with a 60-second in-memory cache. No new DB table for v1 (metrics are quick aggregations; promotes to a cache table when the page becomes hot). Cache lives inside the metrics module (module-level Map keyed by metric name). |
 | 5 | Dashboard scope | (1) Total orgs + active orgs (orgs with ≥1 SIGNED note in last 30 days); (2) Total active users (signed in last 30 days); (3) Notes signed last 24h + 7d + 30d; (4) Failed transcription jobs last 24h; (5) Failed AI generation jobs last 24h; (6) Stuck/interrupted notes count (status='INTERRUPTED'); (7) Per-action error rate last 1h (actions ending in `_FAILED`). |
@@ -65,7 +65,6 @@ export async function requirePlatformStaff(): Promise<RequirePlatformStaffResult
   const session = await auth();
   if (!session?.user) return { error: 401 };
   if (!STAFF_ROLES.includes(session.user.platformRole)) return { error: 403 };
-  if (!session.user.mfaEnabled) return { error: 403, code: 'mfa_required' };
   return { user: session.user };
 }
 ```

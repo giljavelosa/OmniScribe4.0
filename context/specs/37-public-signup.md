@@ -13,8 +13,8 @@ the HIPAA-grade pilot phase. To go to GA, the platform needs:
    silently redirecting to `/login`.
 2. **Self-serve signup** at `/signup` — email + password + org name +
    division → atomic creation of Organization + User +
-   OrgUser(SUPER_ADMIN) + Seat. New user lands on `/mfa-setup` per
-   the existing D2 enforcement chain.
+   OrgUser(SUPER_ADMIN) + Seat. New user is signed in and lands on
+   `/home`.
 3. **Account lockout** — `User.failedLoginCount` + `User.lockedUntil`.
    After 5 failed sign-ins → 15-minute lock. NextAuth's `authorize()`
    short-circuits with a clear "account temporarily locked" error.
@@ -33,7 +33,7 @@ the HIPAA-grade pilot phase. To go to GA, the platform needs:
 
 > **Unit 37 ships when** a stranger can visit `/` → see a real
 > landing page → click "Sign up" → fill the form → submit → land on
-> `/mfa-setup` as the SUPER_ADMIN of a freshly provisioned org. AND
+> `/home` as the SUPER_ADMIN of a freshly provisioned org. AND
 > 5 failed sign-ins lock the account for 15 minutes (visible as a
 > "locked" error on the sign-in form). AND 5 signup POSTs from the
 > same IP within 15 min get 429. AND when `TURNSTILE_SITE_KEY` is
@@ -198,7 +198,7 @@ copy + Sign Up / Sign In CTAs. No auth gate.
 - Email verification on signup (sends a confirmation email before activating; v1 trusts the captcha + manual review of suspicious org names)
 - SSO / SAML for self-serve orgs
 - Stripe checkout integration during signup (BAA workflow still manual)
-- Multi-step onboarding wizard for the new org (uses existing /mfa-setup chain)
+- Multi-step onboarding wizard for the new org (signup signs the user straight in to `/home`)
 - Per-org signup gate (allow/deny list of email domains)
 - Admin force-unlock UI (only auto-unlock in v1; admin polish can follow)
 - Public marketing pages beyond the landing (pricing, features, blog)
@@ -209,7 +209,7 @@ copy + Sign Up / Sign In CTAs. No auth gate.
 - 4 new audit actions in `AuditAction` union.
 - 5 wrong-password attempts on `clinician@demo.local` → 6th attempt blocked even with correct password → `lockedUntil` set; `USER_LOCKED` audit row present.
 - 15 minutes later, correct password succeeds → `USER_UNLOCKED` audit row written; lockedUntil cleared.
-- `POST /api/auth/signup` with valid body creates org + user + orgUser + seat in one transaction; client redirected to `/mfa-setup`.
+- `POST /api/auth/signup` with valid body creates org + user + orgUser + seat in one transaction; client signed in and redirected to `/home`.
 - 6 signup POSTs from the same IP within 15 minutes → 6th returns 429 with Retry-After header.
 - When `TURNSTILE_SECRET_KEY` set, signup without a valid token returns 400 `captcha_failed`.
 - `node scripts/invite-sweep.mjs` marks expired-unconsumed invites as consumed + writes `INVITE_EXPIRED_SWEPT` rows per affected org.

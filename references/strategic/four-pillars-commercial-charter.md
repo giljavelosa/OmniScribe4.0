@@ -21,7 +21,7 @@
 
 ## Pillar 2 — Fix / uplift Team Admin + Platform (Owner / Ops) UI
 
-**Goal:** Ship admin surfaces that match redesign specs **and** remove commercial blockers (MFA/password reset, sites CRUD, downstream BAA fields, auth-model hygiene).
+**Goal:** Ship admin surfaces that match redesign specs **and** remove commercial blockers (admin-initiated password reset, sites CRUD, downstream BAA fields, auth-model hygiene).
 
 **Sources of truth:**
 - **Gap analysis (pixels):** `design-mockup-gap-analysis/admin.md`, `design-mockup-gap-analysis/owner.md`
@@ -57,7 +57,7 @@
 
 **Sources:** `CLAUDE.md` (App Runner / ECS / RDS / ElastiCache / S3 / CloudFront), **`memory/commercial-deploy-checklist.md`** (go-live checklist), `memory/commercial-launch-roadmap.md` (workflow: PR review, Gil owns prod deploys), `memory/commercial-readiness-backlog.md` (blockers before first dollar).
 
-**Depends on:** Pillar 2 **blockers** for first paying tenant (MFA/password reset, sites edit, BAA tracking); Pillar 3 **customer-specific** BAA execution; environment parity (workers + web).
+**Depends on:** Pillar 2 **blockers** for first paying tenant (admin-initiated password reset, sites edit, BAA tracking); Pillar 3 **customer-specific** BAA execution; environment parity (workers + web).
 
 ---
 

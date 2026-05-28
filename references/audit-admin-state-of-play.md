@@ -1,8 +1,9 @@
 # Admin State-of-Play Audit
 
 **Date:** 2026-05-05
+**Update (Sprint 0.20, 2026-05-27):** MFA/TOTP was removed entirely. Authentication is now email + password only; sign-time re-auth uses a 4-digit signing PIN (with a time-boxed unlock window). Wherever this audit recommends an "MFA reset" admin action or "MFA enrollment," the current reality is **admin-initiated password reset** for account recovery and a **signing-PIN setup** step at onboarding — there is no MFA to reset or enroll. WebAuthn/hardware-key remains a future option.
 **Scope:** Team admin (customer-side) + platform admin (operator-side) readiness for shipping the scribe portion of OmniScribe commercially.
-**TL;DR:** Both admin tiers are **far more developed than I expected coming in.** Platform admin is genuinely close to launch-ready. Team admin has real CRUD across most surfaces but is missing two operational must-haves (MFA reset, password reset) and one regulatory must-have (BAA tracking — schema-level, not UI). Sites is a stub. Plan a 3-4 week commercial-readiness phase, not a 3-month rebuild.
+**TL;DR:** Both admin tiers are **far more developed than I expected coming in.** Platform admin is genuinely close to launch-ready. Team admin has real CRUD across most surfaces but is missing one operational must-have (admin-initiated password reset for account recovery) and one regulatory must-have (BAA tracking — schema-level, not UI). Sites is a stub. Plan a 3-4 week commercial-readiness phase, not a 3-month rebuild.
 
 ---
 
@@ -12,7 +13,7 @@ This is the surface a customer's practice manager or IT admin uses inside their 
 
 | Route | Status | What's there | Gap for commercial |
 |---|---|---|---|
-| **users** | SHIPPED | Invite (name/email/role/division/profession), edit, deactivate, role change, site/department reassignment, seat assignment popover, multi-division support, invite-token copy-link UX. Backed by `/api/admin/invites` with audit log. | **No MFA reset action. No password reset action.** First time a clinician locks themselves out, you'll be doing it via DB. |
+| **users** | SHIPPED | Invite (name/email/role/division/profession), edit, deactivate, role change, site/department reassignment, seat assignment popover, multi-division support, invite-token copy-link UX. Backed by `/api/admin/invites` with audit log. | **No admin-initiated password reset action.** First time a clinician locks themselves out, you'll be doing it via DB. (MFA reset is moot — MFA removed in Sprint 0.20.) |
 | **seats** | SHIPPED (team mode) | Seat table, transfer/revoke, "buy more seats" via Stripe checkout. Solo mode redirects to billing. Backed by `/api/admin/subscription` + `/api/seats`. | Seat purchase POST handler unclear from audit (UI references it, route presence not confirmed). Revoke lacks typed-name confirmation (voice page has it; seats doesn't — minor safety gap). |
 | **billing** | SHIPPED (Stripe-bounded) | Subscription dashboard, Stripe checkout, Stripe portal for self-serve invoice/card. "Auto-grant patient management" org toggle. Backed by `/api/billing/checkout` + `/api/billing/portal`. | No in-app invoice history viewer (customer goes to Stripe portal for that). No tier upgrade/downgrade UI. Both deferrable. |
 | **sites** | **STUBBED** | Create site (name/address). Read-only display of site cards with counts. | No edit, no delete, no room CRUD, no department-site relationship UI. First customer who needs to fix a typo in a site address will hit this wall. |
@@ -35,7 +36,7 @@ This is the surface you (the operator) use to manage all customer orgs. Two dist
 | **`/ops/signin`** | SHIPPED | Email/password, separate cookie. | Operators must be seeded at deploy (no self-signup, which is correct). |
 | **`/ops/dashboard` (overview)** | SHIPPED | Real metrics, service health (DB, AssemblyAI, Anthropic, OpenAI), recent ops activity from audit log. | None. |
 | **`/ops/dashboard/organizations`** | SHIPPED | **Full org provisioning from UI** — create with name/division/billing email/admin email. Generates initial admin with one-time password. Suspend/resume, feature flags, transfer ownership. | None for creation. **Customer self-onboarding flow is missing** (more on this below — it's a gap on the *invite acceptance* side, not creation side). |
-| **`/ops/dashboard/users`** | SHIPPED | Cross-org user list, **impersonation with audit + 1-hour token TTL**, force password reset, toggle MFA. Cannot impersonate other PLATFORM_OWNERs. | None. |
+| **`/ops/dashboard/users`** | SHIPPED | Cross-org user list, **impersonation with audit + 1-hour token TTL**, force password reset. Cannot impersonate other PLATFORM_OWNERs. (Pre-Sprint-0.20 this also had a "toggle MFA" control; MFA was removed.) | None. |
 | **`/ops/dashboard/announcements`** | SHIPPED | Platform-wide or org-specific announcements with scheduling (info/warning/critical). | None. |
 | **`/ops/dashboard/usage`** | SHIPPED | Notes/day, division breakdown, top orgs, CSV export. | No per-org LLM token cost rollup (cursor-task 28 territory). |
 | **`/ops/dashboard/subscriptions`** | SHIPPED | Tier list, active seats, max notes/month, quota override, credit adjustment with reason. | No in-app pricing/discount/setup-fee config (intentional per `/owner/` console copy). |
@@ -69,7 +70,7 @@ The `Organization` model has `name`, `division`, `billingEmail`, `stripeId`, `su
 
 **3. Audit log lacks before/after state.** `AuditLog` captures actor, action, resource, IP, metadata — but no structured before/after JSON. HIPAA covered-entity audit requirements expect reconstructable state transitions. Operationally fine for v1; will need enrichment for any customer with a compliance officer who actually reads audit logs.
 
-**4. MFA is TOTP only.** No WebAuthn, no backup codes in schema. Acceptable for v1; revisit if you target enterprise.
+**4. Auth is password + signing PIN.** (At the time of this audit MFA was TOTP-only; it was removed in Sprint 0.20.) Authentication is now email + password, with a 4-digit signing PIN for sign-time re-auth. No WebAuthn/hardware-key — a future option to revisit if you target enterprise.
 
 **5. No account lockout fields.** `loginAttempts`, `lockedUntil` absent. Brute-force defense is at the rate-limiter / WAF layer, not the model. Add before public-facing signup, not blocking for invite-only commercial.
 
@@ -84,13 +85,13 @@ The `Organization` model has `name`, `division`, `billingEmail`, `stripeId`, `su
 **Hard blockers (must ship before first paying customer):**
 
 1. **Customer-side (downstream) BAA tracking on `Organization`.** Schema migration adds `baaExecutedAt`, `baaVersion`, `baaCountersignedBy`, `complianceProfile` enum. Surface in `/ops/dashboard/organizations` create + edit + list. Upstream vendor BAAs (AWS, Soniox, Anthropic-via-Bedrock) are tracked externally and are not part of this gap. Small scope.
-2. **MFA reset + password reset actions in `(admin)/users`.** Customer admin can't unblock their own clinicians today. Two buttons + two API routes.
+2. **Admin-initiated password reset action in `(admin)/users`.** Customer admin can't unblock their own clinicians today. One button + one API route. (This is the account-recovery path; MFA reset is moot — MFA removed in Sprint 0.20.)
 3. **Sites edit/delete + room CRUD.** First address typo trips this. Small scope but unavoidable.
 4. **Pick one auth model.** Either commit to TeamMembership and migrate, or revert to legacy OrgUser.role. Running both in production is a footgun.
 
 **Soft blockers (can ship without, but you'll feel pain in first 30-60 days):**
 
-5. **Customer self-onboarding flow.** Today: operator creates org with admin → admin gets one-time password → admin signs in. There's no self-serve "accept invite, set password, do MFA enrollment" wizard. Manageable for first 5 customers (you do it by hand); breaks at customer 10+.
+5. **Customer self-onboarding flow.** Today: operator creates org with admin → admin gets one-time password → admin signs in. There's no self-serve "accept invite, set password, set signing PIN" wizard. Manageable for first 5 customers (you do it by hand); breaks at customer 10+.
 6. **Invoice history viewer in `(admin)/billing`.** Customers go to Stripe portal today. Acceptable but a tier-up ask.
 7. **Audit log enrichment (before/after state).** Required for compliance officers who actually audit; defer until a customer asks.
 8. **Per-org LLM cost visibility in ops.** Cursor-task 28 territory. Defer until you see real spend variance across customers.
@@ -98,7 +99,7 @@ The `Organization` model has `name`, `division`, `billingEmail`, `stripeId`, `su
 
 **Non-blockers (defer):**
 
-- WebAuthn / passkeys (TOTP is acceptable v1).
+- WebAuthn / passkeys / hardware-key (out of scope; v1 auth is password + 4-digit signing PIN — a future option, not current).
 - In-app pricing / discount / setup-fee configuration (`/owner/` explicitly defers this).
 - Feature flag operationalization (UI exists but unclear what flags do).
 - Per-clinician regenerate rate-limiting + other Phase 04 follow-ups.
@@ -111,13 +112,13 @@ If you want to ship to 1-3 existing LRCHC-adjacent customers in the next 6-8 wee
 
 **Phase 15a — Commercial blockers (1.5-2 weeks):**
 - Schema migration: add downstream-BAA tracking fields (`baaExecutedAt`, `baaVersion`, `baaCountersignedBy`, `complianceProfile` enum) to `Organization`. Expose in `/ops/dashboard/organizations` create + edit + list. Upstream vendor BAAs (AWS, Soniox, etc.) are tracked externally and are out of scope for this work.
-- Add MFA reset + password reset actions to `(admin)/users` edit form. Wire to existing `/api/users/[id]` PATCH or new sub-endpoints with audit logging.
+- Add admin-initiated password reset action to `(admin)/users` edit form (account-recovery path; no MFA reset — MFA removed Sprint 0.20). Wire to existing `/api/users/[id]` PATCH or a new sub-endpoint with audit logging.
 - Decide auth model (recommend: commit to `TeamMembership` since it's the forward direction). Document migration path. Don't migrate yet — just stop fork-coding.
 - Verify invite `expiresAt` enforcement; patch if missing.
 
 **Phase 15b — Sites + onboarding polish (1-1.5 weeks):**
 - Complete `(admin)/sites/page.tsx`: edit, delete, room CRUD.
-- Add customer self-onboarding flow: invite-acceptance page, password set, MFA enrollment wizard. Even a minimal version reduces founder load per customer significantly.
+- Add customer self-onboarding flow: invite-acceptance page, password set, signing-PIN setup. Even a minimal version reduces founder load per customer significantly.
 
 **Phase 15c — Compliance polish (defer until first customer signs):**
 - Audit log enrichment.
@@ -132,4 +133,4 @@ If you want to ship to 1-3 existing LRCHC-adjacent customers in the next 6-8 wee
 
 If you agree with this slicing, **15a is the next ship after 04c merges**. It's about 4-6 PRs, scoped tightly, no review/sign shell touches, no AssemblyAI/Soniox touches, all rule-compliant.
 
-If you want me to draft cursor-tasks for 15a (BAA tracking, MFA/password reset, auth-model decision doc, invite expiration check), say the word and I'll structure them the same way Phase 04 was sliced — one task per concern, evidence-based, plain-English-first deliverable.
+If you want me to draft cursor-tasks for 15a (BAA tracking, admin-initiated password reset, auth-model decision doc, invite expiration check), say the word and I'll structure them the same way Phase 04 was sliced — one task per concern, evidence-based, plain-English-first deliverable.

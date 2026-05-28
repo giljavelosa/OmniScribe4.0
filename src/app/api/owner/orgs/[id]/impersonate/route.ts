@@ -26,7 +26,7 @@ const beginSchema = z.object({
 /**
  * POST /api/owner/orgs/[id]/impersonate — begin impersonation.
  *
- * Owner-gated + MFA-required. Validates the target is an active OrgUser
+ * Owner-gated. Validates the target is an active OrgUser
  * of the org. Writes BOTH a PlatformAuditLog row (IMPERSONATION_BEGAN —
  * cross-org owner action) AND an AuditLog row scoped to the org so the
  * Transactions timeline picks it up.

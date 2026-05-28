@@ -3299,8 +3299,8 @@
   </div>
 
   <div class="section">
-    <h2 class="section-h">13 · Auth flow — login + MFA</h2>
-    <p class="section-sub">Unified card treatment across Login and MFA. Six-box code input that handles paste and autofill. Forgot password, magic link, password visibility toggle, and trust signals — the standard 2026 auth UX expected on a clinical product.</p>
+    <h2 class="section-h">13 · Auth flow — login + signing PIN</h2>
+    <p class="section-sub">Unified card treatment across Login and signing-PIN setup. Authentication is email + password; the 4-digit signing PIN gates note signing (with a time-boxed unlock window). Per-digit input that handles paste and autofill. Forgot password, magic link, password visibility toggle, and trust signals — the standard 2026 auth UX expected on a clinical product.</p>
 
     <style>
       .auth-bg { background: radial-gradient(circle at top, rgba(15, 110, 86, 0.08), transparent 36%), linear-gradient(180deg, #FAFAF7 0%, var(--color-background-primary) 100%); border: 0.5px solid var(--color-border-tertiary); border-radius: var(--border-radius-lg); padding: 28px; display: flex; gap: 22px; justify-content: center; align-items: flex-start; flex-wrap: wrap; }
@@ -3334,14 +3334,14 @@
       .auth-trust-row { display: flex; align-items: center; justify-content: center; gap: 14px; margin-top: 12px; padding: 8px 0; flex-wrap: wrap; }
       .auth-trust-pill { display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; color: var(--color-text-secondary); padding: 3px 9px; background: var(--color-background-secondary); border-radius: 999px; }
       .auth-trust-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--color-text-success); }
-      .mfa-codes { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; margin-top: 6px; }
-      .mfa-box { height: 44px; background: var(--color-background-primary); border: 0.5px solid var(--color-border-secondary); border-radius: var(--border-radius-md); display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 500; font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--color-text-primary); }
-      .mfa-box.filled { border-color: var(--primary); background: rgba(15, 110, 86, 0.04); }
-      .mfa-box.active { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(15, 110, 86, 0.1); }
-      .mfa-box.empty { color: var(--color-text-tertiary); font-weight: 400; }
-      .mfa-resend-row { display: flex; align-items: center; justify-content: center; gap: 14px; font-size: 11.5px; color: var(--color-text-secondary); margin-top: 4px; }
-      .mfa-resend-link { color: var(--color-text-info); }
-      .mfa-resend-divider { color: var(--color-border-secondary); }
+      .pin-codes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 6px; }
+      .pin-box { height: 44px; background: var(--color-background-primary); border: 0.5px solid var(--color-border-secondary); border-radius: var(--border-radius-md); display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 500; font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--color-text-primary); }
+      .pin-box.filled { border-color: var(--primary); background: rgba(15, 110, 86, 0.04); }
+      .pin-box.active { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(15, 110, 86, 0.1); }
+      .pin-box.empty { color: var(--color-text-tertiary); font-weight: 400; }
+      .pin-hint-row { display: flex; align-items: center; justify-content: center; gap: 14px; font-size: 11.5px; color: var(--color-text-secondary); margin-top: 4px; }
+      .pin-hint-link { color: var(--color-text-info); }
+      .pin-hint-divider { color: var(--color-border-secondary); }
     </style>
 
     <div class="wrap">
@@ -3406,34 +3406,29 @@
                 <span class="auth-logo">O</span>
                 <span class="auth-name">OmniScribe</span>
               </div>
-              <div class="auth-sub">Two-factor verification</div>
+              <div class="auth-sub">Set your signing PIN</div>
             </div>
             <form class="auth-form">
               <div class="auth-field">
-                <div class="auth-label-row"><span class="auth-label">Enter the 6-digit code from your authenticator app</span></div>
-                <div class="mfa-codes">
-                  <div class="mfa-box filled">2</div>
-                  <div class="mfa-box filled">8</div>
-                  <div class="mfa-box filled">4</div>
-                  <div class="mfa-box active">7</div>
-                  <div class="mfa-box empty">·</div>
-                  <div class="mfa-box empty">·</div>
+                <div class="auth-label-row"><span class="auth-label">Choose a 4-digit PIN to confirm note signing</span></div>
+                <div class="pin-codes">
+                  <div class="pin-box filled">•</div>
+                  <div class="pin-box filled">•</div>
+                  <div class="pin-box active">•</div>
+                  <div class="pin-box empty">·</div>
                 </div>
-                <div class="mfa-resend-row">
-                  <span>Didn't get a code?</span>
-                  <span class="mfa-resend-link">Resend</span>
-                  <span class="mfa-resend-divider">·</span>
-                  <span class="mfa-resend-link">Use backup code</span>
+                <div class="pin-hint-row">
+                  <span>Re-entered only after the unlock window expires.</span>
                 </div>
               </div>
-              <button class="auth-btn-pri">Continue</button>
+              <button class="auth-btn-pri">Save PIN</button>
             </form>
             <div class="auth-foot">
-              Trouble verifying? <span class="auth-foot-link">Contact support →</span>
+              Forgot your PIN? <span class="auth-foot-link">Reset it →</span>
             </div>
           </div>
           <div style="height: 38px;"></div>
-          <div class="stage-cap">MFA · two-factor verification</div>
+          <div class="stage-cap">Signing PIN · sign-time re-auth</div>
         </div>
       </div>
     </div>

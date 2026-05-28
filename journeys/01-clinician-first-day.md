@@ -8,7 +8,7 @@
 
 ## The journey at a glance
 
-It's Sam's first morning. By 8:30 AM Sam has accepted an invite, set a password, enrolled MFA, signed in, walked through a 60-second product orientation, and completed their first OmniScribe-recorded session with a patient.
+It's Sam's first morning. By 8:30 AM Sam has accepted an invite, set a password, set a 4-digit signing PIN, signed in, walked through a 60-second product orientation, and completed their first OmniScribe-recorded session with a patient.
 
 This journey has to work, or Sam never uses OmniScribe a second time.
 
@@ -26,7 +26,7 @@ Sam's email contains:
 >
 > This link expires in 7 days.
 >
-> Lakeshore Counseling Group uses OmniScribe to capture and document clinical sessions. Setting up your account takes about 5 minutes — you'll set a password and enable two-factor authentication.
+> Lakeshore Counseling Group uses OmniScribe to capture and document clinical sessions. Setting up your account takes about 5 minutes — you'll set a password and a 4-digit signing PIN.
 
 Sam taps the link on their phone. The link routes to **`/onboarding/[token]`**.
 
@@ -42,7 +42,7 @@ Sam taps the link on their phone. The link routes to **`/onboarding/[token]`**.
   - "You've been invited to **Lakeshore Counseling Group** by **Dr. Maria Ortega** as a **Clinician**."
   - "We'll set up your account in 3 steps:"
     1. Set a password
-    2. Enable two-factor authentication (TOTP)
+    2. Set a 4-digit signing PIN (used to confirm note signing)
     3. Done — you'll land on your home screen
 - **Primary button**: "Get started"
 
@@ -60,26 +60,25 @@ Sam taps **Get started**.
 
 Sam picks a password. Taps **Continue**.
 
-**Behind the scenes**: `POST /api/onboarding/[token]/password` — bcryptjs hash, creates `User`, marks `Invite.consumedAt = now()`. The `OrgUser` row was pre-created by Dr. Ortega's invite action; now the `User.id` is linked. No active session yet (MFA gate next).
+**Behind the scenes**: `POST /api/onboarding/[token]/password` — bcryptjs hash, creates `User`, marks `Invite.consumedAt = now()`. The `OrgUser` row was pre-created by Dr. Ortega's invite action; now the `User.id` is linked. No active session yet (signing-PIN step next).
 
-### Step 4 — MFA enrollment, 8:03 AM
+### Step 4 — Set a signing PIN, 8:03 AM
 
-**Screen: `/onboarding/[token]` step 3 (MFA)**:
+**Screen: `/onboarding/[token]` step 3 (Signing PIN)**:
 
-- **Heading**: "Enable two-factor authentication"
-- **Body**: "We require two-factor authentication for every clinician account. Scan this QR code with your authenticator app — Google Authenticator, Authy, 1Password, Microsoft Authenticator all work."
-- **QR code** (large, scannable from phone if on desktop, or copy-paste if same device)
-- **Manual entry key** below the QR code (collapsible) — for users with QR-incompatible apps
-- **Input**: "Enter the 6-digit code from your authenticator"
-- **Primary button**: "Verify"
+- **Heading**: "Set your signing PIN"
+- **Body**: "Choose a 4-digit PIN. You'll enter it to confirm when you sign a note — a deliberate, attributable action that locks the note. After you enter it, a short unlock window keeps you from re-typing it on every signature for a while."
+- **Input**: "Enter a 4-digit PIN" (4 numeric boxes)
+- **Input**: "Confirm your PIN" (4 numeric boxes)
+- **Primary button**: "Set PIN"
 
-Sam opens Authy on their phone, scans the QR, gets the 6-digit code, enters it. Taps **Verify**.
+Sam picks a 4-digit PIN, confirms it. Taps **Set PIN**.
 
-**Behind the scenes**: Server checks TOTP via `lib/mfa.ts` (otplib equivalent). On match: `User.mfaEnabled = true`, generates 10 recovery codes.
+**Behind the scenes**: `POST /api/auth/pin/setup` — the PIN is hashed server-side and stored on the user; no plaintext PIN is ever persisted. The signing PIN is independent of the login password.
 
-**Screen update**: "Save your recovery codes" — list of 10 codes; "Download as PDF" button; "Copy all" button; "I've saved them" checkbox required to proceed.
+**Screen update**: "Your signing PIN is set" — short reassurance: "You can change it anytime in Settings. If you forget it, your administrator can send a password reset that lets you set a new one." "Continue" button.
 
-Sam taps **Download as PDF**, saves to phone. Checks "I've saved them." Taps **Continue**.
+Sam taps **Continue**.
 
 ### Step 5 — Done, 8:04 AM
 
@@ -89,7 +88,7 @@ Sam taps **Download as PDF**, saves to phone. Checks "I've saved them." Taps **C
 - **Body**: "Welcome to Lakeshore Counseling Group on OmniScribe. We're taking you to your home screen now."
 - Auto-redirect in 3 seconds, or tap "Continue" to go now
 
-**Behind the scenes**: Server creates a NextAuth session (JWT). Audit log: `ONBOARDING_COMPLETED` with `userId`, `orgId`, `inviteId`. Session shape now includes `mfaEnabled: true, mfaVerified: true`.
+**Behind the scenes**: Server creates a NextAuth session (JWT). Audit log: `ONBOARDING_COMPLETED` with `userId`, `orgId`, `inviteId`. Session shape now includes `signingPinSet: true`.
 
 ### Step 6 — Land on home, 8:05 AM
 
@@ -164,8 +163,8 @@ Sam continues their day.
 | 1 | Email tap → `/onboarding/[token]` | `Invite` validated; token not yet consumed | `ONBOARDING_OPENED` |
 | 2 | Welcome screen | (none) | (none) |
 | 3 | Set password | `User` created; `OrgUser` linked; `Invite.consumedAt` set | `USER_CREATED`, `INVITE_CONSUMED` |
-| 4 | Enroll MFA (TOTP) | `User.mfaSecret` stored; `User.mfaEnabled = true`; 10 recovery codes generated | `MFA_ENROLLED` |
-| 5 | Done → home | NextAuth session created; `mfaVerified: true` | `ONBOARDING_COMPLETED` |
+| 4 | Set signing PIN | Hashed signing PIN stored on `User`; `signingPinSet: true` | `SIGNING_PIN_SET` |
+| 5 | Done → home | NextAuth session created; `signingPinSet: true` | `ONBOARDING_COMPLETED` |
 | 6–7 | Home + orientation sheet | (no PHI access yet) | `FIRST_LOGIN` |
 | 8 | Voice profile setup (optional) | `VoiceProfile` row with embedding + consent | `VOICE_PROFILE_CREATED` with `consentVersion` |
 | 9 | Open first patient | `Note` created in `PREPARING` | `NOTE_PREPARING_OPENED` |
@@ -174,17 +173,17 @@ Sam continues their day.
 ## Edge cases
 
 - **Sam ignores the invite for 8 days.** Token expires. Tapping the link → "This invite has expired. Ask your administrator to send a new one." `Invite` is marked `EXPIRED` server-side. Dr. Ortega receives a notification on next login: "Sam's invite expired; resend?"
-- **Sam never enables MFA.** Cannot complete onboarding. The flow blocks until MFA is enrolled. (Public sign-in routes also block until MFA is enrolled.)
-- **Sam loses MFA device after enrolling.** Recovery: use a recovery code (sign-in flow accepts code instead of TOTP); if no recovery codes, admin-initiated MFA reset (Dr. Ortega clicks "Reset MFA" on Sam's user row, types a reason, Sam receives an email and re-enrolls on next sign-in).
+- **Sam never sets a signing PIN.** Cannot complete onboarding. The flow blocks until a signing PIN is set. (Sam can also set or change it later in Settings, but a PIN is required before signing a note.)
+- **Sam forgets their signing PIN later.** Recovery: admin-initiated password reset (Dr. Ortega clicks "Send password reset" on Sam's user row, types a reason, Sam receives an email); after resetting their password Sam can set a new signing PIN in Settings.
 - **Sam declines voice-profile consent.** Voice ID is skipped; copilot still works for Watch + Ask but cannot identify Sam in transcripts (default heuristic: speaker_1 = clinician).
-- **Org has `forceMfa = true` but Sam tries to skip MFA.** Step 4 cannot be skipped; the only path forward is to enroll.
+- **Sam tries to skip the signing-PIN step.** Step 4 cannot be skipped; the only path forward is to set a PIN.
 - **Sam's password validation fails.** Real-time feedback under the input ("Must include a number," etc.). Continue button stays disabled.
 - **The org admin removes Sam mid-onboarding.** Onboarding session returns 403 on next step; redirect to `/onboarding-cancelled` ("Your invitation has been cancelled. Please contact your administrator.").
 - **Sam opens onboarding link on a public computer.** No special handling; session is normal NextAuth JWT. Sam should sign out when done (standard advice surfaced in a non-blocking banner during step 5).
 
 ## What surfaces does this journey exercise?
 
-- `/onboarding/[token]` (4 steps: welcome / password / MFA / done)
+- `/onboarding/[token]` (4 steps: welcome / password / signing PIN / done)
 - `/home` (first time, with welcome card + orientation sheet)
 - `/profile/setup` (3-step: profession / style / voice)
 - `/prepare/[noteId]` (first visit; no-brief variant)
@@ -193,17 +192,17 @@ Sam continues their day.
 
 ## Three-lens evaluation for this journey
 
-**Clinician** — Onboarding is brief, friendly, never patronizing. MFA enrollment is well-supported with multiple app options and recovery codes. Voice profile is opt-in with plain-language consent.
+**Clinician** — Onboarding is brief, friendly, never patronizing. The signing PIN is quick to set and clearly explained (it confirms note signing, with a short unlock window so it isn't re-typed constantly). Voice profile is opt-in with plain-language consent.
 
-**Medicare Compliance Officer** — Sam's account is provisioned with role-based access controls + MFA before any PHI access. Audit log captures user creation, MFA enrollment, and first PHI access.
+**Medicare Compliance Officer** — Sam's account is provisioned with role-based access controls before any PHI access, and a signing PIN is set so every signature is a deliberate, attributable action. Audit log captures user creation, signing-PIN setup, and first PHI access.
 
-**Insurance Auditor** — `BIPA` consent is captured with version. Invite link is single-use + time-limited. Account state transitions (invite → user → mfa-enrolled → first PHI access) are all logged with reconstructable metadata.
+**Insurance Auditor** — `BIPA` consent is captured with version. Invite link is single-use + time-limited. Account state transitions (invite → user → signing-PIN set → first PHI access) are all logged with reconstructable metadata.
 
 ## Build-team checklist for "this journey works"
 
 - [ ] A clinician with a valid invite can complete the 4-step onboarding wizard end-to-end on phone + desktop.
 - [ ] Expired tokens return 410 Gone with clear messaging.
-- [ ] Wizard is resumable if interrupted (state recovered from `Invite.consumedAt` + `User.mfaEnabled`).
+- [ ] Wizard is resumable if interrupted (state recovered from `Invite.consumedAt` + whether a signing PIN is set).
 - [ ] First-time `/home` shows a welcome card; subsequent visits don't.
 - [ ] Voice-profile consent captures version + `consentedAt`; revocation flow exists (covered in Unit 01).
 - [ ] Audit log captures every step.
