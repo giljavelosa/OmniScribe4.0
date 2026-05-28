@@ -294,6 +294,7 @@ function PickerShell({
 
   function submitChoice() {
     if (caseId === NEW_CASE) return;
+    if (caseRequired && !caseId) return;
     if (viewerDivision === 'REHAB' && rehabEpisodes.length >= 2 && !episodeChoice) return;
     if (sitesGovernedHere && !siteId) {
       setError('Pick the site you are at for this visit.');
@@ -336,6 +337,8 @@ function PickerShell({
     viewerDivision === 'REHAB' && !!selectedCase && rehabEpisodes.length >= 2;
   const showSitePicker = sitesGovernedHere && siteListLen >= 2;
   const showSiteReadonly = sitesGovernedHere && siteListLen === 1;
+  /** Agent-routed visits omit caseId; only explicit override paths require it. */
+  const caseRequired = showCasePicker || !!forceCaseId;
   const title = forceDatePicker ? 'Start late entry' : 'Start visit';
   const description =
     'Set the date the visit actually happened. Today is fine for a normal visit — backdate to chart a past one.';
@@ -496,7 +499,7 @@ function PickerShell({
             onClick={submitChoice}
             disabled={
               pending ||
-              !caseId ||
+              (caseRequired && !caseId) ||
               caseId === NEW_CASE ||
               (showRehabEpisodePicker && !episodeChoice) ||
               (sitesGovernedHere && !siteId) ||
