@@ -12,7 +12,7 @@ Ship the **visit-bank commercial model** discussed in product planning:
 4. **Capacity gate** — block new visit creation when no visits available (unless overage allowed).
 5. **Visit requests** — clinicians request visits; org admin approve/deny (v1 workflow, not open chat).
 
-Stripe catalog sync and checkout for bundles ship in PR2 (`checkout-capacity` + webhook fulfillment); org-tier checkout remains Group C follow-on.
+Stripe catalog sync and checkout for bundles + solo/org monthly tiers ship in PR2; collaborator seat add-ons and subscription lifecycle in Group C (2026-05-27).
 
 ## Locked decisions
 

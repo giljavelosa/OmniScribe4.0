@@ -17,6 +17,11 @@ import { CommercialModel } from '@prisma/client';
 
 type CommercialData = {
   visitBankBalance: number;
+  catalogDefaults?: {
+    seatPriceCents: number;
+    visitsPerSeatPerMonth: number;
+    committedSeats: number;
+  };
   contract: {
     commercialModel: CommercialModel;
     committedSeats: number;
@@ -145,6 +150,31 @@ export function CommercialContractCard({ orgId }: { orgId: string }) {
           />
         </div>
       </div>
+      {data.catalogDefaults && (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={pending}
+          onClick={() =>
+            setData((d) =>
+              d && d.catalogDefaults
+                ? {
+                    ...d,
+                    contract: {
+                      ...d.contract,
+                      committedSeats: d.catalogDefaults.committedSeats,
+                      seatPriceCents: d.catalogDefaults.seatPriceCents,
+                      visitsPerSeatPerMonth: d.catalogDefaults.visitsPerSeatPerMonth,
+                    },
+                  }
+                : d,
+            )
+          }
+        >
+          Apply catalog enterprise defaults
+        </Button>
+      )}
       <Button
         disabled={pending}
         onClick={() => {

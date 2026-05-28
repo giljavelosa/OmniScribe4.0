@@ -8,7 +8,20 @@ import { reconcileSeats } from '@/lib/stripe/reconcile';
 import {
   fulfillMonthlyTierInvoice,
   handleCheckoutSessionCompleted,
+  handleCapacitySubscriptionDeleted,
+  handleCapacitySubscriptionUpdated,
 } from '@/lib/billing/stripe-fulfillment';
+
+const CAPACITY_PURCHASE_TYPES = new Set([
+  'monthly_tier',
+  'org_monthly_tier',
+  'collaborator_seats',
+]);
+
+function isCapacitySubscription(sub: Stripe.Subscription): boolean {
+  const purchaseType = sub.metadata?.purchaseType;
+  return !!purchaseType && CAPACITY_PURCHASE_TYPES.has(purchaseType);
+}
 
 export const runtime = 'nodejs';
 
@@ -55,8 +68,7 @@ export async function POST(req: Request) {
 
         if (typeof session.subscription === 'string') {
           const sub = await stripe.subscriptions.retrieve(session.subscription);
-          // Legacy seat subscription — skip when capacity tier owns the sub.
-          if (sub.metadata?.purchaseType !== 'monthly_tier') {
+          if (!isCapacitySubscription(sub)) {
             await provisionFromSubscription(sub);
           }
         }
@@ -66,7 +78,9 @@ export async function POST(req: Request) {
       case 'customer.subscription.created':
       case 'customer.subscription.updated': {
         const sub = event.data.object as Stripe.Subscription;
-        if (sub.metadata?.purchaseType !== 'monthly_tier') {
+        if (isCapacitySubscription(sub)) {
+          await handleCapacitySubscriptionUpdated(sub);
+        } else {
           await provisionFromSubscription(sub);
         }
         break;
@@ -84,17 +98,17 @@ export async function POST(req: Request) {
 
       case 'customer.subscription.deleted': {
         const sub = event.data.object as Stripe.Subscription;
-        const orgId = sub.metadata?.orgId;
-        if (orgId) {
+        const handledCapacity = await handleCapacitySubscriptionDeleted(sub);
+        if (!handledCapacity && sub.metadata?.orgId) {
           const r = await prisma.seat.updateMany({
-            where: { orgId, stripeSubId: sub.id, isActive: true },
+            where: { orgId: sub.metadata.orgId, stripeSubId: sub.id, isActive: true },
             data: { isActive: false },
           });
           await writeAuditLog({
-            orgId,
+            orgId: sub.metadata.orgId,
             action: 'STRIPE_SUBSCRIPTION_CANCELED',
             resourceType: 'Organization',
-            resourceId: orgId,
+            resourceId: sub.metadata.orgId,
             metadata: { stripeSubId: sub.id, seatsDeactivated: r.count },
           });
         }

@@ -3,6 +3,7 @@
  */
 
 import type { SoloTierCatalogRow, VisitBundleCatalogRow } from '@/lib/billing/catalog-defaults';
+import { quoteOrgMonthlyPlan } from '@/lib/billing/org-pricing';
 import { catalogToPayload } from '@/lib/billing/catalog-service';
 import { ensureActiveCatalog } from '@/lib/billing/catalog-service';
 
@@ -37,4 +38,17 @@ export async function resolveVisitBundle(bundleId: string): Promise<VisitBundleC
     throw new CatalogLookupError(`Unknown bundle "${bundleId}"`, 'bundle_not_found');
   }
   return bundle;
+}
+
+export async function resolveOrgMonthlyPlan(seatCount: number) {
+  const { payload } = await getActiveCatalogPayload();
+  const quote = quoteOrgMonthlyPlan(
+    payload.enterpriseTemplateJson,
+    seatCount,
+    payload.trialOrgSeats,
+  );
+  if ('error' in quote) {
+    throw new CatalogLookupError(quote.error, 'tier_not_found');
+  }
+  return { quote, payload };
 }

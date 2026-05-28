@@ -46,6 +46,7 @@ export function SignupForm() {
   const [password, setPassword] = useState('');
   const [orgName, setOrgName] = useState('');
   const [division, setDivision] = useState<Division>('MEDICAL');
+  const [trialKind, setTrialKind] = useState<'solo' | 'org'>('solo');
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -75,6 +76,7 @@ export function SignupForm() {
           password,
           orgName,
           division,
+          trialKind,
           ...(captchaToken ? { captchaToken } : {}),
         }),
       });
@@ -149,6 +151,27 @@ export function SignupForm() {
             ))}
           </SelectContent>
         </Select>
+      </div>
+      <div className="space-y-2">
+        <Label>Who is signing up?</Label>
+        <Select
+          value={trialKind}
+          onValueChange={(v) => setTrialKind(v as 'solo' | 'org')}
+          disabled={pending}
+        >
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="solo">Just me — solo clinician</SelectItem>
+            <SelectItem value="org">Our practice — team of clinicians</SelectItem>
+          </SelectContent>
+        </Select>
+        <p className="text-[11px] text-muted-foreground">
+          {trialKind === 'solo'
+            ? '14-day trial with visit bank for one clinician.'
+            : '14-day team trial with multiple seats and a shared visit bank.'}
+        </p>
       </div>
       <div className="space-y-2">
         <Label htmlFor="email">Your email</Label>

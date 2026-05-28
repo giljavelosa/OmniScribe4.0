@@ -4,7 +4,7 @@
 
 ## Current Phase
 
-- **✅ Wave 7 Unit 51 complete (2026-05-27)** — visit-bank commercial model + legacy bridge (Group B). Groups C–D (org tiers, billing ops) remain follow-on.
+- **✅ Wave 7 Unit 51 complete (2026-05-27)** — visit-bank commercial model + legacy bridge (Group B) + org plans (Group C). Group D (billing ops) remains follow-on.
 - **⏸ Wave 7 Unit 41 superseded** by Unit 51 visit-bank model.
 - **▶ Wave 8 Unit 42 shipped 2026-05-21** out of polish-gate order — the cockpit page actively being built needed Miss Cleo mounted, and the agent-reliability fixes (parse-fence tolerance, iteration refund, `lookupPatientGoals`) were unblocking real clinician questions. Wave 8 Units 43–47 remain paused until the polish gate clears.
 - **🔧 Sprint 0 in progress — Login & session trust (P0).** MFA redirect loops are the first-reported production bug. Fixing the JWT cookie propagation race and hardening the D2 chain before Sprint A clinical work. **Spec:** [`context/specs/sprint-0-login-first.md`](specs/sprint-0-login-first.md).
@@ -16,6 +16,8 @@
 - Wave 7/8 specs remain indexed but **not in progress**.
 
 ## Completed
+
+- **2026-05-27 — Unit 51 Group C — Org plans & subscription lifecycle.** Team visit-bank checkout (`org_monthly_tier` with seat count × catalog enterprise template), collaborator seat add-on subscription, signup solo vs org trial selection, Stripe webhook handlers for capacity subscription updated/deleted, billing portal exposed for capacity subs on `/admin/billing`, owner commercial card “Apply catalog enterprise defaults”. Tests: `org-pricing`, extended `stripe-fulfillment`.
 
 - **2026-05-27 — Unit 51 Group B — Legacy billing bridge.** When `OrganizationCommercialContract.capacityEnforcementEnabled` is on, visit-bank is source of truth for home pill (`VisitCapacityPill`), `/account/usage` layout, invite seat caps (`canAddOrgMember`), and tier checkout syncs `Organization.billingPlan`. New `commercial-mode.ts` + tests. Admin billing demotes legacy per-seat card (collapsed, only when `stripeCustomerLinked`). Trial banner on usage routes admins to `/admin/billing`; clinicians see ask-admin copy. Owner `/owner/pricing-insights` adds visit-bank org table (bank balance, visits used 30d, commercial model). E2e account-usage updated.
 

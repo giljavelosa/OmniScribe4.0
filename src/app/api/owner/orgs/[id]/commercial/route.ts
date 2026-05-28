@@ -11,6 +11,7 @@ import { prisma } from '@/lib/prisma';
 import { requirePlatformOwner } from '@/lib/authz/platform';
 import { writeAuditLog, writePlatformAuditLog } from '@/lib/audit/log';
 import { ensureOrganizationCommercialContract } from '@/lib/billing/ensure-contract';
+import { ensureActiveCatalog, catalogToPayload } from '@/lib/billing/catalog-service';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -57,6 +58,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   }
 
   const contract = org.commercialContract ?? (await ensureOrganizationCommercialContract(id));
+  const catalog = await ensureActiveCatalog();
+  const template = catalogToPayload(catalog).enterpriseTemplateJson;
 
   return NextResponse.json({
     data: {
@@ -64,6 +67,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       orgName: org.name,
       visitBankBalance: org.visitBankBalance,
       contract,
+      catalogDefaults: {
+        seatPriceCents: template.defaultSeatPriceCents,
+        visitsPerSeatPerMonth: template.defaultVisitsPerSeatPerMonth,
+        committedSeats: template.defaultCommittedSeats,
+      },
     },
   });
 }

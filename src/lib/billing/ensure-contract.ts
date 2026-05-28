@@ -6,21 +6,30 @@ import { ensureActiveCatalog } from '@/lib/billing/catalog-service';
 
 const MS_PER_DAY = 86_400_000;
 
-export async function ensureOrganizationCommercialContract(orgId: string) {
+export type TrialKind = 'solo' | 'org';
+
+export async function ensureOrganizationCommercialContract(
+  orgId: string,
+  trialKind: TrialKind = 'solo',
+) {
   const existing = await prisma.organizationCommercialContract.findUnique({
     where: { orgId },
   });
   if (existing) return existing;
 
   const catalog = await ensureActiveCatalog();
-  const trialEndsAt = new Date(Date.now() + catalog.trialSoloDays * MS_PER_DAY);
+  const isOrg = trialKind === 'org';
+  const days = isOrg ? catalog.trialOrgDays : catalog.trialSoloDays;
+  const visits = isOrg ? catalog.trialOrgVisits : catalog.trialSoloVisits;
+  const seats = isOrg ? catalog.trialOrgSeats : 1;
+  const trialEndsAt = new Date(Date.now() + days * MS_PER_DAY);
 
   await prisma.organizationCommercialContract.create({
     data: {
       orgId,
       commercialModel: 'TRIAL',
       catalogVersionId: catalog.id,
-      committedSeats: 1,
+      committedSeats: seats,
       trialEndsAt,
       capacityEnforcementEnabled: true,
     },
@@ -28,10 +37,10 @@ export async function ensureOrganizationCommercialContract(orgId: string) {
 
   await creditOrgBank({
     orgId,
-    amount: catalog.trialSoloVisits,
+    amount: visits,
     sourceType: 'TRIAL_GRANT',
     idempotencyKey: `trial-grant:${orgId}`,
-    metadata: { trialSoloVisits: catalog.trialSoloVisits },
+    metadata: { trialKind, visits, seats, days },
   });
 
   return prisma.organizationCommercialContract.findUniqueOrThrow({ where: { orgId } });

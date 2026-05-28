@@ -22,6 +22,8 @@ const bodySchema = z.object({
   password: z.string().min(1).max(128),
   orgName: z.string().min(1).max(200),
   division: z.enum(Division),
+  /** Solo clinician vs multi-clinician org trial (Unit 51 Group C). */
+  trialKind: z.enum(['solo', 'org']).optional().default('solo'),
   /** Cloudflare Turnstile token; required when TURNSTILE_SECRET_KEY
    *  is set; ignored when unconfigured (dev). */
   captchaToken: z.string().optional(),
@@ -157,6 +159,7 @@ export async function POST(req: Request) {
     orgId: org.id,
     orgName: org.name,
     division: data.division,
+    trialKind: data.trialKind,
     ipHash,
     captchaUsed: captchaRequired,
   };
@@ -176,7 +179,7 @@ export async function POST(req: Request) {
     metadata: auditMeta,
   });
 
-  await ensureOrganizationCommercialContract(org.id);
+  await ensureOrganizationCommercialContract(org.id, data.trialKind);
 
   return NextResponse.json(
     { data: { ok: true, orgId: org.id, userId: user.id } },
