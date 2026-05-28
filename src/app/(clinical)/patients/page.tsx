@@ -16,8 +16,12 @@ export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Patients' };
 
 const PAGE_SIZE = 20;
+const ACTIVE_WINDOW_DAYS = 90;
+const ACTIVE_WINDOW_MS = ACTIVE_WINDOW_DAYS * 24 * 60 * 60 * 1000;
 
 const ADMIN_ROLES = ['ORG_ADMIN'] as const;
+
+type ActivityState = 'active' | 'dormant' | 'none';
 
 type SearchParamsShape = Promise<{
   query?: string;
@@ -75,13 +79,19 @@ export default async function PatientsPage({
       skip: (pageNum - 1) * PAGE_SIZE,
       take: PAGE_SIZE,
       include: {
-        encounters: { orderBy: { startedAt: 'desc' }, take: 1 },
-        // Sprint 0.4: surface site name + active-episode status on cards
         site: { select: { name: true } },
-        episodes: {
-          where: { status: { in: ['ACTIVE', 'RECERT_DUE'] } },
+        // Activity signal: most recent attested note (SIGNED or TRANSFERRED).
+        // The page derives Active vs Dormant by comparing signedAt to the
+        // 90-day window — we deliberately don't filter by date here so a
+        // single fetch covers both states.
+        notes: {
+          where: {
+            status: { in: ['SIGNED', 'TRANSFERRED'] },
+            signedAt: { not: null },
+          },
+          orderBy: { signedAt: 'desc' },
           take: 1,
-          select: { id: true },
+          select: { signedAt: true, signedByUserId: true },
         },
       },
     }),
@@ -97,6 +107,25 @@ export default async function PatientsPage({
       select: { id: true, name: true },
     }),
   ]);
+
+  // Resolve signer display names for the activity column. One round-trip;
+  // at most PAGE_SIZE unique signers (typically 1–5 per page in practice).
+  const signerIds = Array.from(
+    new Set(
+      patients
+        .flatMap((p) => p.notes.map((n) => n.signedByUserId))
+        .filter((id): id is string => Boolean(id)),
+    ),
+  );
+  const signerUsers = signerIds.length
+    ? await prisma.user.findMany({
+        where: { id: { in: signerIds } },
+        select: { id: true, name: true },
+      })
+    : [];
+  const signerNameById = new Map(signerUsers.map((u) => [u.id, u.name ?? 'Unknown']));
+
+  const activeThreshold = new Date(Date.now() - ACTIVE_WINDOW_MS);
 
   const defaultSiteId =
     siteScope.scope === 'enrolled' && siteScope.siteIds.length > 0
@@ -170,10 +199,7 @@ export default async function PatientsPage({
           ) : (
             patients.map((p) => {
               const age = ageInYears(p.dob);
-              const isActive = p.episodes.length > 0;
-              const lastVisit = p.encounters[0]?.startedAt
-                ? p.encounters[0].startedAt.toLocaleDateString()
-                : '—';
+              const activity = deriveActivity(p.notes[0] ?? null, activeThreshold, signerNameById);
               return (
                 <Link
                   key={p.id}
@@ -191,14 +217,20 @@ export default async function PatientsPage({
                       <p className="font-medium text-sm truncate">
                         {p.lastName}, {p.firstName}
                       </p>
-                      {isActive && (
+                      {activity.state === 'active' && (
                         <StatusBadge variant="success" noIcon className="text-[10px] shrink-0">
                           Active
                         </StatusBadge>
                       )}
+                      {activity.state === 'dormant' && (
+                        <StatusBadge variant="neutral" noIcon className="text-[10px] shrink-0">
+                          Dormant
+                        </StatusBadge>
+                      )}
                     </div>
                     <p className="text-xs text-muted-foreground truncate">
-                      {age}y {p.sex} · MRN {p.mrn ?? '—'} · Last visit {lastVisit}
+                      {age}y {p.sex} · MRN {p.mrn ?? '—'}
+                      {activity.state !== 'none' && ` · ${activity.line}`}
                     </p>
                   </div>
                   <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
@@ -224,7 +256,6 @@ export default async function PatientsPage({
                       <th className="text-left px-4 py-2 font-medium">Patient</th>
                       <th className="text-left px-4 py-2 font-medium">Age / Sex</th>
                       <th className="text-left px-4 py-2 font-medium">MRN</th>
-                      <th className="text-left px-4 py-2 font-medium">Last visit</th>
                       <th className="text-left px-4 py-2 font-medium">Site</th>
                       <th className="text-left px-4 py-2 font-medium">Status</th>
                     </tr>
@@ -232,10 +263,7 @@ export default async function PatientsPage({
                   <tbody>
                     {patients.map((p) => {
                       const age = ageInYears(p.dob);
-                      const isActive = p.episodes.length > 0;
-                      const lastVisit = p.encounters[0]?.startedAt
-                        ? p.encounters[0].startedAt.toLocaleDateString()
-                        : '—';
+                      const activity = deriveActivity(p.notes[0] ?? null, activeThreshold, signerNameById);
                       return (
                         <tr key={p.id} className="border-b border-border last:border-b-0 hover:bg-muted/20 transition-colors">
                           <td className="px-4 py-3">
@@ -248,13 +276,19 @@ export default async function PatientsPage({
                           </td>
                           <td className="px-4 py-3 text-muted-foreground">{age}y · {p.sex}</td>
                           <td className="px-4 py-3 font-mono text-muted-foreground">{p.mrn}</td>
-                          <td className="px-4 py-3 text-muted-foreground">{lastVisit}</td>
                           <td className="px-4 py-3 text-muted-foreground">{p.site?.name ?? '—'}</td>
                           <td className="px-4 py-3">
-                            {isActive ? (
-                              <StatusBadge variant="success" noIcon className="text-[10px]">Active</StatusBadge>
-                            ) : (
+                            {activity.state === 'none' ? (
                               <span className="text-xs text-muted-foreground">—</span>
+                            ) : (
+                              <div className="flex flex-col gap-1">
+                                {activity.state === 'active' ? (
+                                  <StatusBadge variant="success" noIcon className="text-[10px] w-fit">Active</StatusBadge>
+                                ) : (
+                                  <StatusBadge variant="neutral" noIcon className="text-[10px] w-fit">Dormant</StatusBadge>
+                                )}
+                                <span className="text-xs text-muted-foreground">{activity.line}</span>
+                              </div>
                             )}
                           </td>
                         </tr>
@@ -320,6 +354,26 @@ function ageInYears(dob: Date): number {
   const monthDiff = now.getMonth() - dob.getMonth();
   if (monthDiff < 0 || (monthDiff === 0 && now.getDate() < dob.getDate())) age--;
   return age;
+}
+
+type ActivityCell =
+  | { state: 'none' }
+  | { state: 'active' | 'dormant'; line: string };
+
+function deriveActivity(
+  lastSignedNote: { signedAt: Date | null; signedByUserId: string | null } | null,
+  activeThreshold: Date,
+  signerNameById: Map<string, string>,
+): ActivityCell {
+  if (!lastSignedNote?.signedAt) return { state: 'none' };
+  const state: 'active' | 'dormant' =
+    lastSignedNote.signedAt >= activeThreshold ? 'active' : 'dormant';
+  const signerName = lastSignedNote.signedByUserId
+    ? signerNameById.get(lastSignedNote.signedByUserId) ?? 'Unknown'
+    : 'Unknown';
+  const verb = state === 'active' ? 'Seen' : 'Last seen';
+  const dateLabel = lastSignedNote.signedAt.toLocaleDateString();
+  return { state, line: `${verb} ${dateLabel} by ${signerName}` };
 }
 
 function pageHref(args: {
