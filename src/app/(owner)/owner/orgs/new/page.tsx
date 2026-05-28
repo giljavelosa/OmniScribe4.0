@@ -7,7 +7,8 @@ export const metadata: Metadata = { title: 'New organization' };
 
 export default function NewOrgPage() {
   return (
-    <div className="mx-auto max-w-2xl">
+    <div className="flex flex-col flex-1 min-h-0 overflow-y-auto">
+      <div className="mx-auto max-w-2xl pb-6">
       <Card>
         <CardHeader>
           <CardTitle>New organization</CardTitle>
@@ -19,6 +20,7 @@ export default function NewOrgPage() {
           <NewOrgForm />
         </CardContent>
       </Card>
+      </div>
     </div>
   );
 }

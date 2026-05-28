@@ -13,9 +13,11 @@ export default async function OwnerAnnouncementsPage() {
   });
 
   return (
-    <div className="space-y-4">
+    <div className="flex flex-col flex-1 min-h-0 overflow-y-auto">
+      <div className="space-y-4 pb-6">
       <h1 className="text-2lg font-semibold">Announcements</h1>
       <AnnouncementsClient orgs={orgs} />
+      </div>
     </div>
   );
 }

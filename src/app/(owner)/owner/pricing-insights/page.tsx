@@ -209,7 +209,8 @@ export default async function OwnerPricingInsightsPage() {
   const totalBankBalance = visitBankOrgs.reduce((sum, row) => sum + row.visitBankBalance, 0);
 
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col flex-1 min-h-0 overflow-y-auto">
+      <div className="space-y-6 pb-6">
       <header className="space-y-1">
         <h1 className="text-2lg font-semibold">Pricing insights</h1>
         <p className="text-sm text-muted-foreground">
@@ -404,6 +405,7 @@ export default async function OwnerPricingInsightsPage() {
           </CardDescription>
         </CardHeader>
       </Card>
+      </div>
     </div>
   );
 }

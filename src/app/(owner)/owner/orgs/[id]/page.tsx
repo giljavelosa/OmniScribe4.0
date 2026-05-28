@@ -43,7 +43,8 @@ export default async function OwnerOrgPage({ params }: { params: Promise<{ id: s
   }));
 
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col flex-1 min-h-0 overflow-y-auto">
+      <div className="space-y-6 pb-6">
       <div className="space-y-1">
         <h1 className="text-2lg font-semibold">{org.name}</h1>
         <div className="flex items-center gap-2 text-sm text-muted-foreground flex-wrap">
@@ -162,6 +163,7 @@ export default async function OwnerOrgPage({ params }: { params: Promise<{ id: s
       <PeopleCard orgId={org.id} />
 
       <OwnerSeatsCard orgId={org.id} />
+      </div>
     </div>
   );
 }
