@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireFeatureAccess } from '@/lib/authz/server';
 import { assertOrgScoped } from '@/lib/phi-access';
+import { findConversationByTuple } from '@/services/copilot/conversation-store';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -41,15 +42,11 @@ export async function GET(req: Request) {
     );
   }
 
-  const conversation = await prisma.copilotConversation.findUnique({
-    where: {
-      orgId_patientId_clinicianOrgUserId_mode: {
-        orgId: authorizationUser.orgId,
-        patientId: (mode === 'CHART' ? patientId! : null) as string,
-        clinicianOrgUserId: authorizationUser.orgUserId,
-        mode,
-      },
-    },
+  const conversation = await findConversationByTuple({
+    orgId: authorizationUser.orgId,
+    patientId: mode === 'CHART' ? patientId! : null,
+    clinicianOrgUserId: authorizationUser.orgUserId,
+    mode,
   });
 
   if (!conversation) {

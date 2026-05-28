@@ -31,6 +31,47 @@ export type LoadResult = {
   wasCreated: boolean;
 };
 
+export type ConversationTuple = {
+  orgId: string;
+  patientId: string | null;
+  clinicianOrgUserId: string;
+  mode: ConversationMode;
+};
+
+/**
+ * Look up a conversation by its (org × patient × clinician × mode) tuple.
+ * Prisma's findUnique rejects null patientId in compound keys (RESEARCH
+ * mode), so we use findFirst with an explicit null filter instead.
+ */
+export async function findConversationByTuple(
+  tuple: ConversationTuple,
+): Promise<CopilotConversation | null> {
+  const { orgId, patientId, clinicianOrgUserId, mode } = tuple;
+  const prismaMode = mode as CopilotConversationMode;
+
+  if (patientId === null) {
+    return prisma.copilotConversation.findFirst({
+      where: {
+        orgId,
+        patientId: null,
+        clinicianOrgUserId,
+        mode: prismaMode,
+      },
+    });
+  }
+
+  return prisma.copilotConversation.findUnique({
+    where: {
+      orgId_patientId_clinicianOrgUserId_mode: {
+        orgId,
+        patientId,
+        clinicianOrgUserId,
+        mode: prismaMode,
+      },
+    },
+  });
+}
+
 /**
  * Load (or lazily create) the conversation for a tuple. Both chart and
  * research modes flow through here — research callers pass patientId=null.
@@ -50,18 +91,14 @@ export async function loadOrCreateConversation(args: {
   const historyTurns = args.historyTurns ?? CONVERSATION_HISTORY_TURNS;
 
   // Prisma's upsert doesn't accept compound keys with nullable fields cleanly
-  // (patientId is nullable for research mode). Use findUnique on the compound
-  // key first, fall back to create. Race-safe via the unique index — a
-  // duplicate-key error falls through to a fresh read.
-  let conversation = await prisma.copilotConversation.findUnique({
-    where: {
-      orgId_patientId_clinicianOrgUserId_mode: {
-        orgId,
-        patientId: patientId as string, // Prisma compound-unique type quirk
-        clinicianOrgUserId,
-        mode: mode as CopilotConversationMode,
-      },
-    },
+  // (patientId is nullable for research mode). Use findConversationByTuple,
+  // fall back to create. Race-safe via the unique index — a duplicate-key
+  // error falls through to a fresh read.
+  let conversation = await findConversationByTuple({
+    orgId,
+    patientId,
+    clinicianOrgUserId,
+    mode,
   });
 
   let wasCreated = false;
@@ -80,15 +117,11 @@ export async function loadOrCreateConversation(args: {
     } catch (err) {
       // Race: a sibling request created the row between our find + create.
       // Re-read; we should now find it.
-      conversation = await prisma.copilotConversation.findUnique({
-        where: {
-          orgId_patientId_clinicianOrgUserId_mode: {
-            orgId,
-            patientId: patientId as string,
-            clinicianOrgUserId,
-            mode: mode as CopilotConversationMode,
-          },
-        },
+      conversation = await findConversationByTuple({
+        orgId,
+        patientId,
+        clinicianOrgUserId,
+        mode,
       });
       if (!conversation) throw err;
     }
