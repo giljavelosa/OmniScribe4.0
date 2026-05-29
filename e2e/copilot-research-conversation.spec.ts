@@ -74,7 +74,9 @@ test.describe('copilot — research-mode conversation', () => {
     expect(postRes.status()).toBe(200);
 
     await expect(page.getByText(/research failed/i)).toHaveCount(0);
-    await expect(page.getByText(question)).toBeVisible();
+    // RESEARCH conversations persist across runs (the seed doesn't clear them),
+    // so this question can appear more than once — assert the just-posted bubble.
+    await expect(page.getByText(question).last()).toBeVisible();
     await expect(page.getByText(/searching the literature/i)).toHaveCount(0, {
       timeout: 45_000,
     });
