@@ -103,10 +103,14 @@ export function VisitViewerClient({
   const patientHandout = artifacts.find((a) => a.kind === 'PATIENT_INSTRUCTIONS');
   const referralLetter = artifacts.find((a) => a.kind === 'REFERRAL_LETTER');
 
+  // Desktop (lg+): pin the page to the viewport minus the clinical nav header
+  // (4rem — see (clinical)/layout.tsx) so a long note scrolls inside its card
+  // instead of growing the whole page. Mobile keeps natural document scroll
+  // (the fixed bottom nav owns that space there).
   return (
-    <div className="mx-auto max-w-4xl px-4 py-6 space-y-4">
+    <div className="mx-auto max-w-4xl w-full px-4 py-6 flex flex-col gap-4 lg:h-[calc(100dvh-4rem)] lg:overflow-hidden">
       {/* Back link */}
-      <div className="flex items-center justify-between gap-3 flex-wrap">
+      <div className="shrink-0 flex items-center justify-between gap-3 flex-wrap">
         <Link
           href={`/patients/${patient.id}`}
           className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
@@ -124,7 +128,7 @@ export function VisitViewerClient({
       </div>
 
       {/* Visit header card */}
-      <Card>
+      <Card className="shrink-0">
         <CardContent className="flex items-start gap-3 pt-6">
           <UserAvatar firstName={patient.firstName} lastName={patient.lastName} size="lg" className="shrink-0" />
           <div className="min-w-0 flex-1">
@@ -167,8 +171,8 @@ export function VisitViewerClient({
       </Card>
 
       {/* Tabs */}
-      <Tabs defaultValue="note" className="space-y-3">
-        <TabsList className="grid grid-cols-4 w-full max-w-md">
+      <Tabs defaultValue="note" className="gap-3 lg:flex-1 lg:min-h-0">
+        <TabsList className="grid grid-cols-4 w-full max-w-md shrink-0">
           <TabsTrigger value="note" className="gap-1.5">
             <FileText className="h-3.5 w-3.5" aria-hidden />
             <span className="hidden sm:inline">Note</span>
@@ -187,7 +191,7 @@ export function VisitViewerClient({
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="note">
+        <TabsContent value="note" className="lg:min-h-0 lg:overflow-hidden">
           <NoteTab
             sections={sections}
             finalContent={finalContent}
@@ -198,18 +202,18 @@ export function VisitViewerClient({
           />
         </TabsContent>
 
-        <TabsContent value="handout">
+        <TabsContent value="handout" className="lg:min-h-0 lg:overflow-y-auto">
           <HandoutTab
             patientHandout={patientHandout}
             referralLetter={referralLetter}
           />
         </TabsContent>
 
-        <TabsContent value="transcript">
+        <TabsContent value="transcript" className="lg:min-h-0 lg:overflow-y-auto">
           <TranscriptTab noteId={noteId} />
         </TabsContent>
 
-        <TabsContent value="recording">
+        <TabsContent value="recording" className="lg:min-h-0 lg:overflow-y-auto">
           <RecordingTab noteId={noteId} />
         </TabsContent>
       </Tabs>
@@ -243,8 +247,8 @@ function NoteTab({
   }
 
   return (
-    <Card>
-      <CardContent className="pt-6 space-y-5">
+    <Card className="lg:h-full lg:flex lg:flex-col lg:overflow-hidden">
+      <CardContent className="pt-6 space-y-5 lg:flex-1 lg:min-h-0 lg:overflow-y-auto">
         {sections.map((s) => {
           const content = finalContent[s.id] ?? '';
           return (
