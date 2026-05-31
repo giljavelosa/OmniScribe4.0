@@ -144,7 +144,15 @@ export async function seedCascadiaOrganization(
   };
 
   const users: CascadiaUser[] = [
-    { email: 'admin@cascadia.local', name: 'Cascadia Admin', role: OrgRole.ORG_ADMIN, division: Division.MULTI },
+    // ORG_ADMIN is recording-capable → concrete division + profession (the org
+    // itself stays MULTI; that's the legitimate multi-discipline aggregate).
+    {
+      email: 'admin@cascadia.local',
+      name: 'Cascadia Admin',
+      role: OrgRole.ORG_ADMIN,
+      division: Division.MEDICAL,
+      professionType: Profession.MD,
+    },
     {
       email: 'md.harper@cascadia.local',
       name: 'Dr. Evelyn Harper',

@@ -428,7 +428,14 @@ async function main() {
     canManagePatients?: boolean;
     platformRole?: PlatformRole;
   }> = [
-    { email: 'admin@demo.local', role: OrgRole.ORG_ADMIN, division: Division.MULTI },
+    // ORG_ADMIN is recording-capable → needs a concrete division + profession
+    // (MULTI is org-aggregate only; the org itself stays MULTI above).
+    {
+      email: 'admin@demo.local',
+      role: OrgRole.ORG_ADMIN,
+      division: Division.MEDICAL,
+      professionType: Profession.MD,
+    },
     {
       email: 'clinician@demo.local',
       role: OrgRole.CLINICIAN,
@@ -442,11 +449,13 @@ async function main() {
       email: 'siteadmin@demo.local',
       role: OrgRole.SITE_ADMIN,
       division: Division.MEDICAL,
+      professionType: Profession.MD,
     },
     {
       email: 'owner@demo.local',
       role: OrgRole.CLINICIAN, // org-membership role; platform-owner-ness lives on User.platformRole
       division: Division.MEDICAL,
+      professionType: Profession.MD,
       platformRole: PlatformRole.PLATFORM_OWNER,
     },
   ];
@@ -588,12 +597,18 @@ async function main() {
   });
   await prisma.orgUser.upsert({
     where: { userId_orgId: { userId: deactivateUser.id, orgId: org.id } },
-    update: { isActive: true, seatId: deactivateSeat.id, role: OrgRole.CLINICIAN },
+    update: {
+      isActive: true,
+      seatId: deactivateSeat.id,
+      role: OrgRole.CLINICIAN,
+      professionType: Profession.MD,
+    },
     create: {
       userId: deactivateUser.id,
       orgId: org.id,
       role: OrgRole.CLINICIAN,
       division: Division.MEDICAL,
+      professionType: Profession.MD,
       preferredNoteStyle: NoteStyle.HYBRID,
       isActive: true,
       seatId: deactivateSeat.id,
@@ -640,12 +655,13 @@ async function main() {
   });
   const deletedOrgMembership = await prisma.orgUser.upsert({
     where: { userId_orgId: { userId: deletedOrgMember.id, orgId: deletedOrg.id } },
-    update: { isActive: false, seatId: null },
+    update: { isActive: false, seatId: null, professionType: Profession.PT },
     create: {
       userId: deletedOrgMember.id,
       orgId: deletedOrg.id,
       role: OrgRole.CLINICIAN,
       division: Division.REHAB,
+      professionType: Profession.PT,
       preferredNoteStyle: NoteStyle.HYBRID,
       isActive: false,
     },

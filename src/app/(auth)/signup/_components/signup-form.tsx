@@ -14,15 +14,21 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { StatusBanner } from '@/components/ui/status-banner';
+import { Division, Profession } from '@prisma/client';
+import {
+  CLINICIAN_PICKABLE_DIVISIONS,
+  PROFESSION_OPTIONS,
+  professionLabel,
+} from '@/lib/professions';
 
-const DIVISIONS = ['MEDICAL', 'REHAB', 'BEHAVIORAL_HEALTH', 'MULTI'] as const;
-type Division = (typeof DIVISIONS)[number];
-
+/** Concrete divisions only — MULTI is an org-aggregate value, never a
+ *  per-clinician scope. A multi-specialty practice broadens the org to MULTI
+ *  later via org-settings. */
 const DIVISION_LABEL: Record<Division, string> = {
-  MEDICAL: 'Medical',
-  REHAB: 'Rehab / PT / OT',
-  BEHAVIORAL_HEALTH: 'Behavioral health',
-  MULTI: 'Multi-specialty',
+  [Division.MEDICAL]: 'Medical',
+  [Division.REHAB]: 'Rehab / PT / OT',
+  [Division.BEHAVIORAL_HEALTH]: 'Behavioral health',
+  [Division.MULTI]: 'Multi-specialty', // never offered at signup; kept so the map is exhaustive
 };
 
 /**
@@ -45,7 +51,8 @@ export function SignupForm() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [orgName, setOrgName] = useState('');
-  const [division, setDivision] = useState<Division>('MEDICAL');
+  const [division, setDivision] = useState<Division | ''>('');
+  const [professionType, setProfessionType] = useState<Profession | ''>('');
   const [trialKind, setTrialKind] = useState<'solo' | 'org'>('solo');
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -76,6 +83,7 @@ export function SignupForm() {
           password,
           orgName,
           division,
+          professionType,
           trialKind,
           ...(captchaToken ? { captchaToken } : {}),
         }),
@@ -134,17 +142,40 @@ export function SignupForm() {
         />
       </div>
       <div className="space-y-2">
-        <Label>Division</Label>
+        <Label>Your profession</Label>
+        <Select
+          value={professionType}
+          onValueChange={(v) => setProfessionType(v as Profession)}
+          disabled={pending}
+        >
+          <SelectTrigger>
+            <SelectValue placeholder="Select your profession" />
+          </SelectTrigger>
+          <SelectContent>
+            {PROFESSION_OPTIONS.map((p) => (
+              <SelectItem key={p} value={p}>
+                {professionLabel(p)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <p className="text-[11px] text-muted-foreground">
+          Your profession determines the clinical division your notes are
+          documented under.
+        </p>
+      </div>
+      <div className="space-y-2">
+        <Label>Your division</Label>
         <Select
           value={division}
           onValueChange={(v) => setDivision(v as Division)}
           disabled={pending}
         >
           <SelectTrigger>
-            <SelectValue />
+            <SelectValue placeholder="Select your division" />
           </SelectTrigger>
           <SelectContent>
-            {DIVISIONS.map((d) => (
+            {CLINICIAN_PICKABLE_DIVISIONS.map((d) => (
               <SelectItem key={d} value={d}>
                 {DIVISION_LABEL[d]}
               </SelectItem>
@@ -219,7 +250,14 @@ export function SignupForm() {
 
       <Button
         type="submit"
-        disabled={pending || email.length === 0 || password.length === 0 || orgName.length === 0}
+        disabled={
+          pending ||
+          email.length === 0 ||
+          password.length === 0 ||
+          orgName.length === 0 ||
+          !division ||
+          !professionType
+        }
         className="w-full"
       >
         {pending ? 'Creating org…' : 'Create org + sign in'}

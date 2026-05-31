@@ -10,9 +10,11 @@
 export const SEED_PASSWORD = 'Demo1234!' as const;
 
 export const SEED_USERS = {
-  /** Org-wide admin — `division: MULTI`, no profession set. After the
-   *  Sprint 0.20 + admin profile-gate fix (commits 8d02880 / c3d5e85),
-   *  admin is exempt from `/onboarding/profile`. */
+  /** Org-wide admin — seeded CONCRETE (`division: MEDICAL`,
+   *  `professionType: MD`). ORG_ADMIN is recording-capable, so it must
+   *  carry a concrete profession + division; the profile-completion gate
+   *  bypasses VIEWER only, and admin now passes it by being complete (not
+   *  by a role bypass). The org itself stays MULTI. */
   admin: {
     email: 'admin@demo.local',
     password: SEED_PASSWORD,
@@ -35,7 +37,9 @@ export const SEED_USERS = {
     role: 'VIEWER' as const,
     homeRoute: '/home',
   },
-  /** Owner with platformRole=PLATFORM_OWNER. Has access to /owner/*. */
+  /** Owner with platformRole=PLATFORM_OWNER. Has access to /owner/*.
+   *  OrgRole CLINICIAN, seeded concrete (`division: MEDICAL`,
+   *  `professionType: MD`) so it can start a visit. */
   owner: {
     email: 'owner@demo.local',
     password: SEED_PASSWORD,

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { Division, OrgRole, ComplianceProfile, SeatTier, SubscriptionPlan } from '@prisma/client';
+import { Division, OrgRole, Profession, ComplianceProfile, SeatTier, SubscriptionPlan } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 
@@ -21,7 +21,24 @@ const bodySchema = z.object({
   email: z.email().transform((s) => s.toLowerCase()),
   password: z.string().min(1).max(128),
   orgName: z.string().min(1).max(200),
-  division: z.enum(Division),
+  /**
+   * The signing-up clinician's own scope of practice. MUST be concrete so a
+   * note's division can always be derived (resolveDivisionForNote). MULTI is
+   * rejected — it's an org-aggregate value, not a per-clinician scope. The org
+   * itself starts at this division and admins can broaden it to MULTI later via
+   * org-settings (multi-specialty practice).
+   */
+  division: z.nativeEnum(Division).refine((d) => d !== Division.MULTI, {
+    message: 'Pick a concrete division — MULTI is an org-aggregate value, not a clinician scope of practice.',
+  }),
+  /**
+   * Categorical profession of the signing-up clinician. Required + concrete:
+   * OTHER maps to no division (PROFESSION_TO_DIVISION) so it's refused here, same
+   * as the profile-completion gate (/api/me/complete-profile).
+   */
+  professionType: z.nativeEnum(Profession).refine((p) => p !== Profession.OTHER, {
+    message: 'Profession "Other" is not allowed — pick a concrete profession so your note division can be derived.',
+  }),
   /** Solo clinician vs multi-clinician org trial (Unit 51 Group C). */
   trialKind: z.enum(['solo', 'org']).optional().default('solo'),
   /** Cloudflare Turnstile token; required when TURNSTILE_SECRET_KEY
@@ -120,6 +137,10 @@ export async function POST(req: Request) {
       data: {
         name: data.orgName,
         division: data.division,
+        // Seed the org default to the founder's concrete division so any
+        // future MULTI clinician (or one mid-profile-completion) still has a
+        // resolvable note division as the final safety-net (resolveDivisionForNote).
+        defaultDivision: data.division,
         billingEmail: data.email,
         subscriptionPlan: SubscriptionPlan.STARTER,
         complianceProfile: ComplianceProfile.STANDARD,
@@ -137,6 +158,7 @@ export async function POST(req: Request) {
         userId: newUser.id,
         role: OrgRole.ORG_ADMIN,
         division: data.division,
+        professionType: data.professionType,
         isActive: true,
       },
     });
@@ -159,6 +181,7 @@ export async function POST(req: Request) {
     orgId: org.id,
     orgName: org.name,
     division: data.division,
+    professionType: data.professionType,
     trialKind: data.trialKind,
     ipHash,
     captchaUsed: captchaRequired,

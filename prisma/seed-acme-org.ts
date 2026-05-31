@@ -141,7 +141,15 @@ export async function seedAcmeOrganization(
   };
 
   const acmeUsers: AcmeUser[] = [
-    { email: 'admin@acme.local', name: 'Acme Admin', role: OrgRole.ORG_ADMIN, division: Division.MULTI },
+    // ORG_ADMIN is recording-capable → concrete division + profession (the org
+    // itself stays MULTI; that's the legitimate multi-discipline aggregate).
+    {
+      email: 'admin@acme.local',
+      name: 'Acme Admin',
+      role: OrgRole.ORG_ADMIN,
+      division: Division.MEDICAL,
+      professionType: Profession.MD,
+    },
     {
       email: 'clinician@acme.local',
       name: 'Dr. Olivia Reed',

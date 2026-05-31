@@ -50,6 +50,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
       update: {
         role: invite.role,
         division: invite.division,
+        professionType: invite.professionType,
         profession: invite.profession,
         canManagePatients: invite.canManagePatients,
         isActive: true,
@@ -59,6 +60,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
         orgId: invite.orgId,
         role: invite.role,
         division: invite.division,
+        professionType: invite.professionType,
         profession: invite.profession,
         canManagePatients: invite.canManagePatients,
         isActive: true,

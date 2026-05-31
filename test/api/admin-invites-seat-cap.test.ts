@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { OrgRole, Division, BillingPlan } from '@prisma/client';
+import { OrgRole, Division, BillingPlan, Profession } from '@prisma/client';
 
 // ---------------------------------------------------------------------------
 // POST /api/admin/invites — BillingPlan seat-cap enforcement.
@@ -62,6 +62,10 @@ const baseInvite = {
   email: 'newhire@demo.local',
   role: OrgRole.CLINICIAN,
   division: Division.MEDICAL,
+  // Recording roles (CLINICIAN/SITE_ADMIN) now require a concrete professionType —
+  // see the superRefine in /api/admin/invites. Without it the route 400s before
+  // the seat-cap gate this suite exercises.
+  professionType: Profession.MD,
 };
 
 beforeEach(() => {
