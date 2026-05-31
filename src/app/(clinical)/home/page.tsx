@@ -22,6 +22,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { UserAvatar } from '@/components/ui/user-avatar';
 import { SchedulingCard } from '@/components/clinical/scheduling-card';
+import { ResumeRecordingBanner } from '@/components/clinical/resume-recording-banner';
 import { TodayStatusTiles } from '@/components/home/today-status-tiles';
 import { AiCommandPanel } from '@/components/home/ai-command-panel';
 import { DraftUsagePill } from '@/components/billing/draft-usage-pill';
@@ -76,7 +77,7 @@ export default async function HomePage({
   const dayEnd = new Date(dayStart);
   dayEnd.setDate(dayEnd.getDate() + 1);
 
-  const [schedules, drafts, followups, org, documentReviews, verifiedDocumentCount] = await Promise.all([
+  const [schedules, drafts, followups, org, documentReviews, verifiedDocumentCount, inProgressRecordings] = await Promise.all([
     prisma.schedule.findMany({
       where: {
         orgId,
@@ -182,6 +183,25 @@ export default async function HomePage({
         mediaKind: 'DOCUMENT',
         status: 'READY',
         verifiedAt: { not: null },
+      },
+    }),
+    // In-flight capture sessions the clinician walked away from. A note sits
+    // at RECORDING/PAUSED until /capture is finished; surface them so a paused
+    // recording isn't stranded behind a raw URL.
+    prisma.note.findMany({
+      where: {
+        orgId,
+        clinicianOrgUserId,
+        patient: { isDeleted: false },
+        status: { in: ['RECORDING', 'PAUSED'] },
+      },
+      orderBy: { updatedAt: 'desc' },
+      take: 10,
+      select: {
+        id: true,
+        status: true,
+        updatedAt: true,
+        patient: { select: { id: true, firstName: true, lastName: true, mrn: true } },
       },
     }),
   ]);
@@ -315,6 +335,23 @@ export default async function HomePage({
       </div>
     </Link>
   ));
+
+  // Resume affordance for paused / walked-away-from recordings (shared
+  // across mobile + desktop). Rendered above patient search so it's the
+  // first thing a clinician sees on return.
+  const resumeBanner =
+    inProgressRecordings.length > 0 ? (
+      <ResumeRecordingBanner
+        recordings={inProgressRecordings.map((r) => ({
+          noteId: r.id,
+          status: r.status as 'RECORDING' | 'PAUSED',
+          patientId: r.patient.id,
+          patientName: `${r.patient.lastName}, ${r.patient.firstName}`,
+          mrn: r.patient.mrn,
+          updatedAtIso: r.updatedAt.toISOString(),
+        }))}
+      />
+    ) : null;
 
   const renderClinicalDataQualityCard = (id: string) => (
     <Card id={id}>
@@ -452,6 +489,11 @@ export default async function HomePage({
               )
             )}
           </div>
+        )}
+
+        {/* 0.75 Unfinished recording — highest-priority return affordance */}
+        {resumeBanner && (
+          <section className="px-4 pt-3 bg-card">{resumeBanner}</section>
         )}
 
         {/* 1. Patient search — ABOVE FOLD */}
@@ -660,6 +702,9 @@ export default async function HomePage({
               urgent={capacitySummary.trialExpiry.urgent}
             />
           )}
+
+          {/* Unfinished recording — highest-priority return affordance */}
+          {resumeBanner}
 
           {/* Patient search */}
           <HomeSearchForm />

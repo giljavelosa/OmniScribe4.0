@@ -15,6 +15,10 @@ import { UserAvatar } from '@/components/ui/user-avatar';
 import { cn } from '@/lib/cn';
 import { VisitHistoryList } from '@/components/patients/visit-history-list';
 import { AwaitingRoutingBanner } from './awaiting-routing-banner';
+import {
+  ResumeRecordingBanner,
+  type ResumableRecording,
+} from '@/components/clinical/resume-recording-banner';
 import { InlineDemographics } from '@/components/patients/inline-demographics';
 import type { VisitHistoryRow } from '@/components/patients/visit-history-list';
 import type { PatientSnapshotStrip as PatientSnapshotStripData } from '@/lib/snapshots/types';
@@ -110,6 +114,8 @@ type Props = {
   verifiedVitals: VerifiedVitalFact[];
   verifiedProcedures: VerifiedProcedureFact[];
   visits: VisitHistoryRow[];
+  /** Viewer's in-flight (RECORDING/PAUSED) captures for this patient. */
+  inProgressRecordings: ResumableRecording[];
   followUps: FollowUpSummary[];
   activeCasesForPicker: StartVisitDialogCase[];
   viewingProfession: Profession | null;
@@ -230,6 +236,7 @@ export function PatientChartTabs({
   verifiedVitals,
   verifiedProcedures,
   visits,
+  inProgressRecordings,
   followUps,
   activeCasesForPicker,
   viewingProfession,
@@ -441,6 +448,14 @@ export function PatientChartTabs({
 
         {/* ── Tab content ─────────────────────────────────────────────────── */}
         <div className="mx-auto max-w-6xl px-4 py-5">
+          {/* Resume affordance for this patient's paused / in-flight capture —
+              above the tabs so it's visible regardless of the active tab. */}
+          <ResumeRecordingBanner
+            recordings={inProgressRecordings}
+            showPatientName={false}
+            className="mb-6"
+          />
+
           {episodeCreatedFlash && (
             <StatusBanner variant="success" className="mb-6">
               Episode created — start visit again to link to it.
