@@ -42,7 +42,13 @@ const ROLE_VARIANT: Record<OrgRole, StatusBadgeProps['variant']> = {
 
 export async function PeopleCard({ orgId }: { orgId: string }) {
   const people = await prisma.orgUser.findMany({
-    where: { orgId },
+    // Exclude soft-deleted users — their memberships are tombstones
+    // (email anonymized to `deleted-*@deleted.local`, seat released) that
+    // live only in the owner's Deleted-data view, not the active roster.
+    // The Status column distinguishes Active vs. Deactivated members; a
+    // deleted user is neither. Mirrors the owner users list + orgs page,
+    // which both filter `isDeleted: false`.
+    where: { orgId, user: { isDeleted: false } },
     include: {
       user: { select: { email: true } },
       seat: { select: { tier: true, expiresAt: true } },

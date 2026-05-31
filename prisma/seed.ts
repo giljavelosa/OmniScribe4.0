@@ -482,7 +482,14 @@ async function main() {
     // Seat (tier TEAM, 1y expiry)
     const seat = await prisma.seat.upsert({
       where: { id: `seed-seat-${u.email}` },
-      update: {},
+      // Reactivate + extend on reseed. A Stripe downgrade/reconcile flips
+      // unassigned active seats to isActive:false; the seat gate (lib/authz/seat)
+      // then refuses every visit ("needs an assigned seat"). Restore the
+      // canonical usable seat so the demo corpus can always record.
+      update: {
+        isActive: true,
+        expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+      },
       create: {
         id: `seed-seat-${u.email}`,
         orgId: org.id,
@@ -502,6 +509,11 @@ async function main() {
         canManagePatients: u.canManagePatients ?? false,
         preferredNoteStyle: NoteStyle.HYBRID,
         isActive: true,
+        // Restore the dedicated seat on reseed. Seats get nulled by drift
+        // (seat transfers / deactivations during billing + deleted-data
+        // testing); without this, a reseeded clinician can't start a visit
+        // ("needs an assigned seat"), breaking start-visit + late-entry e2e.
+        seatId: seat.id,
       },
       create: {
         userId: user.id,
@@ -825,6 +837,13 @@ async function main() {
       update: {
         phone: demo?.phone,
         email: demo?.email,
+        // Reseed restores the 3 core demo patients to ACTIVE. The dev DB is
+        // long-lived (db seed upserts, never drops), so a delete/recovery test
+        // that soft-deletes James Park would otherwise leave him deleted across
+        // every future reseed — silently breaking the e2e corpus that asserts
+        // against him by name. Dedicated deleted-* tombstones have their own ids.
+        isDeleted: false,
+        deletedAt: null,
       },
       create: {
         id: p.id,
@@ -1139,7 +1158,11 @@ async function main() {
     });
     const seat = await prisma.seat.upsert({
       where: { id: `seed-seat-${c.email}` },
-      update: {},
+      // Reactivate + extend on reseed (see main-loop seat upsert above).
+      update: {
+        isActive: true,
+        expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+      },
       create: {
         id: `seed-seat-${c.email}`,
         orgId: org.id,
@@ -1154,6 +1177,10 @@ async function main() {
         profession: c.profession,
         professionType: c.professionType,
         canManagePatients: true,
+        // Mirror the main-loop fix: restore active + seated on reseed so the
+        // extra clinician corpus self-heals after drift.
+        isActive: true,
+        seatId: seat.id,
       },
       create: {
         userId: u.id,
