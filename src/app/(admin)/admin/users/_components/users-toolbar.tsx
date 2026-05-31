@@ -17,6 +17,13 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { StatusBanner } from '@/components/ui/status-banner';
+import { Division, Profession } from '@prisma/client';
+import {
+  CLINICIAN_PICKABLE_DIVISIONS,
+  PROFESSION_OPTIONS,
+  professionLabel,
+  divisionForProfession,
+} from '@/lib/professions';
 
 /** Roles an org admin can invite. ORG_ADMIN
  *  are NOT invitable — those elevations happen only at org-provisioning
@@ -27,19 +34,43 @@ const ROLE_LABELS: Record<(typeof ROLES)[number], string> = {
   VIEWER: 'Non-clinician (read-only)',
   SITE_ADMIN: 'Site admin',
 };
-const DIVISIONS = ['MEDICAL', 'REHAB', 'BEHAVIORAL_HEALTH', 'MULTI'] as const;
+
+/** Roles that can start a visit → the invite MUST carry a concrete profession +
+ *  division (mirrors the server superRefine in /api/admin/invites). VIEWER is
+ *  read-only and exempt from the profession requirement. */
+const RECORDING_ROLES: ReadonlySet<(typeof ROLES)[number]> = new Set([
+  'CLINICIAN',
+  'SITE_ADMIN',
+]);
+
+/** Concrete divisions only — MULTI is an org-aggregate value, never a
+ *  per-clinician scope. */
+const DIVISION_LABEL: Record<Division, string> = {
+  [Division.MEDICAL]: 'Medical',
+  [Division.REHAB]: 'Rehab / PT / OT',
+  [Division.BEHAVIORAL_HEALTH]: 'Behavioral health',
+  [Division.MULTI]: 'Multi-specialty', // never offered here; kept so the map is exhaustive
+};
 
 export function UsersToolbar() {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<(typeof ROLES)[number]>('CLINICIAN');
-  const [division, setDivision] = useState<(typeof DIVISIONS)[number]>('MEDICAL');
+  const [division, setDivision] = useState<Division | ''>('');
+  const [professionType, setProfessionType] = useState<Profession | ''>('');
   const [profession, setProfession] = useState('');
   const [canManagePatients, setCanManagePatients] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [link, setLink] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+
+  const isRecordingRole = RECORDING_ROLES.has(role);
+  // For recording roles the division is DERIVED from the profession (1:1 map) and
+  // shown read-only — an admin can't file a PT under MEDICAL. VIEWER has no
+  // profession and keeps the free division picker.
+  const derivedDivision =
+    isRecordingRole && professionType ? divisionForProfession(professionType) : null;
 
   function submit() {
     setError(null);
@@ -50,14 +81,25 @@ export function UsersToolbar() {
         body: JSON.stringify({
           email,
           role,
-          division,
+          division: isRecordingRole ? derivedDivision : division,
+          professionType: isRecordingRole ? professionType : undefined,
           profession: profession || undefined,
           canManagePatients,
         }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => null);
-        setError(body?.error?.code === 'already_member' ? 'That email already belongs to a member of this org.' : 'Failed to create invite.');
+        if (body?.error?.code === 'already_member') {
+          setError('That email already belongs to a member of this org.');
+        } else {
+          const fieldErrors = body?.error?.issues?.fieldErrors as
+            | Record<string, string[] | undefined>
+            | undefined;
+          const firstFieldMsg = fieldErrors
+            ? Object.values(fieldErrors).find((m) => m && m.length)?.[0]
+            : undefined;
+          setError(firstFieldMsg ?? body?.error?.message ?? 'Failed to create invite.');
+        }
         return;
       }
       const body = await res.json();
@@ -98,6 +140,8 @@ export function UsersToolbar() {
               onClick={() => {
                 setLink(null);
                 setEmail('');
+                setProfessionType('');
+                setDivision('');
                 setProfession('');
                 setCanManagePatients(false);
                 setOpen(false);
@@ -122,18 +166,52 @@ export function UsersToolbar() {
                 </SelectContent>
               </Select>
             </div>
+            {isRecordingRole && (
+              <div className="space-y-2">
+                <Label>Profession</Label>
+                <Select value={professionType} onValueChange={(v) => setProfessionType(v as Profession)} disabled={pending}>
+                  <SelectTrigger><SelectValue placeholder="Select a profession" /></SelectTrigger>
+                  <SelectContent>
+                    {PROFESSION_OPTIONS.map((p) => (
+                      <SelectItem key={p} value={p}>{professionLabel(p)}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Determines the clinical division their notes are documented under.
+                </p>
+              </div>
+            )}
             <div className="space-y-2">
               <Label>Division</Label>
-              <Select value={division} onValueChange={(v) => setDivision(v as (typeof DIVISIONS)[number])} disabled={pending}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {DIVISIONS.map((d) => <SelectItem key={d} value={d}>{d}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              {isRecordingRole ? (
+                <>
+                  <div className="flex h-9 items-center rounded-md border border-input bg-muted px-3 text-sm">
+                    {derivedDivision ? (
+                      <span>{DIVISION_LABEL[derivedDivision]}</span>
+                    ) : (
+                      <span className="text-muted-foreground">Select a profession first</span>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Derived from the profession — recording clinicians are documented
+                    under their profession&apos;s division.
+                  </p>
+                </>
+              ) : (
+                <Select value={division} onValueChange={(v) => setDivision(v as Division)} disabled={pending}>
+                  <SelectTrigger><SelectValue placeholder="Select a division" /></SelectTrigger>
+                  <SelectContent>
+                    {CLINICIAN_PICKABLE_DIVISIONS.map((d) => (
+                      <SelectItem key={d} value={d}>{DIVISION_LABEL[d]}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
             </div>
             <div className="space-y-2">
-              <Label htmlFor="iprofession">Profession (optional)</Label>
-              <Input id="iprofession" value={profession} onChange={(e) => setProfession(e.target.value)} disabled={pending} placeholder="e.g. Family Medicine MD" />
+              <Label htmlFor="iprofession">Specialty (optional)</Label>
+              <Input id="iprofession" value={profession} onChange={(e) => setProfession(e.target.value)} disabled={pending} placeholder="e.g. Family Medicine, Outpatient Ortho" />
             </div>
             <div className="flex items-center justify-between rounded-lg border border-border p-3">
               <div>
@@ -144,7 +222,15 @@ export function UsersToolbar() {
             </div>
             {error && <StatusBanner variant="danger">{error}</StatusBanner>}
             <SheetFooter>
-              <Button onClick={submit} disabled={pending || !email} className="w-full">
+              <Button
+                onClick={submit}
+                disabled={
+                  pending ||
+                  !email ||
+                  (isRecordingRole ? !professionType : !division)
+                }
+                className="w-full"
+              >
                 {pending ? 'Sending invite…' : 'Send invite'}
               </Button>
             </SheetFooter>

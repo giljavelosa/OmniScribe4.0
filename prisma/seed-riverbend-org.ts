@@ -143,7 +143,15 @@ export async function seedRiverbendOrganization(
   };
 
   const users: RiverbendUser[] = [
-    { email: 'admin@riverbend.local', name: 'Riverbend Admin', role: OrgRole.ORG_ADMIN, division: Division.MULTI },
+    // ORG_ADMIN is recording-capable → concrete division + profession (the org
+    // itself stays MULTI; that's the legitimate multi-discipline aggregate).
+    {
+      email: 'admin@riverbend.local',
+      name: 'Riverbend Admin',
+      role: OrgRole.ORG_ADMIN,
+      division: Division.MEDICAL,
+      professionType: Profession.MD,
+    },
     {
       email: 'do.boucher@riverbend.local',
       name: 'Dr. Camille Boucher',

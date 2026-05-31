@@ -24,7 +24,7 @@ import { PatientChartTabs } from './_components/patient-chart-tabs';
 import type { FollowUpSummary } from './_components/follow-ups-sheet';
 import type { CasePanelData } from './_components/cases-panel';
 import type { CleoReadCardData } from './_components/cleo-read-card';
-import type { Division, Prisma } from '@prisma/client';
+import type { Division, NoteStatus, Prisma } from '@prisma/client';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Patient' };
@@ -50,6 +50,7 @@ export default async function PatientDetailPage({
   const viewerDivisionForFilter = divisionForProfession(
     session.user.professionType ?? null,
   );
+  const viewerOrgUserId = session.user.orgUserId ?? null;
 
   const patient = await prisma.patient.findFirst({
     where: { id, orgId: session.user.orgId, isDeleted: false },
@@ -106,7 +107,7 @@ export default async function PatientDetailPage({
   // so the first paint has real content. Cross-division stratification:
   // fetch up to 50 most-recent signed visits including clinician identity
   // and episode-of-care (powers the by-episode / by-clinician views).
-  const [snapshotStrip, recentVisits, externalContexts, openFollowUps] = await Promise.all([
+  const [snapshotStrip, recentVisits, externalContexts, openFollowUps, inProgressRecordings] = await Promise.all([
     buildSnapshotStrip({ orgId: session.user.orgId, patientId: patient.id }),
     prisma.note.findMany({
       where: {
@@ -197,6 +198,26 @@ export default async function PatientDetailPage({
         originNote: { select: { signedAt: true } },
       },
     }),
+    // This patient's in-flight capture sessions for the viewer — a paused or
+    // walked-away-from recording the clinician can resume from the chart.
+    // Scoped to the viewer so we never offer to resume another clinician's
+    // live mic session. Empty when the viewer has no org-user identity.
+    viewerOrgUserId
+      ? prisma.note.findMany({
+          where: {
+            patientId: patient.id,
+            orgId: session.user.orgId,
+            clinicianOrgUserId: viewerOrgUserId,
+            status: { in: ['RECORDING', 'PAUSED'] },
+            deletedAt: null,
+          },
+          orderBy: { updatedAt: 'desc' },
+          take: 5,
+          select: { id: true, status: true, updatedAt: true },
+        })
+      : Promise.resolve(
+          [] as { id: string; status: NoteStatus; updatedAt: Date }[],
+        ),
   ]);
 
   // Resolve clinician identities in one extra query (small N — bounded by
@@ -310,7 +331,6 @@ export default async function PatientDetailPage({
   // anchor (mirrors VisitHistoryList). Simple single query → roll up
   // in-memory (max 10s of episodes per patient — no real cost).
   const orgId = session.user.orgId;
-  const viewerOrgUserId = session.user.orgUserId ?? null;
   const viewerDivision = divisionForProfession(session.user.professionType ?? null);
 
   const activeCasesRaw = patient.caseManagements.filter((c) => c.status === 'ACTIVE');
@@ -600,6 +620,14 @@ export default async function PatientDetailPage({
         verifiedVitals={verifiedVitals}
         verifiedProcedures={verifiedProcedures}
         visits={visits}
+        inProgressRecordings={inProgressRecordings.map((r) => ({
+          noteId: r.id,
+          status: r.status as 'RECORDING' | 'PAUSED',
+          patientId: patient.id,
+          patientName: `${patient.lastName}, ${patient.firstName}`,
+          mrn: patient.mrn,
+          updatedAtIso: r.updatedAt.toISOString(),
+        }))}
         followUps={followUpItems}
         activeCasesForPicker={activeCasesForPicker}
         viewingProfession={session.user.professionType ?? null}

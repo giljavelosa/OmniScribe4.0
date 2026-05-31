@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs';
 
 import { prisma } from '@/lib/prisma';
 import { validatePassword } from '@/lib/auth/password-policy';
+import { divisionForProfession } from '@/lib/professions';
 import { PlatformRole } from '@prisma/client';
 
 export const runtime = 'nodejs';
@@ -34,6 +35,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
 
   const passwordHash = await bcrypt.hash(password, 12);
 
+  // Heal-on-accept: derive the OrgUser division from the invited profession so the
+  // materialized membership is always consistent (a PT invite becomes REHAB even
+  // if a stored invite.division predates the derive-from-profession rule). VIEWER
+  // invites carry no profession → fall back to the admin-picked invite.division.
+  const division = divisionForProfession(invite.professionType) ?? invite.division;
+
   const user = await prisma.$transaction(async (tx) => {
     const existing = await tx.user.findUnique({ where: { email: invite.email } });
     const u = existing
@@ -49,7 +56,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
       where: { userId_orgId: { userId: u.id, orgId: invite.orgId } },
       update: {
         role: invite.role,
-        division: invite.division,
+        division,
+        professionType: invite.professionType,
         profession: invite.profession,
         canManagePatients: invite.canManagePatients,
         isActive: true,
@@ -58,7 +66,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
         userId: u.id,
         orgId: invite.orgId,
         role: invite.role,
-        division: invite.division,
+        division,
+        professionType: invite.professionType,
         profession: invite.profession,
         canManagePatients: invite.canManagePatients,
         isActive: true,

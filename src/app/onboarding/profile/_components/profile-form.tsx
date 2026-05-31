@@ -16,13 +16,12 @@ import {
 } from '@/components/ui/select';
 import { StatusBanner } from '@/components/ui/status-banner';
 import {
-  CLINICIAN_PICKABLE_DIVISIONS,
+  divisionForProfession,
   PROFESSION_OPTIONS,
   professionLabel,
 } from '@/lib/professions';
 
 type Props = {
-  currentDivision: Division | null;
   currentProfessionType: Profession | null;
   currentProfession: string | null;
 };
@@ -35,17 +34,9 @@ const DIVISION_LABELS: Record<Division, string> = {
 };
 
 export function ProfileForm({
-  currentDivision,
   currentProfessionType,
   currentProfession,
 }: Props) {
-  // Seed division from the current value ONLY if it's a pickable concrete
-  // value — MULTI is the source of the gate, so don't preselect it.
-  const seedDivision =
-    currentDivision && CLINICIAN_PICKABLE_DIVISIONS.includes(currentDivision)
-      ? currentDivision
-      : '';
-  const [division, setDivision] = useState<Division | ''>(seedDivision);
   const [professionType, setProfessionType] = useState<Profession | ''>(
     currentProfessionType ?? '',
   );
@@ -54,10 +45,14 @@ export function ProfileForm({
   const [pending, startTransition] = useTransition();
   const { update } = useSession();
 
+  // Division is derived from profession (1:1 map) and shown read-only — a PT
+  // can't complete their profile as MEDICAL.
+  const derivedDivision = professionType ? divisionForProfession(professionType) : null;
+
   function submit() {
     setError(null);
-    if (!division || !professionType) {
-      setError('Choose both a division and a profession.');
+    if (!professionType) {
+      setError('Choose your profession.');
       return;
     }
     startTransition(async () => {
@@ -65,7 +60,6 @@ export function ProfileForm({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          division,
           professionType,
           profession: profession.trim() || undefined,
         }),
@@ -92,26 +86,6 @@ export function ProfileForm({
       className="space-y-5"
     >
       <div className="space-y-2">
-        <Label htmlFor="division">Division</Label>
-        <Select
-          value={division}
-          onValueChange={(v) => setDivision(v as Division)}
-          disabled={pending}
-        >
-          <SelectTrigger id="division">
-            <SelectValue placeholder="Choose one" />
-          </SelectTrigger>
-          <SelectContent>
-            {CLINICIAN_PICKABLE_DIVISIONS.map((d) => (
-              <SelectItem key={d} value={d}>
-                {DIVISION_LABELS[d]}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-
-      <div className="space-y-2">
         <Label htmlFor="professionType">Profession</Label>
         <Select
           value={professionType}
@@ -129,6 +103,24 @@ export function ProfileForm({
             ))}
           </SelectContent>
         </Select>
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="division">Division</Label>
+        <div
+          id="division"
+          className="flex h-9 items-center rounded-md border border-input bg-muted px-3 text-sm"
+        >
+          {derivedDivision ? (
+            <span>{DIVISION_LABELS[derivedDivision]}</span>
+          ) : (
+            <span className="text-muted-foreground">Select your profession first</span>
+          )}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Derived from your profession — your notes are always documented under
+          this division.
+        </p>
       </div>
 
       <div className="space-y-2">

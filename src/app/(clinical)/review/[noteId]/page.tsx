@@ -34,7 +34,8 @@ export default async function ReviewPage({ params }: { params: Promise<{ noteId:
   if (!session?.user?.orgId) redirect('/login');
 
   const note = await prisma.note.findFirst({
-    where: { id: noteId, orgId: session.user.orgId },
+    // deletedAt: null — a discarded draft 404s rather than reopening.
+    where: { id: noteId, orgId: session.user.orgId, deletedAt: null },
     include: {
       template: true,
       patient: true,

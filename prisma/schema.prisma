@@ -1511,6 +1511,15 @@ model Note {
   signedAt       DateTime?
   signedByUserId String?
 
+  /// Soft-delete (DB-only). A clinician can discard an unfinished recording
+  /// (RECORDING/PAUSED) or an in-progress draft (DRAFT/REVIEWING/PENDING_REVIEW)
+  /// from the Drafts surface. SIGNED/TRANSFERRED notes can NEVER be deleted.
+  /// The row is NEVER hard-deleted and its audio is NEVER removed from S3
+  /// (anti-regression rule 7) — deletedAt is the DB-only soft-delete marker.
+  /// deletedByOrgUserId records who discarded it (auditor lens).
+  deletedAt          DateTime?
+  deletedByOrgUserId String?
+
   // Backfilled notes (rare; e.g. retroactive entry); not used in Unit 05's
   // happy path but reserved here so the migration matches the kit's
   // architecture.md model definition.

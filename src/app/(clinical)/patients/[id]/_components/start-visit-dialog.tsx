@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState, useTransition } from 'react';
+import Link from 'next/link';
 import { CalendarDays, PlusCircle } from 'lucide-react';
 import type { Division } from '@prisma/client';
 
@@ -31,6 +32,45 @@ import { NewCaseDialog } from './new-case-dialog';
 /** Hard-coded backdating window (spec § Goals — 30 days, org-configurable later). */
 const LATE_ENTRY_MAX_DAYS = 30;
 const MS_PER_DAY = 86_400_000;
+
+/** Carries the server's `error.code` through the submit promise so the shells
+ *  can branch on it (a bare Error would lose the code). */
+class EncounterStartError extends Error {
+  constructor(
+    message: string,
+    readonly code: string | null,
+  ) {
+    super(message);
+    this.name = 'EncounterStartError';
+  }
+}
+
+/** Division-resolution failures that a clinician can self-resolve by completing
+ *  their profile (set a concrete profession + division). Mirrors the codes
+ *  thrown by `resolveDivisionForNote` / surfaced by POST /api/encounters. */
+const PROFILE_INCOMPLETE_CODES = new Set(['no_division_resolvable', 'profession_other_blocked']);
+
+function isProfileIncompleteError(err: unknown): boolean {
+  return (
+    err instanceof EncounterStartError &&
+    err.code !== null &&
+    PROFILE_INCOMPLETE_CODES.has(err.code)
+  );
+}
+
+/** Recovery affordance shown when the visit can't start because the clinician's
+ *  profile lacks a concrete profession/division. Routes to the profile-completion
+ *  gate instead of dead-ending on the bare division error. */
+function ProfileCompletionLink() {
+  return (
+    <Link
+      href="/onboarding/profile"
+      className="mt-1 inline-block text-sm font-medium underline underline-offset-2"
+    >
+      Complete your profile to start recording
+    </Link>
+  );
+}
 
 export type StartVisitDialogEpisode = {
   id: string;
@@ -189,6 +229,7 @@ function AutoPostShell({
   forceCaseId,
 }: Props) {
   const [error, setError] = useState<string | null>(null);
+  const [needsProfile, setNeedsProfile] = useState(false);
   const submitter = submit ?? defaultEncountersSubmit;
   const sitesGovernedHere = sites !== undefined;
   const autoPost = open && (!sitesGovernedHere || !!defaultSiteId);
@@ -210,17 +251,20 @@ function AutoPostShell({
         onOpenChange(false);
         onStarted(res);
       })
-      .catch((err: Error) => {
-        setError(err.message);
+      .catch((err: unknown) => {
+        const e = err instanceof Error ? err : new Error('Could not start the visit.');
+        setError(e.message);
+        setNeedsProfile(isProfileIncompleteError(e));
         onOpenChange(false);
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoPost]);
 
   return error ? (
-    <p className="text-sm text-[var(--status-danger-fg)]" role="alert">
-      {error}
-    </p>
+    <div className="space-y-1" role="alert">
+      <p className="text-sm text-[var(--status-danger-fg)]">{error}</p>
+      {needsProfile && <ProfileCompletionLink />}
+    </div>
   ) : null;
 }
 
@@ -264,6 +308,7 @@ function PickerShell({
   const [episodeChoice, setEpisodeChoice] = useState<string>(initialEpisodeChoice);
   const [siteId, setSiteId] = useState<string>(defaultSiteId ?? '');
   const [error, setError] = useState<string | null>(null);
+  const [needsProfile, setNeedsProfile] = useState(false);
   const [pending, startTransition] = useTransition();
   const submitter = submit ?? defaultEncountersSubmit;
 
@@ -302,6 +347,7 @@ function PickerShell({
     }
     if (dateInvalid) return;
     setError(null);
+    setNeedsProfile(false);
     startTransition(async () => {
       try {
         const res = await submitter({
@@ -325,6 +371,7 @@ function PickerShell({
         onStarted(res);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Could not start the visit.');
+        setNeedsProfile(isProfileIncompleteError(err));
       }
     });
   }
@@ -484,7 +531,12 @@ function PickerShell({
             )}
           </div>
 
-          {error && <StatusBanner variant="danger">{error}</StatusBanner>}
+          {error && (
+            <StatusBanner variant="danger">
+              <span className="block">{error}</span>
+              {needsProfile && <ProfileCompletionLink />}
+            </StatusBanner>
+          )}
         </div>
 
         <SheetFooter className="flex-row justify-end gap-2">
@@ -790,8 +842,9 @@ async function defaultEncountersSubmit(
   });
   if (!res.ok) {
     const body = await res.json().catch(() => null);
-    throw new Error(
+    throw new EncounterStartError(
       body?.error?.message ?? `Could not start the visit (${res.status}).`,
+      body?.error?.code ?? null,
     );
   }
   const body = await res.json();

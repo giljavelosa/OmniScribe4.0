@@ -24,11 +24,11 @@ All passwords: **`Demo1234!`** (bcrypt-hashed at rounds=12).
 
 | Email | OrgRole | Division | Notes |
 |---|---|---|---|
-| `admin@demo.local` | `ORG_ADMIN` | `MULTI` | |
-| `clinician@demo.local` | `CLINICIAN` | `MEDICAL` | `canManagePatients = true`, has PractitionerProfile |
-| `viewer@demo.local` | `VIEWER` | `MEDICAL` | Read-only |
-| `siteadmin@demo.local` | `SITE_ADMIN` | `MEDICAL` | Team scoped to site |
-| `owner@demo.local` | `CLINICIAN` (at org) + **`platformRole = PLATFORM_OWNER`** | `MEDICAL` | Use for `/owner/orgs` testing |
+| `admin@demo.local` | `ORG_ADMIN` | `MEDICAL` | `professionType = MD` — concrete so it can record; the org itself stays `MULTI` |
+| `clinician@demo.local` | `CLINICIAN` | `MEDICAL` | `professionType = MD`, `canManagePatients = true`, has PractitionerProfile |
+| `viewer@demo.local` | `VIEWER` | `MEDICAL` | Read-only (no profession — exempt from the gate) |
+| `siteadmin@demo.local` | `SITE_ADMIN` | `MEDICAL` | `professionType = MD`; team scoped to site |
+| `owner@demo.local` | `CLINICIAN` (at org) + **`platformRole = PLATFORM_OWNER`** | `MEDICAL` | `professionType = MD`; use for `/owner/orgs` testing |
 
 Demo Clinic also has 6 extra clinicians (`pt.smith@demo.local`, `np.brown@demo.local`, etc.) and **3 patients** with **7 signed visits each** (James Park, Maria Alvarez, Devon Mitchell).
 
@@ -49,7 +49,7 @@ All passwords: **`Demo1234!`**
 
 | Email | OrgRole | Notes |
 |---|---|---|
-| `admin@acme.local` | `ORG_ADMIN` | Org admin for Acme |
+| `admin@acme.local` | `ORG_ADMIN` | Org admin for Acme — `MEDICAL` / `professionType = MD` (concrete so it can record; org stays `MULTI`) |
 | `clinician@acme.local` | `CLINICIAN` | Dr. Olivia Reed — Internal Medicine MD |
 | `np.acme@acme.local` | `CLINICIAN` | Dr. Maya Chen — Family NP |
 | `pt.nguyen@acme.local` | `CLINICIAN` | Dr. Linh Nguyen — PT at North campus |

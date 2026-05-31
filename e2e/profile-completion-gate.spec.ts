@@ -14,10 +14,16 @@ import { authStatePath } from './fixtures/seeded-users';
  * `division` + `professionType`. Two regressions in this surface
  * have been fixed and need ongoing coverage:
  *
- *   1. ORG_ADMIN with `division: MULTI` (the demo seed shape) was
- *      being incorrectly redirected to /onboarding/profile, even
- *      though admins by design retain the org-aggregate division.
- *      Fix: BYPASSED_ROLES now includes ORG_ADMIN + SITE_ADMIN.
+ *   1. ORG_ADMIN was historically seeded with `division: MULTI` and
+ *      no professionType, which the gate (correctly) treats as
+ *      incomplete. The gate bypasses ONLY VIEWER — every other role,
+ *      admins included, passes by carrying a CONCRETE division +
+ *      professionType. The seed now provisions admins/site-admins with
+ *      a concrete profession + division (MD / MEDICAL), so they pass
+ *      the gate the same way clinicians do: by being complete, not by a
+ *      role bypass. (These specs only visit ungated surfaces — /home,
+ *      /patients, charts — but the seed-shape change also keeps
+ *      /prepare + /capture clean for admins.)
  *
  *   2. After the form save, useSession().update() with no args was a
  *      no-op (GET /api/auth/session — see next-auth v5 source) so

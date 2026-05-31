@@ -32,7 +32,6 @@ export default async function ProfileCompletionPage() {
         </p>
       </header>
       <ProfileForm
-        currentDivision={session.user.division}
         currentProfessionType={session.user.professionType}
         currentProfession={session.user.profession}
       />

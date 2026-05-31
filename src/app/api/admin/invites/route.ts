@@ -7,8 +7,9 @@ import { requireAdminOrgRole } from '@/lib/authz/server';
 import { sendTransactional } from '@/lib/email/transport';
 import { buildInviteEmail } from '@/lib/email/templates/invite';
 import { writeAuditLog } from '@/lib/audit/log';
-import { OrgRole, Division } from '@prisma/client';
+import { OrgRole, Division, Profession } from '@prisma/client';
 import { canAddOrgMember } from '@/lib/billing/commercial-mode';
+import { divisionForProfession } from '@/lib/professions';
 
 export const runtime = 'nodejs';
 
@@ -20,15 +21,45 @@ const INVITE_TTL_DAYS = 7;
  *  `User.platformRole = PLATFORM_OWNER`, entirely separate from OrgRole. */
 const INVITABLE_ROLES: OrgRole[] = [OrgRole.CLINICIAN, OrgRole.VIEWER, OrgRole.SITE_ADMIN];
 
-const bodySchema = z.object({
-  email: z.email().transform((s) => s.toLowerCase()),
-  role: z.enum(OrgRole).refine((r) => INVITABLE_ROLES.includes(r), {
-    message: 'Only Clinician, Non-clinician, and Site admin roles can be invited.',
-  }),
-  division: z.enum(Division),
-  profession: z.string().min(1).optional(),
-  canManagePatients: z.boolean().optional(),
-});
+/** Recording-capable invite roles — these end up able to start a visit, so the
+ *  invite MUST carry a concrete profession + division (note division is derived
+ *  from the recording clinician's profession at visit start). VIEWER is
+ *  read-only and exempt; it keeps whatever division the admin picked but never
+ *  needs a profession. */
+const RECORDING_INVITE_ROLES: OrgRole[] = [OrgRole.CLINICIAN, OrgRole.SITE_ADMIN];
+
+const bodySchema = z
+  .object({
+    email: z.email().transform((s) => s.toLowerCase()),
+    role: z.enum(OrgRole).refine((r) => INVITABLE_ROLES.includes(r), {
+      message: 'Only Clinician, Non-clinician, and Site admin roles can be invited.',
+    }),
+    division: z.enum(Division),
+    /** Categorical profession of the invitee. Required + concrete for recording
+     *  roles (enforced in superRefine); omitted for VIEWER. */
+    professionType: z.enum(Profession).optional(),
+    profession: z.string().min(1).optional(),
+    canManagePatients: z.boolean().optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (!RECORDING_INVITE_ROLES.includes(data.role)) return;
+    if (!data.professionType || data.professionType === Profession.OTHER) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['professionType'],
+        message:
+          'A concrete profession is required for recording roles — "Other" is not allowed.',
+      });
+    }
+    if (data.division === Division.MULTI) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['division'],
+        message:
+          'Pick a concrete division for recording roles — MULTI is an org-aggregate value, not a clinician scope of practice.',
+      });
+    }
+  });
 
 export async function POST(req: Request) {
   const guard = await requireAdminOrgRole();
@@ -37,7 +68,10 @@ export async function POST(req: Request) {
 
   const parsed = bodySchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
-    return NextResponse.json({ error: { code: 'bad_request' } }, { status: 400 });
+    return NextResponse.json(
+      { error: { code: 'bad_request', issues: parsed.error.flatten() } },
+      { status: 400 },
+    );
   }
   const data = parsed.data;
 
@@ -114,12 +148,24 @@ export async function POST(req: Request) {
   const token = randomBytes(24).toString('base64url');
   const expiresAt = new Date(Date.now() + INVITE_TTL_DAYS * 24 * 60 * 60 * 1000);
 
+  // Division is DERIVED from profession for recording roles (so a PT invite can't
+  // be filed under MEDICAL). VIEWER carries no profession and keeps the
+  // admin-picked division — a read-only viewer can legitimately be scoped to any
+  // division. This is the server-side source of truth; the admin form shows the
+  // derived value read-only but never decides it.
+  const recordingDivision =
+    data.professionType && data.professionType !== Profession.OTHER
+      ? divisionForProfession(data.professionType)
+      : null;
+  const inviteDivision = recordingDivision ?? data.division;
+
   const invite = await prisma.invite.create({
     data: {
       email: data.email,
       orgId: orgUser.orgId,
       role: data.role,
-      division: data.division,
+      division: inviteDivision,
+      professionType: data.professionType ?? null,
       profession: data.profession,
       canManagePatients: data.canManagePatients ?? false,
       token,
@@ -147,7 +193,7 @@ export async function POST(req: Request) {
     action: 'INVITE_SENT',
     resourceType: 'Invite',
     resourceId: invite.id,
-    metadata: { role: data.role, division: data.division },
+    metadata: { role: data.role, division: inviteDivision, professionType: data.professionType ?? null },
   });
 
   return NextResponse.json({ data: { inviteId: invite.id, onboardUrl } });
