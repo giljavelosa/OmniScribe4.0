@@ -65,8 +65,13 @@ export async function requireFeatureAccess(
   // Fresh DB read — JWT may carry stale role/division after admin changes.
   const orgUser = await prisma.orgUser.findUnique({
     where: { id: session.user.orgUserId },
+    include: {
+      organization: { select: { isDeleted: true } },
+    },
   });
-  if (!orgUser || !orgUser.isActive) return err('forbidden', 403);
+  if (!orgUser || !orgUser.isActive || orgUser.organization?.isDeleted === true) {
+    return err('forbidden', 403);
+  }
 
   // Sprint 0.20 — MFA + login-verified gates removed; auth is password-only.
 

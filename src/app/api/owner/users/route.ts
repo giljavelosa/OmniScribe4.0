@@ -32,12 +32,16 @@ export async function GET(req: Request) {
   const cursor = url.searchParams.get('cursor');
 
   const users = await prisma.user.findMany({
-    where: q ? { email: { contains: q, mode: 'insensitive' } } : {},
+    where: {
+      isDeleted: false,
+      ...(q ? { email: { contains: q, mode: 'insensitive' } } : {}),
+    },
     orderBy: { createdAt: 'desc' },
     take: limit + 1,
     ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
     include: {
       orgUsers: {
+        where: { organization: { isDeleted: false } },
         include: { organization: { select: { id: true, name: true } } },
         orderBy: { createdAt: 'asc' },
       },

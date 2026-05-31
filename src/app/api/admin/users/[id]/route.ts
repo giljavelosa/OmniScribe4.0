@@ -51,6 +51,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     return NextResponse.json({ error: { code: 'not_found' } }, { status: 404 });
   }
 
+  // Deactivation frees the held seat back to the org's unassigned pool.
+  const freedSeatId = data.isActive === false ? before.seatId : null;
+
   const after = await prisma.orgUser.update({
     where: { id: before.id },
     data: {
@@ -60,6 +63,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         : {}),
       ...(data.role !== undefined ? { role: data.role } : {}),
       ...(data.division !== undefined ? { division: data.division } : {}),
+      ...(freedSeatId ? { seatId: null } : {}),
     },
   });
 
@@ -70,6 +74,18 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   );
 
   if (data.isActive === false) {
+    // A freed seat returns to the unassigned pool; record the release on the
+    // seat's transfer history so the audit trail has no gap.
+    if (freedSeatId) {
+      await prisma.seatTransfer.create({
+        data: {
+          seatId: freedSeatId,
+          fromOrgUserId: before.id,
+          toOrgUserId: null,
+          reason: 'Freed on deactivation',
+        },
+      });
+    }
     // Wipe sessions on deactivation so the user is signed out immediately.
     await prisma.userSession.deleteMany({ where: { userId: targetUserId } });
     await writeAuditLog({
@@ -79,7 +95,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       action: 'USER_DEACTIVATED',
       resourceType: 'OrgUser',
       resourceId: before.id,
-      metadata: { changes },
+      metadata: { changes, ...(freedSeatId ? { freedSeatId } : {}) },
     });
   } else if (Object.keys(changes).length > 0) {
     // Role change is a higher-severity event than a generic update; emit a

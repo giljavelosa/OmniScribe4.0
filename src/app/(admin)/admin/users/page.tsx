@@ -1,10 +1,11 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
 
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { getClinicianSiteIds } from '@/lib/authz/site-scope';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { UsersToolbar } from './_components/users-toolbar';
 import { RowActions } from './_components/row-actions';
@@ -12,9 +13,19 @@ import { RowActions } from './_components/row-actions';
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Users' };
 
-export default async function AdminUsersPage() {
+type StatusFilter = 'all' | 'active' | 'deactivated';
+
+export default async function AdminUsersPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ status?: string }>;
+}) {
   const session = await auth();
   if (!session?.user?.orgId || !session.user.orgUserId) redirect('/home');
+
+  const { status } = await searchParams;
+  const statusFilter: StatusFilter =
+    status === 'active' || status === 'deactivated' ? status : 'all';
 
   // SITE_ADMIN scope — limit listing to users enrolled at any of the
   // caller's sites. ORG_ADMIN+ get scope 'all' and see everyone, plus
@@ -25,25 +36,36 @@ export default async function AdminUsersPage() {
     session.user.orgId,
   );
 
-  const [orgUsers, orgSites] = await Promise.all([
+  const siteScopeWhere =
+    siteScope.scope === 'enrolled'
+      ? {
+          OR: [
+            { role: { in: ['ORG_ADMIN' as const] } },
+            { siteEnrollments: { some: { siteId: { in: siteScope.siteIds } } } },
+          ],
+        }
+      : {};
+  const statusWhere =
+    statusFilter === 'active'
+      ? { isActive: true }
+      : statusFilter === 'deactivated'
+        ? { isActive: false }
+        : {};
+
+  const [orgUsers, orgSites, statusCounts] = await Promise.all([
     prisma.orgUser.findMany({
       where: {
         orgId: session.user.orgId,
-        ...(siteScope.scope === 'enrolled'
-          ? {
-              OR: [
-                { role: { in: ['ORG_ADMIN'] } },
-                { siteEnrollments: { some: { siteId: { in: siteScope.siteIds } } } },
-              ],
-            }
-          : {}),
+        ...statusWhere,
+        ...siteScopeWhere,
       },
       include: {
         user: true,
         seat: true,
         siteEnrollments: { include: { site: { select: { id: true, name: true } } } },
       },
-      orderBy: { createdAt: 'asc' },
+      // Active members first, then deactivated, oldest-first within each group.
+      orderBy: [{ isActive: 'desc' }, { createdAt: 'asc' }],
     }),
     prisma.site.findMany({
       where: {
@@ -54,7 +76,20 @@ export default async function AdminUsersPage() {
       orderBy: { name: 'asc' },
       select: { id: true, name: true },
     }),
+    prisma.orgUser.groupBy({
+      by: ['isActive'],
+      where: { orgId: session.user.orgId, ...siteScopeWhere },
+      _count: { _all: true },
+    }),
   ]);
+
+  const activeCount = statusCounts.find((c) => c.isActive)?._count._all ?? 0;
+  const deactivatedCount = statusCounts.find((c) => !c.isActive)?._count._all ?? 0;
+  const filters: Array<{ key: StatusFilter; label: string; count: number }> = [
+    { key: 'all', label: 'All', count: activeCount + deactivatedCount },
+    { key: 'active', label: 'Active', count: activeCount },
+    { key: 'deactivated', label: 'Deactivated', count: deactivatedCount },
+  ];
 
   return (
     <div className="space-y-4">
@@ -65,7 +100,26 @@ export default async function AdminUsersPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-md">{orgUsers.length} member{orgUsers.length === 1 ? '' : 's'}</CardTitle>
+          <nav className="flex items-center gap-1" data-testid="admin-users-status-filter">
+            {filters.map((f) => {
+              const isCurrent = statusFilter === f.key;
+              return (
+                <Link
+                  key={f.key}
+                  href={f.key === 'all' ? '/admin/users' : `/admin/users?status=${f.key}`}
+                  data-testid={`admin-users-filter-${f.key}`}
+                  aria-current={isCurrent ? 'page' : undefined}
+                  className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                    isCurrent
+                      ? 'bg-muted text-foreground'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  {f.label} ({f.count})
+                </Link>
+              );
+            })}
+          </nav>
         </CardHeader>
         <CardContent className="overflow-x-auto p-0">
           <table className="w-full text-sm">
@@ -85,7 +139,11 @@ export default async function AdminUsersPage() {
                 const isAllSitesRole = ou.role === 'ORG_ADMIN';
                 const enrolled = ou.siteEnrollments;
                 return (
-                  <tr key={ou.id} className="border-b border-border last:border-b-0">
+                  <tr
+                    key={ou.id}
+                    data-testid={`admin-user-row-${ou.user.id}`}
+                    className="border-b border-border last:border-b-0"
+                  >
                     <td className="px-4 py-3 font-mono">{ou.user.email}</td>
                     <td className="px-4 py-3">{ou.role}</td>
                     <td className="px-4 py-3">{ou.division}</td>
@@ -129,8 +187,12 @@ export default async function AdminUsersPage() {
               })}
               {orgUsers.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-6 text-center text-muted-foreground">
-                    No team members yet. Invite someone with the button above.
+                  <td colSpan={7} className="px-4 py-6 text-center text-muted-foreground">
+                    {statusFilter === 'deactivated'
+                      ? 'No deactivated members.'
+                      : statusFilter === 'active'
+                        ? 'No active members.'
+                        : 'No team members yet. Invite someone with the button above.'}
                   </td>
                 </tr>
               )}

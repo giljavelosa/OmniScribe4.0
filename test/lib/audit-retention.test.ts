@@ -177,8 +177,15 @@ describeMaybe('purgeAuditAllOrgs', () => {
     });
 
     const result = await purgeAuditAllOrgs(now);
-    expect(result.orgsProcessed).toBe(1); // only RETAIN_ID has retention set
-    expect(result.totalRowsDeleted).toBe(2);
+    const retainResult = result.perOrg.find((row) => row.orgId === ORG_RETAIN_ID);
+    const foreverResult = result.perOrg.find((row) => row.orgId === ORG_FOREVER_ID);
+
+    expect(retainResult).toEqual(
+      expect.objectContaining({ orgId: ORG_RETAIN_ID, rowsDeleted: 2 }),
+    );
+    expect(foreverResult).toBeUndefined();
+    expect(result.orgsProcessed).toBeGreaterThanOrEqual(1);
+    expect(result.totalRowsDeleted).toBeGreaterThanOrEqual(2);
 
     // FOREVER_ID's old row preserved.
     const forever = await prisma.auditLog.findMany({

@@ -133,6 +133,12 @@ model Organization {
   /// Unit 51 — Cached org-wide visit bank balance (ledger is source of truth).
   visitBankBalance Int @default(0)
 
+  /// Owner delete flow — operational soft-delete. Clinical records and audit
+  /// history remain retained; app and owner surfaces hide deleted orgs.
+  isDeleted       Boolean   @default(false)
+  deletedAt       DateTime?
+  deletedByUserId String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -172,6 +178,7 @@ model Organization {
 
   @@index([baaExecutedAt])
   @@index([subscriptionPlan])
+  @@index([isDeleted])
 }
 
 enum SubscriptionPlan {
@@ -346,6 +353,11 @@ model User {
   /// pinging a locked account doesn't get "lock cleared but wrong
   /// password" timing artifacts.
   lockedUntil       DateTime?
+  /// Owner delete flow — user identity is anonymized and memberships are
+  /// deactivated, while clinical/audit references keep the stable user id.
+  isDeleted         Boolean      @default(false)
+  deletedAt         DateTime?
+  deletedByUserId   String?
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt
 
@@ -550,6 +562,50 @@ model PlatformSession {
   createdAt DateTime @default(now())
 
   @@index([userId])
+}
+
+/// Owner delete/restore flow — owner-only recovery ledger. One row per
+/// soft-delete event (organization or user). Holds the minimum state needed
+/// to restore the record:
+///   - For USER rows: the original identifying fields that the delete
+///     anonymized out of the live `User` row (so restore can reconstitute the
+///     account; the live table never re-exposes deleted PII until restore).
+///   - For both: the OrgUser/Seat ids the delete deactivated, so restore
+///     reverses exactly those rows instead of guessing.
+/// `recordId` is the Organization.id / User.id (kept as a plain id, not a FK,
+/// so the ledger survives independently of cascade behavior). The
+/// `/owner/deleted-data` screen is the only reader and every view is audited
+/// (`PLATFORM_DELETED_DATA_VIEWED`).
+model DeletedRecordLedger {
+  id         String            @id @default(cuid())
+  recordType DeletedRecordType
+  recordId   String
+
+  // User-identity recovery (null for ORGANIZATION rows).
+  originalEmail          String?
+  originalName           String?
+  originalImage          String?
+  originalPasswordHash   String?
+  originalSigningPinHash String?
+  originalPlatformRole   PlatformRole?
+
+  // Reversal snapshot — rows this delete switched off.
+  deactivatedOrgUserIds String[] @default([])
+  deactivatedSeatIds    String[] @default([])
+
+  deletedAt        DateTime
+  deletedByUserId  String?
+  restoredAt       DateTime?
+  restoredByUserId String?
+  createdAt        DateTime  @default(now())
+
+  @@index([recordType, restoredAt])
+  @@index([recordId])
+}
+
+enum DeletedRecordType {
+  ORGANIZATION
+  USER
 }
 
 // -----------------------------------------------------------------------------

@@ -42,7 +42,13 @@ export async function seedCascadiaOrganization(
 
   const org = await prisma.organization.upsert({
     where: { id: CASCADIA_ORG_ID },
-    update: { name: 'Cascadia Health Network', division: Division.MULTI },
+    update: {
+      name: 'Cascadia Health Network',
+      division: Division.MULTI,
+      isDeleted: false,
+      deletedAt: null,
+      deletedByUserId: null,
+    },
     create: {
       id: CASCADIA_ORG_ID,
       name: 'Cascadia Health Network',

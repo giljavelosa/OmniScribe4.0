@@ -41,7 +41,13 @@ export async function seedRiverbendOrganization(
 
   const org = await prisma.organization.upsert({
     where: { id: RIVERBEND_ORG_ID },
-    update: { name: 'Riverbend Integrated Care', division: Division.MULTI },
+    update: {
+      name: 'Riverbend Integrated Care',
+      division: Division.MULTI,
+      isDeleted: false,
+      deletedAt: null,
+      deletedByUserId: null,
+    },
     create: {
       id: RIVERBEND_ORG_ID,
       name: 'Riverbend Integrated Care',

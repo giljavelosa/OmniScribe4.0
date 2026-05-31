@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { requirePlatformOwner, requirePlatformStaff } from '@/lib/authz/platform';
 
@@ -19,6 +19,13 @@ vi.mock('@/lib/auth', () => ({
   auth: () => mockAuth(),
 }));
 
+const userFindUnique = vi.fn();
+vi.mock('@/lib/prisma', () => ({
+  prisma: {
+    user: { findUnique: (...args: unknown[]) => userFindUnique(...args) },
+  },
+}));
+
 function userWithRole(role: string) {
   return {
     user: {
@@ -34,6 +41,15 @@ function userWithRole(role: string) {
   };
 }
 
+function dbUserWithRole(role: string, isDeleted = false) {
+  userFindUnique.mockResolvedValueOnce({ platformRole: role, isDeleted });
+}
+
+beforeEach(() => {
+  mockAuth.mockReset();
+  userFindUnique.mockReset();
+});
+
 describe('requirePlatformOwner', () => {
   it('rejects when unauthenticated', async () => {
     mockAuth.mockResolvedValueOnce(null);
@@ -43,12 +59,14 @@ describe('requirePlatformOwner', () => {
 
   it('rejects PLATFORM_OPS (owner is owner-only)', async () => {
     mockAuth.mockResolvedValueOnce(userWithRole('PLATFORM_OPS'));
+    dbUserWithRole('PLATFORM_OPS');
     const r = await requirePlatformOwner();
     expect('error' in r).toBe(true);
   });
 
   it('accepts PLATFORM_OWNER', async () => {
     mockAuth.mockResolvedValueOnce(userWithRole('PLATFORM_OWNER'));
+    dbUserWithRole('PLATFORM_OWNER');
     const r = await requirePlatformOwner();
     expect('error' in r).toBe(false);
     if (!('error' in r)) {
@@ -66,12 +84,14 @@ describe('requirePlatformStaff', () => {
 
   it('rejects NONE role', async () => {
     mockAuth.mockResolvedValueOnce(userWithRole('NONE'));
+    dbUserWithRole('NONE');
     const r = await requirePlatformStaff();
     expect('error' in r).toBe(true);
   });
 
   it('accepts PLATFORM_OPS + returns role on result', async () => {
     mockAuth.mockResolvedValueOnce(userWithRole('PLATFORM_OPS'));
+    dbUserWithRole('PLATFORM_OPS');
     const r = await requirePlatformStaff();
     expect('error' in r).toBe(false);
     if (!('error' in r)) {
@@ -81,6 +101,7 @@ describe('requirePlatformStaff', () => {
 
   it('accepts PLATFORM_OWNER + returns role on result', async () => {
     mockAuth.mockResolvedValueOnce(userWithRole('PLATFORM_OWNER'));
+    dbUserWithRole('PLATFORM_OWNER');
     const r = await requirePlatformStaff();
     expect('error' in r).toBe(false);
     if (!('error' in r)) {

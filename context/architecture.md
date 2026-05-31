@@ -82,7 +82,7 @@ Each top-level folder under `src/` owns exactly one responsibility. Cross-folder
 Build the `prisma/schema.prisma` file with these models grouped by domain. Migrations are append-only after first apply.
 
 ### Tenancy
-- `Organization` — tenant root; `division` (REHAB/MEDICAL/BEHAVIORAL_HEALTH/MULTI), `defaultDivision`, billing email, Stripe customer ID, **`baaExecutedAt`, `baaVersion`, `baaCountersignedBy`, `complianceProfile`** (enum: STANDARD / BH_42CFR2 / RESEARCH).
+- `Organization` — tenant root; `division` (REHAB/MEDICAL/BEHAVIORAL_HEALTH/MULTI), `defaultDivision`, billing email, Stripe customer ID, **`baaExecutedAt`, `baaVersion`, `baaCountersignedBy`, `complianceProfile`** (enum: STANDARD / BH_42CFR2 / RESEARCH), owner-controlled operational soft-delete fields (`isDeleted`, `deletedAt`, `deletedByUserId`). Deleted orgs are hidden from owner/app surfaces and their memberships are deactivated; clinical records and audit history remain retained.
 - `Site` — clinic location; optional primary division.
 - `Department` — clinical department (PT, OT, SLP, etc.); org + optional site scope.
 - `Room` — physical or virtual room for encounters.
@@ -91,7 +91,7 @@ Build the `prisma/schema.prisma` file with these models grouped by domain. Migra
 - `SystemAnnouncement`, `IpAllowlistEntry` — ops controls.
 
 ### Identity & Roles
-- `User` — global identity; `email` (unique), `passwordHash`, `signingPinHash`, `platformRole` (`PLATFORM_OWNER` | `NONE`).
+- `User` — global identity; `email` (unique), `passwordHash`, `signingPinHash`, `platformRole` (`PLATFORM_OWNER` | `PLATFORM_OPS` | `NONE`), owner-controlled operational soft-delete fields (`isDeleted`, `deletedAt`, `deletedByUserId`). Deleted users are anonymized, sessions/reset tokens are removed, memberships are deactivated, and clinical/audit references retain the stable user id.
 - `OrgUser` — membership row joining User × Org; `role` ∈ `{ORG_ADMIN, SITE_ADMIN, CLINICIAN, VIEWER}`, `division`, `profession`, `canManagePatients`, `preferredNoteStyle`. Platform-owner authority is exclusively on `User.platformRole = PLATFORM_OWNER` — never conflated with OrgRole.
 - `UserSession` — active session tokens.
 - `PractitionerProfile` — clinician identity for EHR (NPI, specialty, display name).
@@ -140,6 +140,7 @@ Build the `prisma/schema.prisma` file with these models grouped by domain. Migra
 - `AuditLog` — append-only; `(userId, orgId, action, resourceType, resourceId, metadata JSON)`; indexed by `(orgId, createdAt)`, `(patientId, createdAt)`. **PHI-free metadata** (rule 8).
 - `PlatformAuditLog` — owner/staff actions.
 - `PlatformSession` — owner/staff session tracking.
+- `DeletedRecordLedger` — owner-only, access-audited recovery store written at soft-delete time. `recordType` (`ORGANIZATION` | `USER`) + `recordId`, `deletedAt`, `deletedByUserId`, and `restoredAt`/`restoredByUserId` (null until restored). For `USER` rows it snapshots the pre-anonymization identity (`originalEmail`, `originalName`, `originalImage`, `originalPasswordHash`, `originalSigningPinHash`, `originalPlatformRole`) so the owner can see/restore the real identity that the live `User` row no longer holds. For both types it records the exact rows the delete deactivated — `deactivatedOrgUserIds`, `deactivatedSeatIds` — so restore reactivates precisely those, not everything. This ledger is the **only** place anonymized PHI/PII is retained; it is never joined into normal app/owner surfaces except the owner-only `/owner/deleted-data` recovery screen.
 - `SnapshotOverride` — clinician-edited measure overrides for patient snapshot strip; reversible.
 
 ### Telehealth (Wave 3)
@@ -171,6 +172,7 @@ Build the `prisma/schema.prisma` file with these models grouped by domain. Migra
 - **PHI scoping** — `src/lib/phi-access.ts` (`canAccessClinicianOwnedResource`, division gating, sensitivity-level gating). Org scoping enforced at the Prisma query layer (`WHERE orgId = ?` on every PHI query).
 - **Sensitivity tiers** (`NoteSensitivityLevel`) — STANDARD_CLINICAL / BEHAVIORAL_HEALTH (42 CFR Part 2 gate) / BILLING_ONLY / ADMINISTRATIVE.
 - **Platform role** — `PLATFORM_OWNER` for cross-org owner console; `NONE` otherwise.
+- **Deletion / recovery boundary** — two distinct authorities, never conflated. *Platform owner* (gated by `requirePlatformOwner`) is the only role that can soft-delete or restore an entire **organization** or a **user**; deletion soft-hides + anonymizes + snapshots into `DeletedRecordLedger`, and restore (`POST /api/owner/orgs/[id]/restore`, `POST /api/owner/users/[id]/restore`) reverses it from that ledger — un-hiding the record, reactivating exactly the recorded memberships/seats (skipping rows whose counterpart is still soft-deleted), clamping any restored `PLATFORM_OWNER` role down to `NONE`, and stamping `restoredAt/restoredByUserId`. Restore 404s on a record that isn't soft-deleted and (for users) 409s on email collision or a missing ledger. *Org admin* (`OrgRole ∈ {ORG_ADMIN}`) cannot delete an org and cannot purge signed clinical records or audit history; their only lifecycle lever is deactivate/reactivate of users **within their own org** (`PATCH /api/admin/users/[id]`, org-scoped `findFirst` → foreign ids 404). Deactivation frees the held seat (nulls `OrgUser.seatId` + writes a `SeatTransfer`) and wipes sessions; the `/admin/users` table filters active vs deactivated. All delete/restore/deactivate actions are audited (`PLATFORM_*` for owner actions via `writePlatformAuditLog`, `USER_DEACTIVATED`/`USER_UPDATED` for admin actions via `writeAuditLog`), and viewing the owner recovery screen audits `PLATFORM_DELETED_DATA_VIEWED`.
 
 ## AI & Background Task Model
 

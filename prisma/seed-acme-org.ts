@@ -40,7 +40,13 @@ export async function seedAcmeOrganization(
 
   const acmeOrg = await prisma.organization.upsert({
     where: { id: ACME_ORG_ID },
-    update: { name: 'Acme Specialty Care', division: Division.MULTI },
+    update: {
+      name: 'Acme Specialty Care',
+      division: Division.MULTI,
+      isDeleted: false,
+      deletedAt: null,
+      deletedByUserId: null,
+    },
     create: {
       id: ACME_ORG_ID,
       name: 'Acme Specialty Care',

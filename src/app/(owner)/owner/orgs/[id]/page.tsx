@@ -20,8 +20,8 @@ export const metadata: Metadata = { title: 'Organization' };
 
 export default async function OwnerOrgPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const org = await prisma.organization.findUnique({
-    where: { id },
+  const org = await prisma.organization.findFirst({
+    where: { id, isDeleted: false },
     include: {
       _count: { select: { orgUsers: true, seats: true, sites: true } },
     },

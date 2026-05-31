@@ -23,6 +23,7 @@ export default async function OwnerLayout({ children }: { children: ReactNode })
             <nav className="text-sm flex items-center gap-4">
               <Link href="/owner/orgs" className="text-muted-foreground hover:text-foreground">Orgs</Link>
               <Link href="/owner/users" className="text-muted-foreground hover:text-foreground">Users</Link>
+              <Link href="/owner/deleted-data" className="text-muted-foreground hover:text-foreground">Deleted data</Link>
               <Link href="/owner/audit" className="text-muted-foreground hover:text-foreground">Audit</Link>
               <Link href="/owner/announcements" className="text-muted-foreground hover:text-foreground">Announcements</Link>
               <Link href="/owner/health" className="text-muted-foreground hover:text-foreground">Health</Link>

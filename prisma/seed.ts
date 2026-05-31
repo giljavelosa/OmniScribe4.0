@@ -29,6 +29,7 @@ import {
   ExternalContextSource,
   ExternalContextStatus,
   ExternalContextMediaKind,
+  DeletedRecordType,
   Prisma,
 } from '@prisma/client';
 import bcrypt from 'bcryptjs';
@@ -349,7 +350,11 @@ async function main() {
   // ---------------- Organization + Site + Rooms ----------------
   const org = await prisma.organization.upsert({
     where: { id: 'seed-demo-clinic' },
-    update: {},
+    update: {
+      isDeleted: false,
+      deletedAt: null,
+      deletedByUserId: null,
+    },
     create: {
       id: 'seed-demo-clinic',
       name: 'Demo Clinic',
@@ -551,6 +556,163 @@ async function main() {
       data: { baaCountersignedBy: ownerUserId },
     });
   }
+
+  // ---------------- Deleted-data recovery fixtures ----------------
+  // Fixtures for the owner /owner/deleted-data screen and its restore e2e,
+  // plus a dedicated member for the admin deactivate/reactivate e2e. Every
+  // upsert is self-healing: re-running the seed resets a fixture an e2e may
+  // have restored/deactivated back to its pristine starting state.
+  const deletedAt = new Date('2026-05-20T00:00:00Z');
+
+  // (a) A dedicated, active+seated member of the Demo Clinic that the admin
+  // deactivate/reactivate e2e drives. Reset to active+seated on every seed.
+  const deactivateUser = await prisma.user.upsert({
+    where: { email: 'deactivate-me@demo.local' },
+    update: { passwordHash, isDeleted: false, deletedAt: null, deletedByUserId: null },
+    create: {
+      email: 'deactivate-me@demo.local',
+      name: 'Deactivate Me',
+      passwordHash,
+      platformRole: PlatformRole.NONE,
+    },
+  });
+  const deactivateSeat = await prisma.seat.upsert({
+    where: { id: 'seed-seat-deactivate-me' },
+    update: { isActive: true },
+    create: {
+      id: 'seed-seat-deactivate-me',
+      orgId: org.id,
+      tier: SeatTier.TEAM,
+      expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+    },
+  });
+  await prisma.orgUser.upsert({
+    where: { userId_orgId: { userId: deactivateUser.id, orgId: org.id } },
+    update: { isActive: true, seatId: deactivateSeat.id, role: OrgRole.CLINICIAN },
+    create: {
+      userId: deactivateUser.id,
+      orgId: org.id,
+      role: OrgRole.CLINICIAN,
+      division: Division.MEDICAL,
+      preferredNoteStyle: NoteStyle.HYBRID,
+      isActive: true,
+      seatId: deactivateSeat.id,
+    },
+  });
+
+  // (b) A soft-deleted organization + its (deactivated) member and seat, with
+  // a recovery ledger recording exactly what to reactivate on restore.
+  const deletedOrg = await prisma.organization.upsert({
+    where: { id: 'seed-deleted-org' },
+    update: { isDeleted: true, deletedAt, deletedByUserId: ownerUserId },
+    create: {
+      id: 'seed-deleted-org',
+      name: 'Archived Org (deleted)',
+      division: Division.REHAB,
+      defaultDivision: Division.REHAB,
+      billingEmail: 'billing@archived.local',
+      complianceProfile: ComplianceProfile.STANDARD,
+      isDeleted: true,
+      deletedAt,
+      deletedByUserId: ownerUserId,
+    },
+  });
+  const deletedOrgMember = await prisma.user.upsert({
+    where: { email: 'archived-org-member@demo.local' },
+    update: { passwordHash },
+    create: {
+      email: 'archived-org-member@demo.local',
+      name: 'Archived Member',
+      passwordHash,
+      platformRole: PlatformRole.NONE,
+    },
+  });
+  const deletedOrgSeat = await prisma.seat.upsert({
+    where: { id: 'seed-deleted-org-seat' },
+    update: { isActive: false },
+    create: {
+      id: 'seed-deleted-org-seat',
+      orgId: deletedOrg.id,
+      tier: SeatTier.TEAM,
+      expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+      isActive: false,
+    },
+  });
+  const deletedOrgMembership = await prisma.orgUser.upsert({
+    where: { userId_orgId: { userId: deletedOrgMember.id, orgId: deletedOrg.id } },
+    update: { isActive: false, seatId: null },
+    create: {
+      userId: deletedOrgMember.id,
+      orgId: deletedOrg.id,
+      role: OrgRole.CLINICIAN,
+      division: Division.REHAB,
+      preferredNoteStyle: NoteStyle.HYBRID,
+      isActive: false,
+    },
+  });
+  await prisma.deletedRecordLedger.upsert({
+    where: { id: 'seed-ledger-org' },
+    update: {
+      restoredAt: null,
+      restoredByUserId: null,
+      deactivatedOrgUserIds: [deletedOrgMembership.id],
+      deactivatedSeatIds: [deletedOrgSeat.id],
+    },
+    create: {
+      id: 'seed-ledger-org',
+      recordType: DeletedRecordType.ORGANIZATION,
+      recordId: deletedOrg.id,
+      deactivatedOrgUserIds: [deletedOrgMembership.id],
+      deactivatedSeatIds: [deletedOrgSeat.id],
+      deletedAt,
+      deletedByUserId: ownerUserId,
+    },
+  });
+
+  // (c) A soft-deleted user whose live row is anonymized; the original
+  // identity lives only in the owner-only recovery ledger. Keyed by a stable
+  // id so re-seeding re-anonymizes the row even after an e2e restored it.
+  const deletedUser = await prisma.user.upsert({
+    where: { id: 'seed-deleted-user' },
+    update: {
+      email: 'deleted-seed-user@omniscribe.invalid',
+      name: null,
+      isDeleted: true,
+      deletedAt,
+      deletedByUserId: ownerUserId,
+      platformRole: PlatformRole.NONE,
+    },
+    create: {
+      id: 'seed-deleted-user',
+      email: 'deleted-seed-user@omniscribe.invalid',
+      name: null,
+      passwordHash,
+      isDeleted: true,
+      deletedAt,
+      deletedByUserId: ownerUserId,
+      platformRole: PlatformRole.NONE,
+    },
+  });
+  await prisma.deletedRecordLedger.upsert({
+    where: { id: 'seed-ledger-user' },
+    update: {
+      restoredAt: null,
+      restoredByUserId: null,
+      originalEmail: 'jane.archived@demo.local',
+      originalName: 'Jane Archived',
+    },
+    create: {
+      id: 'seed-ledger-user',
+      recordType: DeletedRecordType.USER,
+      recordId: deletedUser.id,
+      originalEmail: 'jane.archived@demo.local',
+      originalName: 'Jane Archived',
+      originalPlatformRole: PlatformRole.NONE,
+      deactivatedOrgUserIds: [],
+      deletedAt,
+      deletedByUserId: ownerUserId,
+    },
+  });
 
   // ---------------- Unit 02: Departments + Patients + Schedules ----------------
 

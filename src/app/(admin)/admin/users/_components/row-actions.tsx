@@ -150,7 +150,12 @@ export function RowActions({
     <>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="sm" aria-label={`Actions for ${email}`}>
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-label={`Actions for ${email}`}
+            data-testid={`user-actions-${userId}`}
+          >
             <MoreHorizontal className="h-4 w-4" aria-hidden />
           </Button>
         </DropdownMenuTrigger>
@@ -161,9 +166,19 @@ export function RowActions({
           <DropdownMenuItem onClick={() => setOpen('send-reset')}>Send password reset</DropdownMenuItem>
           <DropdownMenuSeparator />
           {isActive ? (
-            <DropdownMenuItem onClick={() => setOpen('deactivate')}>Deactivate</DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => setOpen('deactivate')}
+              data-testid={`deactivate-${userId}`}
+            >
+              Deactivate
+            </DropdownMenuItem>
           ) : (
-            <DropdownMenuItem onClick={() => setActive(true)}>Reactivate</DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => setActive(true)}
+              data-testid={`reactivate-${userId}`}
+            >
+              Reactivate
+            </DropdownMenuItem>
           )}
         </DropdownMenuContent>
       </DropdownMenu>
@@ -256,13 +271,19 @@ export function RowActions({
           <AlertDialogHeader>
             <AlertDialogTitle>Deactivate {email}?</AlertDialogTitle>
             <AlertDialogDescription>
-              They lose access immediately. Reactivate later from the same menu.
+              They lose access immediately and any seat they hold returns to your
+              pool. Reactivate later from the same menu — you&apos;ll reassign a
+              seat then.
             </AlertDialogDescription>
           </AlertDialogHeader>
           {error && <StatusBanner variant="danger">{error}</StatusBanner>}
           <AlertDialogFooter>
             <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => setActive(false)} disabled={pending}>
+            <AlertDialogAction
+              onClick={() => setActive(false)}
+              disabled={pending}
+              data-testid={`confirm-deactivate-${userId}`}
+            >
               {pending ? 'Deactivating…' : 'Deactivate'}
             </AlertDialogAction>
           </AlertDialogFooter>

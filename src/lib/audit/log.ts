@@ -57,10 +57,12 @@ export async function writePlatformAuditLog(entry: {
   resourceType?: string;
   resourceId?: string;
   metadata?: Record<string, unknown>;
+  tx?: AuditClient;
 }): Promise<void> {
   assertPhiFreeMetadata(entry.metadata);
 
-  await prisma.platformAuditLog.create({
+  const client = entry.tx ?? prisma;
+  await client.platformAuditLog.create({
     data: {
       actingUserId: entry.actingUserId,
       action: entry.action,

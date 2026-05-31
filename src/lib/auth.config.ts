@@ -55,13 +55,17 @@ export const authConfig = {
           where: { email },
           include: {
             orgUsers: {
-              where: { isActive: true },
+              where: {
+                isActive: true,
+                organization: { isDeleted: false },
+              },
               include: { organization: true },
               take: 1,
             },
           },
         });
         if (!user) return null;
+        if (user.isDeleted) return null;
 
         // Unit 37 — account lockout. Refuse logins during the lock
         // window REGARDLESS of password correctness so an attacker
@@ -148,12 +152,15 @@ export const authConfig = {
           where: { id: token.id },
           include: {
             orgUsers: {
-              where: { isActive: true },
+              where: {
+                isActive: true,
+                organization: { isDeleted: false },
+              },
               take: 1,
             },
           },
         });
-        if (fresh) {
+        if (fresh && !fresh.isDeleted) {
           token.platformRole = fresh.platformRole;
           const ou = fresh.orgUsers[0] ?? null;
           token.orgId = ou?.orgId ?? null;
