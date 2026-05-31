@@ -81,6 +81,7 @@ export default async function HomePage({
       where: {
         orgId,
         clinicianOrgUserId,
+        patient: { isDeleted: false },
         scheduledStart: { gte: dayStart, lt: dayEnd },
         ...(selectedSiteId ? { siteId: selectedSiteId } : {}),
       },
@@ -125,6 +126,7 @@ export default async function HomePage({
       where: {
         orgId,
         clinicianOrgUserId,
+        patient: { isDeleted: false },
         status: { in: ['DRAFT', 'REVIEWING', 'PENDING_REVIEW'] },
       },
       orderBy: { updatedAt: 'desc' },
@@ -140,6 +142,7 @@ export default async function HomePage({
       where: {
         orgId,
         status: 'OPEN',
+        patient: { isDeleted: false },
         originNote: { clinicianOrgUserId },
       },
       orderBy: { createdAt: 'desc' },
@@ -158,6 +161,7 @@ export default async function HomePage({
     prisma.externalContext.findMany({
       where: {
         orgId,
+        patient: { isDeleted: false },
         deletedAt: null,
         mediaKind: 'DOCUMENT',
         status: { in: ['EXTRACTED', 'PARTIAL_EXTRACTION_REVIEW'] },
@@ -173,6 +177,7 @@ export default async function HomePage({
     prisma.externalContext.count({
       where: {
         orgId,
+        patient: { isDeleted: false },
         deletedAt: null,
         mediaKind: 'DOCUMENT',
         status: 'READY',
