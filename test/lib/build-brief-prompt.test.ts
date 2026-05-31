@@ -92,6 +92,8 @@ const buildPriorNote = (id: string, dateIso: string, content: string) =>
       sensitivityLevel: 'STANDARD_CLINICAL',
       signedAt: new Date(dateIso),
       signedByUserId: 'usr_test',
+      deletedAt: null,
+      deletedByOrgUserId: null,
       backfilledAt: null,
       backfillReason: null,
       // Late-entry charting fields (spec: late-entry-charting.md). Brief

@@ -31,6 +31,7 @@ import { TrialStatusBanner } from '@/components/billing/trial-status-banner';
 import { countOrgDraftsLast30Days } from '@/lib/billing/draft-counter';
 import { loadClinicianCapacitySummary } from '@/lib/billing/commercial-mode';
 import { HomeSearchForm } from './_components/home-search-form';
+import { DraftsList, type DraftListItem } from './_components/drafts-list';
 
 const ADMIN_ROLES: OrgRole[] = ['ORG_ADMIN', 'SITE_ADMIN'];
 
@@ -129,6 +130,7 @@ export default async function HomePage({
         clinicianOrgUserId,
         patient: { isDeleted: false },
         status: { in: ['DRAFT', 'REVIEWING', 'PENDING_REVIEW'] },
+        deletedAt: null,
       },
       orderBy: { updatedAt: 'desc' },
       take: 50,
@@ -194,6 +196,7 @@ export default async function HomePage({
         clinicianOrgUserId,
         patient: { isDeleted: false },
         status: { in: ['RECORDING', 'PAUSED'] },
+        deletedAt: null,
       },
       orderBy: { updatedAt: 'desc' },
       take: 10,
@@ -282,34 +285,22 @@ export default async function HomePage({
     />
   ));
 
-  // Shared draft rows (used in both branches)
-  const draftRows = drafts.map((d) => (
-    <Link
-      key={d.id}
-      href={`/review/${d.id}`}
-      className="flex items-center justify-between rounded-md border border-border px-3 py-2 hover:bg-muted/40 min-h-[var(--touch-min)]"
-    >
-      <div className="flex items-center gap-2 text-sm">
-        <UserAvatar
-          firstName={d.patient.firstName}
-          lastName={d.patient.lastName}
-          size="sm"
-        />
-        <span className="font-medium">
-          {d.patient.lastName}, {d.patient.firstName}
-        </span>
-        <span className="text-muted-foreground text-xs">{d.patient.mrn}</span>
-      </div>
-      <div className="flex items-center gap-2">
-        <StatusBadge variant="neutral" noIcon className="text-[10px]">
-          {d.status}
-        </StatusBadge>
-        <span className="text-[11px] text-muted-foreground">
-          {d.updatedAt.toLocaleDateString()}
-        </span>
-      </div>
-    </Link>
-  ));
+  // Combined Drafts list — unfinished recordings (RECORDING/PAUSED) AND
+  // in-progress drafts (DRAFT/REVIEWING/PENDING_REVIEW). Both are unfinished
+  // work the clinician can return to; the DraftsList client component routes
+  // recordings → /capture and drafts → /review, and carries a per-row discard.
+  // Sorted most-recently-touched first across both kinds. updatedAt is
+  // formatted on the server to avoid client/server locale hydration drift.
+  const draftItems: DraftListItem[] = [...inProgressRecordings, ...drafts]
+    .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
+    .map((r) => ({
+      id: r.id,
+      status: r.status as DraftListItem['status'],
+      patientFirstName: r.patient.firstName,
+      patientLastName: r.patient.lastName,
+      mrn: r.patient.mrn,
+      updatedAtLabel: r.updatedAt.toLocaleDateString(),
+    }));
 
   // Shared follow-up rows
   const followupRows = followups.map((f) => (
@@ -532,7 +523,7 @@ export default async function HomePage({
           <div className="rounded-xl border border-border bg-card shadow-sm overflow-hidden">
             <TodayStatusTiles
               visits={schedules.length}
-              drafts={drafts.length}
+              drafts={draftItems.length}
               followups={followups.length}
             />
           </div>
@@ -561,19 +552,19 @@ export default async function HomePage({
           )}
         </section>
 
-        {/* 6. Drafts */}
-        {drafts.length > 0 && (
+        {/* 6. Drafts — unfinished recordings + in-progress drafts, each with discard */}
+        {draftItems.length > 0 && (
           <section id="drafts" className="px-4 pb-4 space-y-2">
             <h2 className="text-xs uppercase tracking-wide text-muted-foreground font-medium flex items-center gap-2">
               Drafts
-              <StatusBadge variant="info" noIcon className="text-[10px]">{drafts.length}</StatusBadge>
+              <StatusBadge variant="info" noIcon className="text-[10px]">{draftItems.length}</StatusBadge>
             </h2>
             <div
               className="space-y-1 max-h-[280px] overflow-y-auto pr-1"
               role="list"
-              aria-label={`Drafts, ${drafts.length} total`}
+              aria-label={`Drafts, ${draftItems.length} total`}
             >
-              {draftRows}
+              <DraftsList items={draftItems} />
             </div>
           </section>
         )}
@@ -735,21 +726,21 @@ export default async function HomePage({
             </CardContent>
           </Card>
 
-          {/* Drafts */}
+          {/* Drafts — unfinished recordings + in-progress drafts, each with discard */}
           <Card id="drafts">
             <CardHeader>
               <CardTitle className="text-md flex items-center gap-2">
                 <FileEdit className="h-4 w-4 text-muted-foreground" aria-hidden />
                 Drafts
-                {drafts.length > 0 && (
+                {draftItems.length > 0 && (
                   <StatusBadge variant="info" noIcon className="text-[10px]">
-                    {drafts.length}
+                    {draftItems.length}
                   </StatusBadge>
                 )}
               </CardTitle>
             </CardHeader>
             <CardContent>
-              {drafts.length === 0 ? (
+              {draftItems.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
                   No drafts waiting — finalize a recording on{' '}
                   <Link href="/patients" className="underline hover:text-foreground">
@@ -761,9 +752,9 @@ export default async function HomePage({
                 <div
                   className="max-h-[320px] overflow-y-auto pr-1 space-y-2"
                   role="list"
-                  aria-label={`Drafts, ${drafts.length} total`}
+                  aria-label={`Drafts, ${draftItems.length} total`}
                 >
-                  {draftRows}
+                  <DraftsList items={draftItems} />
                 </div>
               )}
             </CardContent>

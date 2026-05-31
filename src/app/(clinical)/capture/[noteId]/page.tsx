@@ -34,7 +34,8 @@ export default async function CapturePage({ params }: { params: Promise<{ noteId
   if (requiresProfileCompletion(session.user)) redirect('/onboarding/profile');
 
   const note = await prisma.note.findFirst({
-    where: { id: noteId, orgId: session.user.orgId },
+    // deletedAt: null — a discarded recording 404s rather than reopening.
+    where: { id: noteId, orgId: session.user.orgId, deletedAt: null },
     include: {
       patient: { select: { id: true, firstName: true, lastName: true, mrn: true } },
       encounter: { select: { episodeOfCareId: true, siteId: true } },

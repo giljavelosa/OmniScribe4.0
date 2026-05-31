@@ -72,6 +72,11 @@ export type AuditAction =
   | 'NOTE_INTERRUPTED'
   | 'NOTE_RETRY_ENQUEUED'
   | 'NOTE_RECORDING_RESET'
+  // Clinician discarded an unfinished recording (RECORDING/PAUSED) or an
+  // in-progress draft (DRAFT/REVIEWING/PENDING_REVIEW) from the Drafts surface.
+  // Soft-delete only — row + audio are retained (rule 7). Metadata: status
+  // (at time of delete), deletedByOrgUserId. SIGNED/TRANSFERRED can't be deleted.
+  | 'NOTE_DELETED'
   | 'TRANSCRIPTION_JOB_ENQUEUED'
   | 'TRANSCRIPT_FINALIZED'
   | 'VOICE_ID_MATCHED'

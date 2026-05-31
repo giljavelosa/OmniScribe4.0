@@ -209,6 +209,7 @@ export default async function PatientDetailPage({
             orgId: session.user.orgId,
             clinicianOrgUserId: viewerOrgUserId,
             status: { in: ['RECORDING', 'PAUSED'] },
+            deletedAt: null,
           },
           orderBy: { updatedAt: 'desc' },
           take: 5,
