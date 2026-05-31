@@ -16,7 +16,7 @@ import {
 import { StatusBanner } from '@/components/ui/status-banner';
 import { Division, Profession } from '@prisma/client';
 import {
-  CLINICIAN_PICKABLE_DIVISIONS,
+  divisionForProfession,
   PROFESSION_OPTIONS,
   professionLabel,
 } from '@/lib/professions';
@@ -51,8 +51,10 @@ export function SignupForm() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [orgName, setOrgName] = useState('');
-  const [division, setDivision] = useState<Division | ''>('');
   const [professionType, setProfessionType] = useState<Profession | ''>('');
+  // Division is derived from profession (1:1 map) — never an independent choice,
+  // so a PT can't register under MEDICAL. Shown read-only below.
+  const derivedDivision = professionType ? divisionForProfession(professionType) : null;
   const [trialKind, setTrialKind] = useState<'solo' | 'org'>('solo');
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -82,7 +84,6 @@ export function SignupForm() {
           email,
           password,
           orgName,
-          division,
           professionType,
           trialKind,
           ...(captchaToken ? { captchaToken } : {}),
@@ -166,22 +167,17 @@ export function SignupForm() {
       </div>
       <div className="space-y-2">
         <Label>Your division</Label>
-        <Select
-          value={division}
-          onValueChange={(v) => setDivision(v as Division)}
-          disabled={pending}
-        >
-          <SelectTrigger>
-            <SelectValue placeholder="Select your division" />
-          </SelectTrigger>
-          <SelectContent>
-            {CLINICIAN_PICKABLE_DIVISIONS.map((d) => (
-              <SelectItem key={d} value={d}>
-                {DIVISION_LABEL[d]}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <div className="flex h-9 items-center rounded-md border border-input bg-muted px-3 text-sm">
+          {derivedDivision ? (
+            <span>{DIVISION_LABEL[derivedDivision]}</span>
+          ) : (
+            <span className="text-muted-foreground">Select your profession first</span>
+          )}
+        </div>
+        <p className="text-[11px] text-muted-foreground">
+          Derived from your profession — your notes are always documented under
+          this division.
+        </p>
       </div>
       <div className="space-y-2">
         <Label>Who is signing up?</Label>
@@ -255,7 +251,6 @@ export function SignupForm() {
           email.length === 0 ||
           password.length === 0 ||
           orgName.length === 0 ||
-          !division ||
           !professionType
         }
         className="w-full"

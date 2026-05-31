@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { Division, OrgRole, Profession, ComplianceProfile, SeatTier, SubscriptionPlan } from '@prisma/client';
+import { OrgRole, Profession, ComplianceProfile, SeatTier, SubscriptionPlan } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 
@@ -7,6 +7,7 @@ import { prisma } from '@/lib/prisma';
 import { writeAuditLog, writePlatformAuditLog } from '@/lib/audit/log';
 import { ensureOrganizationCommercialContract } from '@/lib/billing/ensure-contract';
 import { validatePassword } from '@/lib/auth/password-policy';
+import { divisionForProfession } from '@/lib/professions';
 import { consumeSignupAttempt } from '@/lib/rate-limit';
 import {
   hashIpForAudit,
@@ -22,19 +23,15 @@ const bodySchema = z.object({
   password: z.string().min(1).max(128),
   orgName: z.string().min(1).max(200),
   /**
-   * The signing-up clinician's own scope of practice. MUST be concrete so a
-   * note's division can always be derived (resolveDivisionForNote). MULTI is
-   * rejected — it's an org-aggregate value, not a per-clinician scope. The org
-   * itself starts at this division and admins can broaden it to MULTI later via
-   * org-settings (multi-specialty practice).
-   */
-  division: z.nativeEnum(Division).refine((d) => d !== Division.MULTI, {
-    message: 'Pick a concrete division — MULTI is an org-aggregate value, not a clinician scope of practice.',
-  }),
-  /**
    * Categorical profession of the signing-up clinician. Required + concrete:
    * OTHER maps to no division (PROFESSION_TO_DIVISION) so it's refused here, same
    * as the profile-completion gate (/api/me/complete-profile).
+   *
+   * The clinical division is DERIVED from this (divisionForProfession) — it is
+   * NEVER supplied by the client — so a PT can't self-register under MEDICAL.
+   * The org itself starts at the derived division and admins can broaden it to
+   * MULTI later via org-settings (multi-specialty practice). Any client-sent
+   * `division` field is ignored (stripped by Zod).
    */
   professionType: z.nativeEnum(Profession).refine((p) => p !== Profession.OTHER, {
     message: 'Profession "Other" is not allowed — pick a concrete profession so your note division can be derived.',
@@ -91,6 +88,18 @@ export async function POST(req: Request) {
   }
   const data = parsed.data;
 
+  // Division is DERIVED from profession (never client-supplied) so the founder's
+  // documented division always matches their scope of practice. professionType is
+  // guaranteed concrete (schema refuses OTHER) so this is always non-null; the
+  // guard is belt-and-suspenders against a future enum gap.
+  const division = divisionForProfession(data.professionType);
+  if (!division) {
+    return NextResponse.json(
+      { error: { code: 'bad_request', message: 'Profession has no clinical division.' } },
+      { status: 400 },
+    );
+  }
+
   // 2. CAPTCHA.
   const captchaRequired = isTurnstileConfigured();
   if (captchaRequired) {
@@ -136,11 +145,11 @@ export async function POST(req: Request) {
     const newOrg = await tx.organization.create({
       data: {
         name: data.orgName,
-        division: data.division,
-        // Seed the org default to the founder's concrete division so any
-        // future MULTI clinician (or one mid-profile-completion) still has a
+        division,
+        // Seed the org default to the founder's (profession-derived) division so
+        // any future MULTI clinician (or one mid-profile-completion) still has a
         // resolvable note division as the final safety-net (resolveDivisionForNote).
-        defaultDivision: data.division,
+        defaultDivision: division,
         billingEmail: data.email,
         subscriptionPlan: SubscriptionPlan.STARTER,
         complianceProfile: ComplianceProfile.STANDARD,
@@ -157,7 +166,7 @@ export async function POST(req: Request) {
         orgId: newOrg.id,
         userId: newUser.id,
         role: OrgRole.ORG_ADMIN,
-        division: data.division,
+        division,
         professionType: data.professionType,
         isActive: true,
       },
@@ -180,7 +189,7 @@ export async function POST(req: Request) {
   const auditMeta = {
     orgId: org.id,
     orgName: org.name,
-    division: data.division,
+    division,
     professionType: data.professionType,
     trialKind: data.trialKind,
     ipHash,

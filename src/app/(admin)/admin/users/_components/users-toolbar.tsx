@@ -22,6 +22,7 @@ import {
   CLINICIAN_PICKABLE_DIVISIONS,
   PROFESSION_OPTIONS,
   professionLabel,
+  divisionForProfession,
 } from '@/lib/professions';
 
 /** Roles an org admin can invite. ORG_ADMIN
@@ -65,6 +66,11 @@ export function UsersToolbar() {
   const [pending, startTransition] = useTransition();
 
   const isRecordingRole = RECORDING_ROLES.has(role);
+  // For recording roles the division is DERIVED from the profession (1:1 map) and
+  // shown read-only — an admin can't file a PT under MEDICAL. VIEWER has no
+  // profession and keeps the free division picker.
+  const derivedDivision =
+    isRecordingRole && professionType ? divisionForProfession(professionType) : null;
 
   function submit() {
     setError(null);
@@ -75,7 +81,7 @@ export function UsersToolbar() {
         body: JSON.stringify({
           email,
           role,
-          division,
+          division: isRecordingRole ? derivedDivision : division,
           professionType: isRecordingRole ? professionType : undefined,
           profession: profession || undefined,
           canManagePatients,
@@ -178,14 +184,30 @@ export function UsersToolbar() {
             )}
             <div className="space-y-2">
               <Label>Division</Label>
-              <Select value={division} onValueChange={(v) => setDivision(v as Division)} disabled={pending}>
-                <SelectTrigger><SelectValue placeholder="Select a division" /></SelectTrigger>
-                <SelectContent>
-                  {CLINICIAN_PICKABLE_DIVISIONS.map((d) => (
-                    <SelectItem key={d} value={d}>{DIVISION_LABEL[d]}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {isRecordingRole ? (
+                <>
+                  <div className="flex h-9 items-center rounded-md border border-input bg-muted px-3 text-sm">
+                    {derivedDivision ? (
+                      <span>{DIVISION_LABEL[derivedDivision]}</span>
+                    ) : (
+                      <span className="text-muted-foreground">Select a profession first</span>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Derived from the profession — recording clinicians are documented
+                    under their profession&apos;s division.
+                  </p>
+                </>
+              ) : (
+                <Select value={division} onValueChange={(v) => setDivision(v as Division)} disabled={pending}>
+                  <SelectTrigger><SelectValue placeholder="Select a division" /></SelectTrigger>
+                  <SelectContent>
+                    {CLINICIAN_PICKABLE_DIVISIONS.map((d) => (
+                      <SelectItem key={d} value={d}>{DIVISION_LABEL[d]}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
             </div>
             <div className="space-y-2">
               <Label htmlFor="iprofession">Specialty (optional)</Label>
@@ -205,8 +227,7 @@ export function UsersToolbar() {
                 disabled={
                   pending ||
                   !email ||
-                  !division ||
-                  (isRecordingRole && !professionType)
+                  (isRecordingRole ? !professionType : !division)
                 }
                 className="w-full"
               >
