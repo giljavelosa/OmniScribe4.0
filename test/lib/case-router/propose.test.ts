@@ -98,6 +98,28 @@ describe('Zod schema — CaseRouterProposalSchema', () => {
     expect(result.success).toBe(true);
   });
 
+  it('parses model nulls for optional string fields', () => {
+    const result = CaseRouterProposalSchema.safeParse({
+      action: 'open-new',
+      newCase: {
+        primaryIcd: 'M75.42',
+        primaryIcdLabel: 'Impingement syndrome of left shoulder',
+        secondaryIcd: null,
+        secondaryIcdLabel: null,
+      },
+      confidence: 'high',
+      reasoning: 'The note describes a distinct shoulder care arc.',
+      alternatives: [
+        {
+          action: 'attach',
+          caseManagementId: null,
+          reasoning: 'No existing case fits, but the clinician can override.',
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+  });
+
   it('Sprint 0.15: parses an "open-new-from-condition" proposal with fhirCitations', () => {
     const result = CaseRouterProposalSchema.safeParse({
       action: 'open-new-from-condition',

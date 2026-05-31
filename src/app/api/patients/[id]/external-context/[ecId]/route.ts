@@ -4,7 +4,7 @@ import { prisma } from '@/lib/prisma';
 import { requireFeatureAccess } from '@/lib/authz/server';
 import { assertOrgScoped } from '@/lib/phi-access';
 import { writeAuditLog } from '@/lib/audit/log';
-import { getPresignedAudioUrl } from '@/lib/s3/client';
+import { getPresignedAudioUrl, getPresignedObjectUrl } from '@/lib/s3/client';
 
 export const runtime = 'nodejs';
 
@@ -32,12 +32,31 @@ export async function GET(
       id: ecId,
       patientId,
       orgId: authorizationUser.orgId,
+      deletedAt: null,
     },
     include: {
       addedBy: {
         select: {
           id: true,
           user: { select: { email: true, name: true } },
+        },
+      },
+      extractionBatches: {
+        orderBy: { batchIndex: 'asc' },
+        select: {
+          id: true,
+          batchIndex: true,
+          pageStart: true,
+          pageEnd: true,
+          status: true,
+          ocrText: true,
+          extractionJson: true,
+          vettedExtractionJson: true,
+          extractionModel: true,
+          extractedAt: true,
+          reviewedAt: true,
+          errorClass: true,
+          errorMessage: true,
         },
       },
       patient: { select: { orgId: true } },
@@ -51,6 +70,14 @@ export async function GET(
   const audioUrl = row.audioFileKey
     ? await getPresignedAudioUrl(row.audioFileKey, 300).catch(() => null)
     : null;
+  const documentUrls = await Promise.all(
+    row.documentFileKeys.map(async (key, index) => ({
+      key,
+      mimeType: row.documentMimeTypes[index] ?? null,
+      url: await getPresignedObjectUrl(key, 300).catch(() => null),
+      previewUrl: `/api/patients/${patientId}/external-context/${ecId}/documents/${index}`,
+    })),
+  );
 
   await writeAuditLog({
     userId: user.id,
@@ -62,6 +89,8 @@ export async function GET(
       hasAudio: !!row.audioFileKey,
       source: row.source,
       status: row.status,
+      mediaKind: row.mediaKind,
+      verifiedAt: row.verifiedAt?.toISOString() ?? null,
     },
   });
 
@@ -72,11 +101,36 @@ export async function GET(
       source: row.source,
       sourceLabel: row.sourceLabel,
       status: row.status,
+      mediaKind: row.mediaKind,
+      verifiedAt: row.verifiedAt?.toISOString() ?? null,
+      verifiedByOrgUserId: row.verifiedByOrgUserId,
       addedAt: row.addedAt.toISOString(),
       episodeOfCareId: row.episodeOfCareId,
       transcriptClean: row.transcriptClean,
+      ocrText: row.ocrText,
+      extractionJson: row.extractionJson,
+      vettedExtractionJson: row.vettedExtractionJson,
+      extractionModel: row.extractionModel,
+      extractedAt: row.extractedAt?.toISOString() ?? null,
+      pageCount: row.pageCount,
+      extractionBatches: row.extractionBatches.map((batch) => ({
+        id: batch.id,
+        batchIndex: batch.batchIndex,
+        pageStart: batch.pageStart,
+        pageEnd: batch.pageEnd,
+        status: batch.status,
+        ocrText: batch.ocrText,
+        extractionJson: batch.extractionJson,
+        vettedExtractionJson: batch.vettedExtractionJson,
+        extractionModel: batch.extractionModel,
+        extractedAt: batch.extractedAt?.toISOString() ?? null,
+        reviewedAt: batch.reviewedAt?.toISOString() ?? null,
+        errorClass: batch.errorClass,
+        errorMessage: batch.errorMessage,
+      })),
       hasAudio: !!row.audioFileKey,
       audioUrl,
+      documentUrls,
       addedBy: {
         orgUserId: row.addedBy.id,
         email: row.addedBy.user.email,

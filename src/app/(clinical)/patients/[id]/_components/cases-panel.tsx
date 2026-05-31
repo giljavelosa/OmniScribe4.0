@@ -8,11 +8,12 @@ import type {
   FhirWriteBackStatus,
   FhirWriteBackFailureKind,
 } from '@prisma/client';
-import { ChevronDown, ChevronRight, Mic, Plus } from 'lucide-react';
+import { ChevronDown, ChevronRight, FolderOpen, Mic, Plus } from 'lucide-react';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { StatusBadge } from '@/components/ui/status-badge';
+import { EmptyState } from '@/components/ui/empty-state';
 import { WritebackStatusChip } from '@/components/fhir/writeback-status-chip';
 import { divisionForProfession } from '@/lib/professions';
 import {
@@ -138,7 +139,11 @@ export function CasesPanel({
         </CardHeader>
         <CardContent className="space-y-3">
           {ordered.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No cases on file.</p>
+            <EmptyState
+              icon={<FolderOpen className="size-5" />}
+              title="No cases on file"
+              description="Cases group a patient's care by diagnosis. Start a visit to open the first one."
+            />
           ) : (
             <>
               {hero && (
@@ -202,7 +207,7 @@ function HeroCaseCard({
 }) {
   const isYours = isViewerActiveCase(caseRow);
   return (
-    <div className="rounded-md border-2 border-primary/60 bg-primary/[0.03] p-3 space-y-2 shadow-sm">
+    <Card variant="elevated" className="gap-0 px-4 py-3 space-y-2">
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <StatusBadge variant={isYours ? 'success' : 'neutral'} noIcon>
           {isYours ? 'Your active case' : 'Most recent case'}
@@ -229,7 +234,7 @@ function HeroCaseCard({
         canEdit={canEdit}
         chrome="bare"
       />
-    </div>
+    </Card>
   );
 }
 
@@ -364,7 +369,7 @@ function CaseCard({
             summary={
               caseRow.medicalVisitCount > 0
                 ? `${caseRow.medicalVisitCount} medical visit${caseRow.medicalVisitCount === 1 ? '' : 's'}`
-                : 'No medical activity'
+                : 'No medical visits linked to this case'
             }
           />
 
@@ -374,7 +379,7 @@ function CaseCard({
             summary={
               caseRow.bhVisitCount > 0
                 ? `${caseRow.bhVisitCount} BH visit${caseRow.bhVisitCount === 1 ? '' : 's'}`
-                : 'No BH activity'
+                : 'No behavioral-health visits linked to this case'
             }
           />
         </div>

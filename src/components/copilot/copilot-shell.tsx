@@ -60,7 +60,7 @@ export function CopilotShell({
   patientFirstName,
 }: {
   surface: CopilotSurface;
-  noteId: string;
+  noteId?: string | null;
   patientId: string;
   /** Unit 42 — threaded into the persona greeting + the empty-state
    *  intro. Optional so mount sites that haven't been updated yet
@@ -89,10 +89,10 @@ export function CopilotShell({
       void fetch('/api/audit/copilot-event', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action, surface, noteId }),
+        body: JSON.stringify({ action, surface, noteId: noteId ?? undefined, patientId }),
       }).catch(() => {});
     },
-    [surface, noteId],
+    [surface, noteId, patientId],
   );
 
   // Fire BEACON_OPENED / _CLOSED on every transition (not on initial mount).
@@ -267,7 +267,7 @@ function CompactStrip({
   onClose,
 }: {
   patientId: string;
-  noteId: string;
+  noteId?: string | null;
   onExpand: () => void;
   onClose: () => void;
 }) {
@@ -293,7 +293,7 @@ function CompactStrip({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           patientId,
-          noteId,
+          noteId: noteId ?? undefined,
           question: q,
           history: [],
         }),

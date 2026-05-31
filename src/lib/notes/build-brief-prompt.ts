@@ -283,11 +283,14 @@ An <external_context> block, when present, carries up to 5 records of
 prior-visit material added to the chart by the care team. Sources include
 patient-supplied audio/transcripts, referring-provider documentation,
 earlier visits the clinician did but never documented, and
-free-text recollection.
+free-text recollection. Clinician-verified uploaded records are attested
+chart context, but they are still NOT signed visit notes and must be labeled
+by their uploaded-record source. Unverified, pending, extracting, failed, or
+discarded records are excluded before this prompt is built.
 
-LOWER-CONFIDENCE THAN SIGNED NOTES. The current clinician did not attest
-to these records. They are NOT visit notes. Treat them as secondary
-ground truth for narrative history only:
+SOURCE HIERARCHY. Signed notes remain the visit timeline source of truth.
+Verified uploaded records may support narrative history and chart facts, but
+do not silently override signed notes:
 
   • You MAY use them to add background context to \`chiefConcern\` or
     \`priorAssessment\` when the signed notes are thin and the external
@@ -297,7 +300,8 @@ ground truth for narrative history only:
     \`objectiveMeasures\`, \`topActiveGoals\`, or \`watch.recentMedChanges\`.
     Those fields are signed-note-only.
   • When you cite a fact whose only source is an external-context record,
-    phrase it explicitly: "per outside provider note dated YYYY-MM-DD",
+    phrase it explicitly: "per verified outside record dated YYYY-MM-DD",
+    "per outside provider note dated YYYY-MM-DD",
     "per patient-supplied audio dated YYYY-MM-DD", etc. NEVER write
     "Last visit X said" for external-context content — that phrasing is
     reserved for signed notes.

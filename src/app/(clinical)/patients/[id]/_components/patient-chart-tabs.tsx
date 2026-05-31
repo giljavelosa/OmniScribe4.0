@@ -1,7 +1,8 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { CreditCard, MapPin } from 'lucide-react';
 import type { PatientSex } from '@prisma/client';
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -9,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { StatusBanner } from '@/components/ui/status-banner';
 import { SectionLabel } from '@/components/ui/section-label';
+import { EmptyState } from '@/components/ui/empty-state';
 import { UserAvatar } from '@/components/ui/user-avatar';
 import { cn } from '@/lib/cn';
 import { VisitHistoryList } from '@/components/patients/visit-history-list';
@@ -31,7 +33,6 @@ import type { Profession } from '@prisma/client';
 import { divisionForProfession } from '@/lib/professions';
 import { SafetyBand } from './safety-band';
 import type { ProblemRow } from './safety-band';
-import { CockpitTile } from './cockpit-tile';
 import { ChartDetailSheet } from './chart-detail-sheet';
 import { FollowUpsSheet } from './follow-ups-sheet';
 import type { FollowUpSummary } from './follow-ups-sheet';
@@ -39,7 +40,22 @@ import { LastVisitSheet } from './last-visit-sheet';
 import { SnapshotDetailSheet } from './snapshot-detail-sheet';
 import { PriorRecordsSheet } from './prior-records-sheet';
 import { ProblemsSheet } from './problems-sheet';
-import { SnapshotInlineStrip } from './snapshot-inline-strip';
+import { VitalsBoard } from './vitals-board';
+import { VisitsSummaryBand } from './visits-summary-band';
+import { WorklistCard } from './worklist-card';
+import { CaseSpotlightCard } from './case-spotlight-card';
+import { LastVisitCard } from './last-visit-card';
+import { PatientDeleteCard } from './patient-delete-card';
+import { sortCasesByViewerRecency } from '@/lib/case-management/sort';
+import type {
+  VerifiedAllergyFact,
+  VerifiedLabFact,
+  VerifiedMedicationFact,
+  VerifiedProblemFact,
+  VerifiedProcedureFact,
+  VerifiedVitalFact,
+} from '@/lib/external-context/verified-chart-facts';
+import { sourceMatchLabel } from '@/lib/external-context/verified-chart-facts';
 
 // ---------------------------------------------------------------------------
 // Local prop types — mirror the Prisma shapes but with ISO strings so the
@@ -79,14 +95,6 @@ type CoverageData = {
   status: string;
 };
 
-type GoalProgressEntryData = {
-  id: string;
-  measureValue: string | null;
-  statusAtEntry: string | null;
-  deltaNote: string | null;
-  recordedAt: string; // ISO
-};
-
 type Props = {
   patient: PatientData;
   addresses: AddressData[];
@@ -95,6 +103,12 @@ type Props = {
   snapshotStrip: PatientSnapshotStripData | null;
   casesForPanel: CasePanelData[];
   externalContextItems: ExternalContextSummary[];
+  verifiedMedications: VerifiedMedicationFact[];
+  verifiedAllergies: VerifiedAllergyFact[];
+  verifiedProblems: VerifiedProblemFact[];
+  verifiedLabs: VerifiedLabFact[];
+  verifiedVitals: VerifiedVitalFact[];
+  verifiedProcedures: VerifiedProcedureFact[];
   visits: VisitHistoryRow[];
   followUps: FollowUpSummary[];
   activeCasesForPicker: StartVisitDialogCase[];
@@ -104,6 +118,9 @@ type Props = {
   /** False when the caller's role is VIEWER — hides edit controls in
    *  GoalsSection / GoalRow to prevent the 403-on-save UX trap. */
   canEditEpisodes: boolean;
+  /** Patient deletion is organization-admin only. Other patient-management
+   *  users can add/edit demographics but cannot erase records from active use. */
+  canDeletePatient: boolean;
   /** EhrLinkPanel is a Server Component — passed as rendered ReactNode so it
    *  can live in the Profile tab without breaking the client boundary. */
   ehrPanel: React.ReactNode;
@@ -116,6 +133,7 @@ type Props = {
    *  renders nothing (decision 10, backward compat for clinicians
    *  whose state-rebuild hasn't yet seeded a candidate). */
   chartNudges: NudgeCardData[];
+  initialExternalContextId?: string | null;
 };
 
 const DIVISION_DISPLAY = [
@@ -154,6 +172,31 @@ function formatRelativeDate(iso: string | null): string {
   return `${Math.round(days / 365)}y ago`;
 }
 
+function formatDateLabel(iso: string): string {
+  return iso.slice(0, 10);
+}
+
+function formatMedicationDisplay(med: VerifiedMedicationFact): string {
+  return [med.name, med.dose, med.route, med.frequency].filter(Boolean).join(' ');
+}
+
+function formatDocumentType(documentType: string): string {
+  return documentType.replaceAll('_', ' ');
+}
+
+function medicationStatusVariant(status: VerifiedMedicationFact['status']) {
+  switch (status) {
+    case 'current':
+      return 'success';
+    case 'planned':
+    case 'unknown':
+      return 'warning';
+    case 'historical':
+    case 'discontinued':
+      return 'neutral';
+  }
+}
+
 type OpenSheet =
   | 'snapshot'
   | 'medications'
@@ -180,6 +223,12 @@ export function PatientChartTabs({
   snapshotStrip,
   casesForPanel,
   externalContextItems,
+  verifiedMedications,
+  verifiedAllergies,
+  verifiedProblems,
+  verifiedLabs,
+  verifiedVitals,
+  verifiedProcedures,
   visits,
   followUps,
   activeCasesForPicker,
@@ -187,18 +236,29 @@ export function PatientChartTabs({
   startVisitSites,
   startVisitDefaultSiteId,
   canEditEpisodes,
+  canDeletePatient,
   ehrPanel,
   cleoRead,
   chartNudges,
+  initialExternalContextId = null,
 }: Props) {
   const router = useRouter();
   const age = computeAge(patient.dobIso);
   const totalVisits = visits.length;
   const [openSheet, setOpenSheet] = useState<OpenSheet>(null);
+  const [initialDetailId, setInitialDetailId] = useState<string | null>(initialExternalContextId);
   /** Set to a case id when the Cases-tab hero's "Continue this case" button
    *  is tapped. Mounts a scoped StartVisitDialog (activeCases = [thatCase])
    *  so the dialog treats it as the 1-case path and skips the picker. */
   const [continueCaseId, setContinueCaseId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!initialExternalContextId) return;
+    // Opening a source-chip deep link is intentional URL-to-UI synchronization.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setInitialDetailId(initialExternalContextId);
+    setOpenSheet('priorRecords');
+  }, [initialExternalContextId]);
 
   const visitsByDivision = visits.reduce<Record<string, number>>((acc, v) => {
     acc[v.division] = (acc[v.division] ?? 0) + 1;
@@ -209,38 +269,122 @@ export function PatientChartTabs({
     (acc, [k, n]) => (DIVISION_DISPLAY.some((d) => d.key === k) ? acc : acc + n),
     0,
   );
+  const lateEntryCount = visits.filter((v) => v.isLateEntry).length;
+  const visitDivisionStats = [
+    ...activeStripEntries.map((d) => ({ label: d.label, value: visitsByDivision[d.key] ?? 0 })),
+    ...(otherCount > 0 ? [{ label: 'Other', value: otherCount }] : []),
+  ];
 
-  const activeCaseCount = casesForPanel.filter((c) => c.status === 'ACTIVE').length;
+  const activeCases = casesForPanel.filter((c) => c.status === 'ACTIVE');
+  const activeCaseCount = activeCases.length;
   const showCasesTab = casesForPanel.length > 0;
   const viewerDivision = divisionForProfession(viewingProfession);
 
   const activeProblems: ProblemRow[] = Array.from(
     new Map(
-      casesForPanel
-        .filter((c) => c.status === 'ACTIVE')
-        .map((c) => {
+      [
+        ...casesForPanel.filter((c) => c.status === 'ACTIVE').map((c) => {
           const label = c.primaryIcd
             ? `${c.primaryIcd} · ${c.primaryIcdLabel}`
             : c.primaryIcdLabel;
-          return [label, { id: c.id, label }] as [string, ProblemRow];
+          return [
+            label,
+            {
+              id: c.id,
+              label,
+              sourceKind: 'active_case',
+              sourceLabel: 'Active case',
+              sourceDate: c.lastActivityAt,
+            },
+          ] as [string, ProblemRow];
         }),
+        ...verifiedProblems.filter((p) => p.status === 'active').map((p) => {
+          const label = p.icdHint ? `${p.icdHint} · ${p.text}` : p.text;
+          return [
+            label,
+            {
+              id: `verified:${p.id}`,
+              label,
+              sourceKind: 'verified_uploaded_record',
+              sourceLabel: p.sourceLabel ?? formatDocumentType(p.documentType),
+              sourceDate: p.dateOfRecordIso,
+              pageNumber: p.sourcePage,
+            },
+          ] as [string, ProblemRow];
+        }),
+      ],
     ).values(),
   );
 
-  // Cockpit tile headlines
+  // Overview dashboard — derived values.
   const openFollowUpCount = followUps.filter((f) => f.status === 'OPEN').length;
-  const followUpsHeadline =
-    openFollowUpCount > 0 ? `Open follow-ups (${openFollowUpCount})` : 'None open';
+  const documentRecords = externalContextItems.filter((item) => item.mediaKind === 'DOCUMENT');
+  const verifiedDocumentRecords = documentRecords.filter((item) =>
+    item.status === 'READY' && item.verifiedAt,
+  );
+  const verifiedIndexedPageCount = verifiedDocumentRecords.reduce(
+    (sum, item) => sum + (item.indexedPageCount ?? 0),
+    0,
+  );
+
+  const currentVerifiedMedicationCount = verifiedMedications.filter((m) => m.status === 'current').length;
+  const medicationHeadline = verifiedMedications.length > 0
+    ? currentVerifiedMedicationCount > 0
+      ? `${currentVerifiedMedicationCount} current med${currentVerifiedMedicationCount === 1 ? '' : 's'} from verified records`
+      : `${verifiedMedications.length} med${verifiedMedications.length === 1 ? '' : 's'} from verified records`
+    : verifiedDocumentRecords.length > 0
+      ? `Verified uploaded records searchable${verifiedIndexedPageCount > 0 ? ` · ${verifiedIndexedPageCount} pages indexed` : ''}`
+    : 'No current meds from signed visits or verified records';
 
   const lastVisit = visits[0] ?? null;
-  const lastVisitHeadline = lastVisit
-    ? `${formatRelativeDate(lastVisit.signedAt)}${lastVisit.templateName ? ` — ${lastVisit.templateName}` : ''}`
-    : 'No visits yet';
+  const lastVisitTitle = lastVisit?.templateName ?? 'Visit';
+  const lastVisitMeta = lastVisit
+    ? [formatRelativeDate(lastVisit.signedAt), lastVisit.clinicianName].filter(Boolean).join(' · ')
+    : undefined;
+  const lastVisitSnippet = lastVisit?.assessmentSnippet ?? undefined;
 
-  const priorRecordsHeadline =
-    externalContextItems.length > 0
-      ? `Prior records (${externalContextItems.length})`
-      : 'None on file';
+  // "N signed visits · Rehab (2) · …" — folded out of the old section header.
+  const overviewMetaLine = totalVisits > 0
+    ? [
+        `${totalVisits} signed visit${totalVisits === 1 ? '' : 's'}`,
+        ...activeStripEntries.map((d) => `${d.label} (${visitsByDivision[d.key]})`),
+        otherCount > 0 ? `Other (${otherCount})` : null,
+      ].filter((part): part is string => Boolean(part)).join(' · ')
+    : null;
+
+  // The active-case spotlight echoes one active case. Prefer the case whose
+  // active rehab episode carries recert/visit caps — so the meters render and
+  // it aligns with the episode-scoped snapshot above — falling back to viewer
+  // recency when none qualifies. Read-only display selection; nothing mutated.
+  const spotlightCase = (() => {
+    if (activeCases.length === 0) return null;
+    const ranked = sortCasesByViewerRecency(activeCases);
+    const withCappedEpisode = ranked.find((c) =>
+      c.rehabEpisodes.some(
+        (e) =>
+          (e.status === 'ACTIVE' || e.status === 'RECERT_DUE') &&
+          (e.recertDueAt !== null || (e.visitsAuthorized !== null && e.visitsAuthorized > 0)),
+      ),
+    );
+    return withCappedEpisode ?? ranked[0] ?? null;
+  })();
+
+  const documentBatchesNeedingReview = documentRecords.filter((item) =>
+    item.status === 'PARTIAL_EXTRACTION_REVIEW',
+  ).length;
+  const documentsNeedingFinalReview = documentRecords.filter((item) => item.status === 'EXTRACTED').length;
+  const documentReviewCount = documentBatchesNeedingReview + documentsNeedingFinalReview;
+  const documentReviewPreview = [
+    documentBatchesNeedingReview > 0 ? `${documentBatchesNeedingReview} batch review` : null,
+    documentsNeedingFinalReview > 0 ? `${documentsNeedingFinalReview} final review` : null,
+  ].filter(Boolean).join(' · ') || undefined;
+  const recordsActionLabel = documentRecords.length === 0
+    ? 'Add outside record'
+    : documentReviewCount > 0
+      ? 'Review documents'
+      : verifiedDocumentRecords.length > 0
+        ? `${verifiedDocumentRecords.length} verified record${verifiedDocumentRecords.length === 1 ? '' : 's'}`
+        : 'Open records';
 
   function closeSheet() {
     setOpenSheet(null);
@@ -257,16 +401,16 @@ export function PatientChartTabs({
               <UserAvatar
                 firstName={patient.firstName}
                 lastName={patient.lastName}
-                size="md"
+                size="lg"
                 className="shrink-0"
               />
               <div className="flex-1 min-w-0">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <h1 className="text-md font-semibold leading-tight truncate">
+                    <h1 className="text-lg font-semibold leading-tight truncate">
                       {patient.firstName} {patient.lastName}
                     </h1>
-                    <p className="text-xs text-muted-foreground mt-0.5">
+                    <p className="text-sm text-muted-foreground mt-1">
                       {patient.sex} · {age}
                       {patient.mrn && (
                         <>
@@ -289,6 +433,7 @@ export function PatientChartTabs({
 
             <SafetyBand
               activeProblems={activeProblems}
+              verifiedAllergies={verifiedAllergies}
               onOpenProblems={() => setOpenSheet('problems')}
             />
           </div>
@@ -305,7 +450,8 @@ export function PatientChartTabs({
           <Tabs defaultValue="overview" className="space-y-5">
             <TabsList
               className={cn(
-                'inline-flex h-auto w-fit max-w-full flex-wrap items-center justify-start gap-1.5 p-1.5',
+                'inline-flex w-fit max-w-full flex-wrap items-center justify-start gap-1.5 p-1.5',
+                'group-data-[orientation=horizontal]/tabs:h-auto',
                 'rounded-xl border border-foreground/15 bg-muted shadow-sm',
               )}
             >
@@ -325,67 +471,63 @@ export function PatientChartTabs({
               </TabsTrigger>
             </TabsList>
 
-            {/* ── Overview cockpit ─────────────────────────────────────────── */}
-            <TabsContent value="overview" className="space-y-6 mt-0">
-              <section className="space-y-3">
-                <div className="flex items-end justify-between gap-3">
-                  <SectionLabel>At a glance</SectionLabel>
-                  {totalVisits > 0 && (
-                    <p className="text-2xs text-muted-foreground">
-                      {totalVisits} signed visit{totalVisits === 1 ? '' : 's'}
-                      {activeStripEntries.length > 0 && (
-                        <>
-                          {' · '}
-                          {activeStripEntries
-                            .map((d) => `${d.label} (${visitsByDivision[d.key]})`)
-                            .join(' · ')}
-                          {otherCount > 0 ? ` · Other (${otherCount})` : ''}
-                        </>
-                      )}
-                    </p>
+            {/* ── Overview dashboard ───────────────────────────────────────
+                Vital column (primary: board + case spotlight) + intelligence
+                rail (sticky on lg). Two independent columns so neither one's
+                height inflates the other — stacks cleanly on mobile. */}
+            <TabsContent value="overview" className="mt-0">
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-12 lg:items-start">
+                {/* Primary column — vital board, then the active-case echo. */}
+                <div className="min-w-0 space-y-4 lg:col-span-8">
+                  <VitalsBoard
+                    strip={snapshotStrip}
+                    metaLine={overviewMetaLine}
+                    medicationHeadline={medicationHeadline}
+                    verifiedLabs={verifiedLabs}
+                    verifiedVitals={verifiedVitals}
+                    verifiedProcedures={verifiedProcedures}
+                    verifiedDocumentCount={verifiedDocumentRecords.length}
+                    verifiedIndexedPageCount={verifiedIndexedPageCount}
+                    onOpen={() => setOpenSheet('snapshot')}
+                    onOpenMedications={() => setOpenSheet('medications')}
+                  />
+                  {spotlightCase && (
+                    <CaseSpotlightCard
+                      caseRow={spotlightCase}
+                      canEdit={canEditEpisodes}
+                      onContinueCase={(caseId) => setContinueCaseId(caseId)}
+                    />
                   )}
                 </div>
 
-                <SnapshotInlineStrip
-                  strip={snapshotStrip}
-                  onClick={() => setOpenSheet('snapshot')}
-                />
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <CockpitTile
-                    label="Medications"
-                    headline="Not recorded — connect an EHR"
-                    onClick={() => setOpenSheet('medications')}
+                {/* Intelligence rail — sticky on lg. */}
+                <div className="min-w-0 space-y-4 lg:col-span-4 lg:sticky lg:top-[var(--chart-rail-top)]">
+                  <CleoReadCard
+                    patientFirstName={patient.firstName}
+                    data={cleoRead}
+                    onAskOpen={() => {
+                      if (typeof window === 'undefined') return;
+                      window.dispatchEvent(new CustomEvent('cleo:open-sheet'));
+                    }}
                   />
-                  <CockpitTile
-                    label="Open follow-ups"
-                    headline={followUpsHeadline}
-                    onClick={() => setOpenSheet('followUps')}
+                  <WorklistCard
+                    followUpCount={openFollowUpCount}
+                    documentReviewCount={documentReviewCount}
+                    documentPreview={documentReviewPreview}
+                    recordsActionLabel={recordsActionLabel}
+                    onOpenFollowUps={() => setOpenSheet('followUps')}
+                    onOpenDocuments={() => setOpenSheet('priorRecords')}
+                    onOpenRecords={() => setOpenSheet('priorRecords')}
                   />
-                  <CockpitTile
-                    label="Last visit"
-                    headline={lastVisitHeadline}
-                    onClick={() => setOpenSheet('lastVisit')}
-                  />
-                  <CockpitTile
-                    label="Prior records"
-                    headline={priorRecordsHeadline}
-                    onClick={() => setOpenSheet('priorRecords')}
+                  <LastVisitCard
+                    hasVisit={!!lastVisit}
+                    headline={lastVisitTitle}
+                    meta={lastVisitMeta}
+                    snippet={lastVisitSnippet}
+                    onOpen={() => setOpenSheet('lastVisit')}
                   />
                 </div>
-              </section>
-
-              <section className="space-y-2">
-                <SectionLabel>Assistant</SectionLabel>
-                <CleoReadCard
-                  patientFirstName={patient.firstName}
-                  data={cleoRead}
-                  onAskOpen={() => {
-                    if (typeof window === 'undefined') return;
-                    window.dispatchEvent(new CustomEvent('cleo:open-sheet'));
-                  }}
-                />
-              </section>
+              </div>
             </TabsContent>
 
             {showCasesTab && (
@@ -411,11 +553,22 @@ export function PatientChartTabs({
             {/* ── Visits ───────────────────────────────────────────────────── */}
             <TabsContent value="visits" className="space-y-3 mt-0">
               <AwaitingRoutingBanner visits={visits} />
+              <VisitsSummaryBand
+                total={totalVisits}
+                divisions={visitDivisionStats}
+                lateEntryCount={lateEntryCount}
+              />
               <VisitHistoryList visits={visits} />
             </TabsContent>
 
             {/* ── Profile ──────────────────────────────────────────────────── */}
             <TabsContent value="profile" className="space-y-4 mt-0">
+              <PatientDeleteCard
+                patientId={patient.id}
+                patientName={`${patient.firstName} ${patient.lastName}`}
+                canDeletePatient={canDeletePatient}
+              />
+
               <InlineDemographics
                 patient={{
                   id: patient.id,
@@ -446,7 +599,11 @@ export function PatientChartTabs({
                     <section className="space-y-2">
                       <SectionLabel>Address</SectionLabel>
                       {addresses.length === 0 ? (
-                        <p className="text-sm text-muted-foreground">No address on file.</p>
+                        <EmptyState
+                          size="sm"
+                          icon={<MapPin className="size-4" />}
+                          title="No address on file"
+                        />
                       ) : (
                         <ul className="space-y-2">
                           {addresses.map((a) => (
@@ -467,7 +624,11 @@ export function PatientChartTabs({
                     <section className="space-y-2">
                       <SectionLabel>Insurance</SectionLabel>
                       {coverages.length === 0 ? (
-                        <p className="text-sm text-muted-foreground">No coverage on file.</p>
+                        <EmptyState
+                          size="sm"
+                          icon={<CreditCard className="size-4" />}
+                          title="No coverage on file"
+                        />
                       ) : (
                         <ul className="space-y-2">
                           {coverages.map((c) => (
@@ -512,16 +673,51 @@ export function PatientChartTabs({
         snapshotStrip={snapshotStrip}
       />
 
-      {/* Medications — Phase 1: "not connected" placeholder */}
       <ChartDetailSheet
         open={openSheet === 'medications'}
         onOpenChange={(o) => { if (!o) closeSheet(); }}
         title="Medications"
       >
-        <p className="text-sm text-muted-foreground">
-          Medication data will be available once an EHR is connected. Use the Profile tab
-          to link your EHR system.
-        </p>
+        {verifiedMedications.length > 0 ? (
+          <div className="space-y-4">
+            <StatusBanner variant="info" title="From verified uploaded records">
+              These medications were clinician-reviewed from uploaded documents. They are available to the chart
+              context, but they are not a connected-EHR medication reconciliation.
+            </StatusBanner>
+            <ul className="space-y-2">
+              {verifiedMedications.map((med) => (
+                <li
+                  key={med.id}
+                  className="rounded-md border border-border bg-background px-3 py-2"
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="min-w-0 flex-1 text-sm font-medium text-foreground">
+                      {formatMedicationDisplay(med)}
+                    </p>
+                    <StatusBadge variant={medicationStatusVariant(med.status)} noIcon>
+                      {med.status}
+                    </StatusBadge>
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Source: {med.sourceLabel ?? formatDocumentType(med.documentType)}
+                    <span className="mx-1.5">·</span>
+                    {formatDateLabel(med.dateOfRecordIso)}
+                    <span className="mx-1.5">·</span>
+                    page {med.sourcePage}
+                    <span className="mx-1.5">·</span>
+                    {sourceMatchLabel(med.confidence)}
+                    <span className="mx-1.5">·</span>
+                    verified {formatDateLabel(med.verifiedAtIso)}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            No current medications have been found in signed visits or clinician-verified uploaded records yet.
+          </p>
+        )}
       </ChartDetailSheet>
 
       <FollowUpsSheet
@@ -541,6 +737,9 @@ export function PatientChartTabs({
         onOpenChange={(o) => { if (!o) closeSheet(); }}
         patientId={patient.id}
         items={externalContextItems}
+        canUploadRecords={canEditEpisodes}
+        initialDetailId={initialDetailId}
+        onInitialDetailConsumed={() => setInitialDetailId(null)}
       />
 
       <ProblemsSheet

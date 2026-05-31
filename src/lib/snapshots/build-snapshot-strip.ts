@@ -132,6 +132,10 @@ export async function buildSnapshotStrip(input: BuildInput): Promise<PatientSnap
         overriddenAt: override.enteredAt.toISOString(),
         recordedAt: override.recordedAt.toISOString(),
         ...(extracted?.lastValue ? { extractedFallbackValue: extracted.lastValue } : {}),
+        // A manual override supplies the current value, but the historical
+        // trend line is still real data from the brief — carry it through so
+        // overridden measures can render a sparkline.
+        ...(extracted?.series ? { series: extracted.series } : {}),
       });
     } else if (extracted) {
       measures.push({
@@ -142,6 +146,7 @@ export async function buildSnapshotStrip(input: BuildInput): Promise<PatientSnap
         trend: extracted.trend,
         source: 'extracted',
         extractedFromNoteId: extracted.sourceNoteId,
+        ...(extracted.series ? { series: extracted.series } : {}),
       });
     }
     // both miss → omit
@@ -185,16 +190,48 @@ function pickScope(input: {
 function findExtractedMeasure(
   brief: PriorContextBriefContent | null,
   measureKey: string,
-): { lastValue: string; unit: string | null; trend: SnapshotMeasure['trend']; sourceNoteId: string } | null {
+): {
+  lastValue: string;
+  unit: string | null;
+  trend: SnapshotMeasure['trend'];
+  sourceNoteId: string;
+  series?: number[];
+} | null {
   if (!brief) return null;
   const match = brief.objectiveMeasures.find((m) => m.measureKey === measureKey);
   if (!match) return null;
+  const series = buildMeasureSeries(match.priorValues, match.lastValue);
   return {
     lastValue: match.lastValue,
     unit: match.unit ?? null,
     trend: match.trend,
     sourceNoteId: match.sourceNoteId,
+    ...(series ? { series } : {}),
   };
+}
+
+/** First numeric token in a measure string ("7" → 7, "120/80" → 120,
+ *  "45°" → 45). Null when the string carries no number. */
+function parseMeasureNumber(raw: string): number | null {
+  const m = raw.match(/-?\d+(?:\.\d+)?/);
+  if (!m) return null;
+  const n = Number(m[0]);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Chronological numeric series (oldest→newest, ending at the current value)
+ * for a sparkline. `priorValues` is stored most-recent-first, so we reverse
+ * it and append `lastValue`. Real-data-only: returns undefined unless ≥ 2
+ * values parse to numbers — the UI never fabricates a trend line.
+ */
+function buildMeasureSeries(priorValues: string[], lastValue: string): number[] | undefined {
+  const chronological = [...priorValues].reverse();
+  chronological.push(lastValue);
+  const nums = chronological
+    .map(parseMeasureNumber)
+    .filter((n): n is number => n !== null);
+  return nums.length >= 2 ? nums : undefined;
 }
 
 function stringifyOverrideValue(value: unknown): string {

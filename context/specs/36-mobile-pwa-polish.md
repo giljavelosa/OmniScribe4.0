@@ -74,7 +74,7 @@ Unit 36 closes those four gaps:
 {
   "name": "OmniScribe",
   "short_name": "OmniScribe",
-  "description": "HIPAA-grade medical AI scribe with an integrated agentic clinical copilot.",
+  "description": "HIPAA-grade medical AI scribe with an integrated agentic clinical copilot, self-serve registration, and strict audited platform-owner workflows for validated registration and tenant-database deletion requests.",
   "start_url": "/home",
   "display": "standalone",
   "background_color": "#ffffff",

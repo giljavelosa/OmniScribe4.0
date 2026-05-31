@@ -25,14 +25,24 @@ export function ProblemsSheet({ open, onOpenChange, problems }: Props) {
       ) : (
         <>
           <p className="text-xs text-muted-foreground">
-            Derived from active episodes of care. FHIR problem-list integration in Phase 2.
+            Active cases and clinician-verified uploaded record diagnoses are shown separately by source.
           </p>
           <ul className="space-y-2">
             {problems.map((p) => (
-              <li key={p.id} className="flex items-center gap-2">
-                <StatusBadge variant="neutral" noIcon className="text-sm">
-                  {p.label}
-                </StatusBadge>
+              <li key={p.id} className="rounded-md border border-border bg-background px-3 py-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <StatusBadge variant={p.sourceKind === 'verified_uploaded_record' ? 'info' : 'neutral'} noIcon>
+                    {p.sourceKind === 'verified_uploaded_record' ? 'Verified uploaded record' : 'Active case'}
+                  </StatusBadge>
+                  <p className="min-w-0 flex-1 text-sm font-medium text-foreground">{p.label}</p>
+                </div>
+                {(p.sourceLabel || p.pageNumber || p.sourceDate) && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {p.sourceLabel ?? 'Chart source'}
+                    {p.pageNumber ? ` · page ${p.pageNumber}` : ''}
+                    {p.sourceDate ? ` · ${p.sourceDate.slice(0, 10)}` : ''}
+                  </p>
+                )}
               </li>
             ))}
           </ul>

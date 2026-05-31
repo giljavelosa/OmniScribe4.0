@@ -28,6 +28,8 @@ import {
   PatientAddressKind,
   ExternalContextSource,
   ExternalContextStatus,
+  ExternalContextMediaKind,
+  Prisma,
 } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import {
@@ -58,6 +60,7 @@ import { seedCascadiaOrganization } from './seed-cascadia-org';
 import { seedRiverbendOrganization } from './seed-riverbend-org';
 import { ensureActiveCatalog } from '../src/lib/billing/catalog-service';
 import type { PriorContextBriefContent } from '../src/types/brief';
+import type { ExtractionJson } from '../src/types/external-context-extraction';
 
 const prisma = new PrismaClient();
 
@@ -273,16 +276,20 @@ async function seedBriefsAndFollowUps(
   console.log('Seeding NoteBrief + FollowUp rows …');
   for (const spec of specs) {
     const input = spec.builder(spec.noteId, spec.orgId);
+    const episodeId = await resolveExistingEpisodeId(input.episodeId);
     const content = buildPatientBrief(input);
     await prisma.noteBrief.upsert({
       where: { noteId: spec.noteId },
-      update: { content: content as unknown as object },
+      update: {
+        episodeId,
+        content: content as unknown as object,
+      },
       create: {
         id: `seed-brief-${spec.noteId}`,
         noteId: spec.noteId,
         patientId: input.patientId,
         orgId: spec.orgId,
-        episodeId: input.episodeId ?? null,
+        episodeId,
         sourceNoteIds: content.sourceNoteIds,
         generatedAt: new Date(),
         generatorVersion: 'seed-v1',
@@ -305,12 +312,12 @@ async function seedBriefsAndFollowUps(
       const fuDivision = originNote?.division ?? Division.MULTI;
       await prisma.followUp.upsert({
         where: { id: fu.followUpId },
-        update: { text: fu.text, status: 'OPEN', division: fuDivision },
+        update: { text: fu.text, status: 'OPEN', division: fuDivision, episodeId },
         create: {
           id: fu.followUpId,
           orgId: spec.orgId,
           patientId: input.patientId,
-          episodeId: input.episodeId ?? null,
+          episodeId,
           originNoteId: fu.source.noteId,
           text: fu.text,
           status: 'OPEN',
@@ -319,6 +326,19 @@ async function seedBriefsAndFollowUps(
       });
     }
   }
+}
+
+async function resolveExistingEpisodeId(episodeId?: string): Promise<string | null> {
+  if (!episodeId) return null;
+  const episode = await prisma.episodeOfCare.findUnique({
+    where: { id: episodeId },
+    select: { id: true },
+  });
+  if (!episode) {
+    console.warn(`[seed] skipping stale brief/follow-up episodeId ${episodeId}`);
+    return null;
+  }
+  return episode.id;
 }
 
 async function main() {
@@ -1265,7 +1285,10 @@ async function main() {
   for (const ec of jpExternalContexts) {
     await prisma.externalContext.upsert({
       where: { id: ec.id },
-      update: { transcriptClean: ec.transcriptClean },
+      update: {
+        transcriptClean: ec.transcriptClean,
+        mediaKind: ExternalContextMediaKind.PASTE,
+      },
       create: {
         id: ec.id,
         orgId: org.id,
@@ -1274,11 +1297,222 @@ async function main() {
         source: ec.source,
         sourceLabel: ec.sourceLabel,
         transcriptClean: ec.transcriptClean,
+        mediaKind: ExternalContextMediaKind.PASTE,
         status: ExternalContextStatus.READY,
         addedByOrgUserId: jpPtOrgUserId,
       },
     });
   }
+
+  const jpVerifiedReferralExtraction: ExtractionJson = {
+    documentType: 'referral_letter',
+    summary:
+      'Orthopedics referred James Park for outpatient physical therapy before deciding on total knee arthroplasty.',
+    diagnoses: [
+      {
+        text: 'Left knee osteoarthritis',
+        icdHint: 'M17.12',
+        status: 'active',
+        sourcePage: 1,
+        confidence: 'high',
+        verbatim: 'Left knee OA (Kellgren-Lawrence grade 3 on standing AP).',
+      },
+    ],
+    medications: [
+      {
+        name: 'Ibuprofen',
+        dose: '400 mg',
+        route: null,
+        frequency: 'as needed',
+        status: 'current',
+        sourcePage: 1,
+        confidence: 'medium',
+        verbatim: 'Conservative management with PT and NSAIDs ongoing x6 months.',
+      },
+    ],
+    allergies: [
+      {
+        substance: 'No known drug allergies',
+        reaction: null,
+        severity: 'unknown',
+        sourcePage: 1,
+        confidence: 'medium',
+        verbatim: 'Allergies: NKDA.',
+      },
+    ],
+    labs: [],
+    vitals: [
+      {
+        type: 'Timed Up and Go',
+        value: '16.2',
+        unit: 'seconds',
+        measuredDate: null,
+        sourcePage: 1,
+        confidence: 'high',
+        verbatim: 'TUG 16.2s.',
+      },
+    ],
+    procedures: [
+      {
+        text: 'Standing AP knee x-ray',
+        date: null,
+        sourcePage: 1,
+        confidence: 'medium',
+        verbatim: 'Kellgren-Lawrence grade 3 on standing AP.',
+      },
+    ],
+    documentDateGuess: null,
+    extractionNotes:
+      'Seed fixture reviewed and approved for local document-vetting and Rule 20 tests.',
+  };
+  const jpVerifiedReferralRawExtraction: ExtractionJson = {
+    ...jpVerifiedReferralExtraction,
+    summary:
+      'Referral requests PT for left knee OA with possible TKA consult if function does not improve.',
+    diagnoses: [
+      {
+        ...jpVerifiedReferralExtraction.diagnoses[0]!,
+        icdHint: null,
+        confidence: 'medium',
+      },
+    ],
+  };
+  const jpVerifiedReferralOcr =
+    'Orthopedic Associates referral letter. Patient: James Park. Left knee OA (Kellgren-Lawrence grade 3 on standing AP). Conservative management with PT and NSAIDs ongoing x6 months with partial response. Recommend 8-week outpatient PT before surgical decision. Allergies: NKDA. TUG 16.2s.';
+  const jpVerifiedReferralTranscript = [
+    'Verified uploaded document — referral letter',
+    'Summary: Orthopedics referred James Park for outpatient physical therapy before deciding on total knee arthroplasty.',
+    'Diagnoses: Left knee osteoarthritis (ICD hint M17.12).',
+    'Medication context: Ibuprofen 400 mg as needed; NSAID use documented by outside provider.',
+    'Allergies: NKDA.',
+    'Objective findings: TUG 16.2 seconds; left knee OA grade 3 on standing AP x-ray.',
+  ].join('\n');
+  await prisma.externalContext.upsert({
+    where: { id: 'seed-ec-jp-verified-doc' },
+    update: {
+      dateOfRecord: new Date(Date.now() - 64 * 86_400_000),
+      source: ExternalContextSource.OUTSIDE_PROVIDER,
+      sourceLabel: 'Orthopedic Associates — referral letter scan',
+      transcriptClean: jpVerifiedReferralTranscript,
+      mediaKind: ExternalContextMediaKind.DOCUMENT,
+      documentFileKeys: ['documents/external-context/seed-ec-jp-verified-doc/0.png'],
+      documentMimeTypes: ['image/png'],
+      pageCount: 1,
+      ocrText: jpVerifiedReferralOcr,
+      extractionJson: jpVerifiedReferralRawExtraction as Prisma.InputJsonValue,
+      extractionModel: 'seed-fixture',
+      extractedAt: new Date(Date.now() - 63 * 86_400_000),
+      verifiedAt: new Date(Date.now() - 62 * 86_400_000),
+      verifiedByOrgUserId: jpPtOrgUserId,
+      vettedExtractionJson: jpVerifiedReferralExtraction as Prisma.InputJsonValue,
+      status: ExternalContextStatus.READY,
+      deletedAt: null,
+      deletedByOrgUserId: null,
+    },
+    create: {
+      id: 'seed-ec-jp-verified-doc',
+      orgId: org.id,
+      patientId: 'seed-patient-medical',
+      dateOfRecord: new Date(Date.now() - 64 * 86_400_000),
+      source: ExternalContextSource.OUTSIDE_PROVIDER,
+      sourceLabel: 'Orthopedic Associates — referral letter scan',
+      transcriptClean: jpVerifiedReferralTranscript,
+      mediaKind: ExternalContextMediaKind.DOCUMENT,
+      documentFileKeys: ['documents/external-context/seed-ec-jp-verified-doc/0.png'],
+      documentMimeTypes: ['image/png'],
+      pageCount: 1,
+      ocrText: jpVerifiedReferralOcr,
+      extractionJson: jpVerifiedReferralRawExtraction as Prisma.InputJsonValue,
+      extractionModel: 'seed-fixture',
+      extractedAt: new Date(Date.now() - 63 * 86_400_000),
+      verifiedAt: new Date(Date.now() - 62 * 86_400_000),
+      verifiedByOrgUserId: jpPtOrgUserId,
+      vettedExtractionJson: jpVerifiedReferralExtraction as Prisma.InputJsonValue,
+      status: ExternalContextStatus.READY,
+      addedByOrgUserId: jpPtOrgUserId,
+    },
+  });
+
+  const jpUnvettedLabExtraction: ExtractionJson = {
+    documentType: 'lab_report',
+    summary: 'Basic metabolic panel image extracted from an outside lab report.',
+    diagnoses: [],
+    medications: [],
+    allergies: [],
+    labs: [
+      {
+        name: 'Creatinine',
+        value: '1.0',
+        unit: 'mg/dL',
+        referenceRange: '0.7-1.3',
+        abnormalFlag: 'normal',
+        collectedDate: null,
+        sourcePage: 1,
+        confidence: 'medium',
+        verbatim: 'Creatinine 1.0 mg/dL (0.7-1.3).',
+      },
+      {
+        name: 'Potassium',
+        value: '4.3',
+        unit: 'mmol/L',
+        referenceRange: '3.5-5.1',
+        abnormalFlag: 'normal',
+        collectedDate: null,
+        sourcePage: 1,
+        confidence: 'medium',
+        verbatim: 'K 4.3 mmol/L (3.5-5.1).',
+      },
+    ],
+    vitals: [],
+    procedures: [],
+    documentDateGuess: null,
+    extractionNotes:
+      'Seed fixture intentionally left unverified; must be excluded from Cleo and brief sources.',
+  };
+  await prisma.externalContext.upsert({
+    where: { id: 'seed-ec-jp-pending-vet' },
+    update: {
+      dateOfRecord: new Date(Date.now() - 21 * 86_400_000),
+      source: ExternalContextSource.OUTSIDE_PROVIDER,
+      sourceLabel: 'Outside lab report photo — pending review',
+      transcriptClean: '',
+      mediaKind: ExternalContextMediaKind.DOCUMENT,
+      documentFileKeys: ['documents/external-context/seed-ec-jp-pending-vet/0.png'],
+      documentMimeTypes: ['image/png'],
+      pageCount: 1,
+      ocrText:
+        'Outside lab report. Creatinine 1.0 mg/dL (0.7-1.3). K 4.3 mmol/L (3.5-5.1).',
+      extractionJson: jpUnvettedLabExtraction as Prisma.InputJsonValue,
+      extractionModel: 'seed-fixture',
+      extractedAt: new Date(Date.now() - 20 * 86_400_000),
+      verifiedAt: null,
+      verifiedByOrgUserId: null,
+      vettedExtractionJson: Prisma.JsonNull,
+      status: ExternalContextStatus.EXTRACTED,
+      deletedAt: null,
+      deletedByOrgUserId: null,
+    },
+    create: {
+      id: 'seed-ec-jp-pending-vet',
+      orgId: org.id,
+      patientId: 'seed-patient-medical',
+      dateOfRecord: new Date(Date.now() - 21 * 86_400_000),
+      source: ExternalContextSource.OUTSIDE_PROVIDER,
+      sourceLabel: 'Outside lab report photo — pending review',
+      transcriptClean: '',
+      mediaKind: ExternalContextMediaKind.DOCUMENT,
+      documentFileKeys: ['documents/external-context/seed-ec-jp-pending-vet/0.png'],
+      documentMimeTypes: ['image/png'],
+      pageCount: 1,
+      ocrText:
+        'Outside lab report. Creatinine 1.0 mg/dL (0.7-1.3). K 4.3 mmol/L (3.5-5.1).',
+      extractionJson: jpUnvettedLabExtraction as Prisma.InputJsonValue,
+      extractionModel: 'seed-fixture',
+      extractedAt: new Date(Date.now() - 20 * 86_400_000),
+      status: ExternalContextStatus.EXTRACTED,
+      addedByOrgUserId: jpPtOrgUserId,
+    },
+  });
   await upsertCaseManagement(prisma, {
     id: 'seed-case-ma-medical',
     orgId: org.id,

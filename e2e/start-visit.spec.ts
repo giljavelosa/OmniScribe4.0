@@ -37,7 +37,7 @@ test.use({ storageState: authStatePath('clinician') });
 async function openAlvarezChart(page: import('@playwright/test').Page) {
   await page.goto(`/patients?query=${encodeURIComponent(SEED_PATIENTS.mariaAlvarez.searchHint)}`);
   await page.getByRole('link', { name: /alvarez/i }).first().click();
-  await page.waitForURL(/\/patients\/[a-z0-9]+$/);
+  await page.waitForURL(/\/patients\/[a-z0-9-]+$/);
 }
 
 test.describe('start visit — happy path', () => {

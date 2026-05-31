@@ -62,7 +62,7 @@ The build inherits these rules from day one. They live in [`context/architecture
 17. Any non-dev environment processing PHI MUST set `SONIOX_BAA_ON_FILE=true` AND have a current Soniox BAA on file.
 18. NEVER run two BullMQ worker fleets against the same Redis simultaneously.
 19. After any Redis recovery event, force a fresh ECS deployment.
-20. Copilot reads only SIGNED/TRANSFERRED notes, clinician-confirmed FollowUp rows, and verified FHIR resources. Never drafts. Never inferences beyond source.
+20. Copilot reads only SIGNED/TRANSFERRED notes, clinician-confirmed FollowUp rows, verified FHIR resources, and clinician-verified document ExternalContext rows (`verifiedAt != null`). Never drafts. Never unverified OCR/extraction rows. Never inferences beyond source.
 21. Three-lens evaluation on every PR.
 22. No native `confirm()` or `alert()` in clinical surfaces — use `<AlertDialog>`.
 23. No hardcoded status colors — use `<StatusBadge>` / `<StatusBanner>`.

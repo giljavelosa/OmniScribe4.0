@@ -12,6 +12,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { StatusBanner } from '@/components/ui/status-banner';
+import { MeterBar } from '@/components/ui/meter-bar';
+import { Sparkline } from '@/components/ui/sparkline';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -137,6 +139,12 @@ function EpisodeCard({
 
   const recertCells = recertCellInfo(episode.recertDueAt, episode.status);
   const visitCells = visitCellInfo(episode.visitsCompleted, episode.visitsAuthorized);
+  const recertMeter = recertMeterInfo(
+    episode.recertDueAt,
+    episode.recertIntervalDays,
+    episode.status,
+  );
+  const visitMeter = visitMeterInfo(episode.visitsCompleted, episode.visitsAuthorized);
   const isClosed = episode.status === 'DISCHARGED' || episode.status === 'CANCELLED';
 
   async function recertify() {
@@ -182,9 +190,31 @@ function EpisodeCard({
 
       {expanded && (
         <div className="space-y-3 pl-6">
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <StatusBadge variant={recertCells.variant} noIcon>{recertCells.label}</StatusBadge>
-            <StatusBadge variant={visitCells.variant} noIcon>{visitCells.label}</StatusBadge>
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <StatusBadge variant={recertCells.variant} noIcon>{recertCells.label}</StatusBadge>
+              <StatusBadge variant={visitCells.variant} noIcon>{visitCells.label}</StatusBadge>
+            </div>
+            {(recertMeter || visitMeter) && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 max-w-md">
+                {recertMeter && (
+                  <MeterBar
+                    value={recertMeter.value}
+                    max={recertMeter.max}
+                    variant={recertMeter.variant}
+                    aria-label={recertCells.label}
+                  />
+                )}
+                {visitMeter && (
+                  <MeterBar
+                    value={visitMeter.value}
+                    max={visitMeter.max}
+                    variant={visitMeter.variant}
+                    aria-label={visitCells.label}
+                  />
+                )}
+              </div>
+            )}
           </div>
 
           {error && <StatusBanner variant="danger">{error}</StatusBanner>}
@@ -274,6 +304,38 @@ function visitCellInfo(completed: number, authorized: number | null) {
   const pct = completed / authorized;
   if (pct >= 0.8) return { label: `${completed} / ${authorized}`, variant: 'warning' as const };
   return { label: `${completed} / ${authorized}`, variant: 'success' as const };
+}
+
+type MeterInfo = { value: number; max: number; variant: 'primary' | 'success' | 'warning' | 'danger' };
+
+/**
+ * Recert window as a meter — fill grows as the recert deadline approaches.
+ * Thresholds mirror recertCellInfo so meter color matches the badge.
+ * Null when there's no recert date or the episode is closed (no badge meter).
+ */
+function recertMeterInfo(
+  dueAt: string | null,
+  intervalDays: number,
+  status: Episode['status'],
+): MeterInfo | null {
+  if (!dueAt || status === 'DISCHARGED' || status === 'CANCELLED') return null;
+  const max = intervalDays > 0 ? intervalDays : 1;
+  const days = Math.floor((new Date(dueAt).getTime() - Date.now()) / 86_400_000);
+  const elapsed = Math.max(0, Math.min(max, max - days));
+  const variant: MeterInfo['variant'] = days < 7 ? 'danger' : days < 30 ? 'warning' : 'success';
+  return { value: elapsed, max, variant };
+}
+
+/**
+ * Visit-cap usage as a meter — fill grows toward the authorized cap.
+ * Thresholds mirror visitCellInfo. Null when no authorization is on file.
+ */
+function visitMeterInfo(completed: number, authorized: number | null): MeterInfo | null {
+  if (authorized == null || authorized <= 0) return null;
+  const pct = completed / authorized;
+  const variant: MeterInfo['variant'] =
+    completed >= authorized ? 'danger' : pct >= 0.8 ? 'warning' : 'success';
+  return { value: completed, max: authorized, variant };
 }
 
 function statusVariant(status: Episode['status']): 'success' | 'warning' | 'neutral' | 'danger' {
@@ -547,6 +609,7 @@ function GoalRow({
   }
 
   const trailCount = goal.progressEntries.length;
+  const goalSeries = buildGoalSeries(goal.progressEntries);
 
   return (
     <div className="space-y-2">
@@ -586,6 +649,7 @@ function GoalRow({
           >
             History{trailCount > 0 ? ` (${trailCount})` : ''}
           </Button>
+          {goalSeries && <Sparkline points={goalSeries} className="ml-auto" />}
         </div>
       )}
 
@@ -675,6 +739,29 @@ function goalStatusVariant(status: EpisodeGoal['status']) {
     case 'NOT_MET':
       return 'danger' as const;
   }
+}
+
+/** First number in a free-text measure (e.g. "110°" → 110, "4/10" → 4). */
+function parseFirstNumber(raw: string | null): number | null {
+  if (!raw) return null;
+  const m = raw.match(/-?\d+(?:\.\d+)?/);
+  if (!m) return null;
+  const n = Number(m[0]);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Chronological numeric series from a goal's progression trail. Entries arrive
+ * newest-first (recordedAt desc), so reverse to oldest→newest. Real data only:
+ * returns undefined with fewer than 2 numeric points (auditor lens — never
+ * fabricate a trend line).
+ */
+function buildGoalSeries(entries: GoalProgressEntryRow[]): number[] | undefined {
+  const nums = [...entries]
+    .reverse()
+    .map((e) => parseFirstNumber(e.measureValue))
+    .filter((n): n is number => n !== null);
+  return nums.length >= 2 ? nums : undefined;
 }
 
 // ---------------------------------------------------------------------------

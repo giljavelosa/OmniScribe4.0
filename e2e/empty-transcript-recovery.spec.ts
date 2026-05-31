@@ -42,11 +42,11 @@ test.describe('reset-recording — clinician with a freshly-created note', () =>
     // Create a fresh visit via the chart UI (auto-post path).
     await page.goto(`/patients?query=${encodeURIComponent(SEED_PATIENTS.mariaAlvarez.searchHint)}`);
     await page.getByRole('link', { name: /alvarez/i }).first().click();
-    await page.waitForURL(/\/patients\/[a-z0-9]+$/);
+    await page.waitForURL(/\/patients\/[a-z0-9-]+$/);
     await page.getByRole('button', { name: /^start visit$/i }).click();
-    await page.waitForURL(/\/prepare\/([a-z0-9]+)$/);
+    await page.waitForURL(/\/prepare\/([a-z0-9-]+)$/);
 
-    const noteId = page.url().match(/\/prepare\/([a-z0-9]+)$/)?.[1];
+    const noteId = page.url().match(/\/prepare\/([a-z0-9-]+)$/)?.[1];
     expect(noteId).toBeTruthy();
 
     // The note is fresh (PREPARING). reset-recording requires DRAFT

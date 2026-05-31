@@ -13,6 +13,8 @@
 
 import {
   aiGenerationQueue,
+  externalContextExtractionQueue,
+  externalContextTranscriptionQueue,
   noteBriefQueue,
   noteFinalizeQueue,
   postSignArtifactsQueue,
@@ -43,6 +45,8 @@ const REGISTRY: ReadonlyArray<{ name: string; queue: Queue }> = [
   { name: 'voice-id', queue: voiceIdQueue },
   { name: 'note-brief', queue: noteBriefQueue },
   { name: 'post-sign-artifacts', queue: postSignArtifactsQueue },
+  { name: 'external-context-transcription', queue: externalContextTranscriptionQueue },
+  { name: 'external-context-extraction', queue: externalContextExtractionQueue },
 ];
 
 const PROBE_TIMEOUT_MS = 3_000;

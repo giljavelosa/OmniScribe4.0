@@ -16,6 +16,10 @@
 
 export const MAX_TRANSCRIPT_BYTES = 200 * 1024; // 200 KB
 export const MAX_AUDIO_BYTES = 200 * 1024 * 1024; // 200 MB
+export const MAX_DOCUMENT_BYTES = 25 * 1024 * 1024; // 25 MB per original
+export const MAX_DOCUMENT_FILES = 5;
+export const MAX_DOCUMENT_PAGES = 100;
+export const DOCUMENT_EXTRACTION_BATCH_SIZE = 5;
 
 export const ALLOWED_AUDIO_MIME = new Set([
   'audio/wav',
@@ -26,6 +30,28 @@ export const ALLOWED_AUDIO_MIME = new Set([
   'audio/x-m4a',
   'audio/m4a',
   'audio/aac',
+]);
+
+export const ALLOWED_DOCUMENT_MIME = new Set([
+  'application/pdf',
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'image/webp',
+]);
+
+export const ALLOWED_ROUTER_V2_DOCUMENT_MIME = new Set([
+  ...ALLOWED_DOCUMENT_MIME,
+  'text/plain',
+  'text/csv',
+  'application/csv',
+  'application/json',
+  'text/xml',
+  'application/xml',
+  'text/rtf',
+  'application/rtf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
 ]);
 
 export const SANITY_BACKDATE_YEARS = 5;
@@ -87,4 +113,19 @@ export function extensionFromMime(mime: string): string {
   if (mime.includes('mpeg') || mime.includes('mp3')) return 'mp3';
   if (mime.includes('mp4') || mime.includes('m4a') || mime.includes('aac')) return 'm4a';
   return 'wav';
+}
+
+export function extensionFromDocumentMime(mime: string): string {
+  if (mime === 'application/pdf') return 'pdf';
+  if (mime === 'image/png') return 'png';
+  if (mime === 'image/webp') return 'webp';
+  if (mime === 'image/jpeg' || mime === 'image/jpg') return 'jpg';
+  if (mime === 'text/plain') return 'txt';
+  if (mime === 'text/csv' || mime === 'application/csv') return 'csv';
+  if (mime === 'application/json') return 'json';
+  if (mime === 'text/xml' || mime === 'application/xml') return 'xml';
+  if (mime === 'text/rtf' || mime === 'application/rtf') return 'rtf';
+  if (mime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') return 'docx';
+  if (mime === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') return 'xlsx';
+  return 'bin';
 }

@@ -16,6 +16,13 @@ import {
   runProposeFollowUpCadence,
   runSuggestReferralLetterContent,
 } from './draft-tools';
+import { ExtractionJsonSchema } from '@/types/external-context-extraction';
+import {
+  buildDocumentPageUpserts,
+  splitTextIntoDocumentPages,
+  type DocumentPageText,
+} from '@/lib/external-context/document-pages';
+import { lookupMedicationReference } from './medication-reference';
 
 /**
  * Ask-mode tools — Unit 27.
@@ -43,6 +50,8 @@ export type AskToolName =
   // multiple concurrent episodes.
   | 'lookupPatientGoals'
   | 'lookupPatientDemographics'
+  | 'lookupVerifiedExternalContext'
+  | 'lookupMedicationReference'
   // Unit 28 — FHIR-backed lookups against verified PatientFhirIdentity
   | 'lookupFhirCondition'
   | 'lookupFhirMedication'
@@ -63,7 +72,7 @@ export type AskSource = {
    *  badge above the bubble so the clinician sees the trust signal twice.
    *  Chart mode never produces an llm-intrinsic source (fail-closed via
    *  the agent's wrong_mode_fallback gate). */
-  kind: 'note' | 'follow-up' | 'goal' | 'patient' | 'fhir' | 'literature' | 'llm-intrinsic';
+  kind: 'note' | 'follow-up' | 'goal' | 'patient' | 'fhir' | 'document' | 'literature' | 'llm-intrinsic';
   id: string;
   label: string;
 };
@@ -113,6 +122,17 @@ const lookupPatientGoalsArgs = z.object({
 
 const lookupPatientDemographicsArgs = z.object({
   patientId: z.string().min(1).max(64),
+});
+
+const lookupVerifiedExternalContextArgs = z.object({
+  patientId: z.string().min(1).max(64),
+  documentType: z.string().min(1).max(80).optional(),
+  query: z.string().min(1).max(200).optional(),
+  pageNumber: z.number().int().min(1).max(500).optional(),
+});
+
+const lookupMedicationReferenceArgs = z.object({
+  medicationName: z.string().min(1).max(120),
 });
 
 // Unit 28 — FHIR tool arg schemas. patientId comes from agent context;
@@ -205,6 +225,15 @@ async function assertFhirReadable(
 
 function chargeFhirBudget(ctx: ToolContext, rowCount: number): void {
   if (ctx.fhirRowsConsumed) ctx.fhirRowsConsumed.count += rowCount;
+}
+
+function ageYearsAt(dob: Date, at: Date): number {
+  let age = at.getUTCFullYear() - dob.getUTCFullYear();
+  const monthDelta = at.getUTCMonth() - dob.getUTCMonth();
+  if (monthDelta < 0 || (monthDelta === 0 && at.getUTCDate() < dob.getUTCDate())) {
+    age -= 1;
+  }
+  return age;
 }
 
 /** Load fresh (non-stale) FhirCachedResource rows for a (patient,
@@ -390,11 +419,92 @@ export async function runTool(
             firstName: patient.firstName,
             lastName: patient.lastName,
             dob: patient.dob.toISOString().slice(0, 10),
+            ageYears: ageYearsAt(patient.dob, new Date()),
             sex: patient.sex,
             mrn: patient.mrn,
             preferredLanguage: patient.preferredLanguage,
           },
         };
+      }
+
+      case 'lookupMedicationReference': {
+        const args = lookupMedicationReferenceArgs.parse(argsRaw);
+        const reference = lookupMedicationReference(args.medicationName);
+        return {
+          ok: true,
+          rowCount: reference ? 1 : 0,
+          data: {
+            medicationName: args.medicationName,
+            reference,
+            safetyNote:
+              'Use patient chart facts separately from this general medication-reference guidance; clinician judgment remains required.',
+          },
+        };
+      }
+
+      case 'lookupVerifiedExternalContext': {
+        const args = lookupVerifiedExternalContextArgs.parse(argsRaw);
+        const patient = await prisma.patient.findUnique({
+          where: { id: args.patientId },
+          select: { id: true, orgId: true },
+        });
+        if (!patient) return { ok: false, error: 'patient_not_found' };
+        assertOrgScoped(patient.orgId, ctx.orgId);
+
+        const rows = await prisma.externalContext.findMany({
+          where: {
+            orgId: ctx.orgId,
+            patientId: args.patientId,
+            mediaKind: 'DOCUMENT',
+            status: 'READY',
+            verifiedAt: { not: null },
+            deletedAt: null,
+          },
+          orderBy: { dateOfRecord: 'desc' },
+          take: 10,
+        });
+        if (args.query || args.pageNumber) {
+          await ensureDocumentPages(rows, ctx.orgId);
+        }
+        const pagesByExternalContextId = args.query || args.pageNumber
+          ? await loadDocumentPages(rows.map((row) => row.id), ctx.orgId, args.pageNumber)
+          : new Map<string, DocumentPageText[]>();
+        const documents = rows
+          .map((row) => {
+            const parsed = ExtractionJsonSchema.safeParse(row.vettedExtractionJson ?? row.extractionJson);
+            if (!parsed.success) return null;
+            if (args.documentType && parsed.data.documentType !== args.documentType) return null;
+            const pages = pagesByExternalContextId.get(row.id) ?? [];
+            return {
+              id: row.id,
+              dateOfRecord: row.dateOfRecord.toISOString().slice(0, 10),
+              source: row.source,
+              sourceLabel: row.sourceLabel,
+              verifiedAt: row.verifiedAt?.toISOString() ?? null,
+              documentType: parsed.data.documentType,
+              summary: parsed.data.summary,
+              diagnoses: parsed.data.diagnoses,
+              medications: parsed.data.medications,
+              allergies: parsed.data.allergies,
+              labs: parsed.data.labs,
+              vitals: parsed.data.vitals,
+              procedures: parsed.data.procedures,
+              documentDateGuess: parsed.data.documentDateGuess,
+              extractionNotes: parsed.data.extractionNotes,
+              pages: args.pageNumber
+                ? pages.map((page) => ({
+                    fileIndex: page.fileIndex,
+                    pageNumber: page.pageNumber,
+                    text: page.text,
+                    characterCount: page.text.length,
+                  }))
+                : [],
+              textMatches: args.query ? buildDocumentTextMatchesFromPages(pages, args.query) : [],
+            };
+          })
+          .filter((doc): doc is NonNullable<typeof doc> => doc !== null);
+
+        return { ok: true, rowCount: documents.length, data: { documents } };
       }
 
       // ===== Unit 28 — FHIR tools =====================================
@@ -566,4 +676,162 @@ export async function runTool(
           : 'tool_threw',
     };
   }
+}
+
+async function ensureDocumentPages(
+  rows: Array<{
+    id: string;
+    orgId: string;
+    pageCount: number | null;
+    ocrText: string | null;
+    transcriptClean: string;
+    extractedAt: Date | null;
+    verifiedAt: Date | null;
+  }>,
+  orgId: string,
+): Promise<void> {
+  for (const row of rows) {
+    const existingCount = await prisma.externalContextDocumentPage.count({
+      where: { externalContextId: row.id, orgId },
+    });
+    if (existingCount > 0) continue;
+    const pages = splitTextIntoDocumentPages(row.ocrText ?? row.transcriptClean, {
+      pageCount: row.pageCount,
+    });
+    if (pages.length === 0) continue;
+    await prisma.$transaction(buildDocumentPageUpserts({
+      client: prisma,
+      orgId,
+      externalContextId: row.id,
+      pages,
+      extractedAt: row.extractedAt,
+      verifiedAt: row.verifiedAt,
+    }));
+  }
+}
+
+async function loadDocumentPages(
+  externalContextIds: string[],
+  orgId: string,
+  pageNumber?: number,
+): Promise<Map<string, DocumentPageText[]>> {
+  if (externalContextIds.length === 0) return new Map();
+  const rows = await prisma.externalContextDocumentPage.findMany({
+    where: {
+      externalContextId: { in: externalContextIds },
+      orgId,
+      ...(pageNumber ? { pageNumber } : {}),
+    },
+    orderBy: [{ externalContextId: 'asc' }, { fileIndex: 'asc' }, { pageNumber: 'asc' }],
+    select: {
+      externalContextId: true,
+      fileIndex: true,
+      pageNumber: true,
+      text: true,
+    },
+  });
+  const byExternalContextId = new Map<string, DocumentPageText[]>();
+  for (const row of rows) {
+    const pages = byExternalContextId.get(row.externalContextId) ?? [];
+    pages.push({
+      fileIndex: row.fileIndex,
+      pageNumber: row.pageNumber,
+      text: row.text,
+    });
+    byExternalContextId.set(row.externalContextId, pages);
+  }
+  return byExternalContextId;
+}
+
+function buildDocumentTextMatchesFromPages(pages: DocumentPageText[], query: string) {
+  const terms = clinicalQueryTerms(query);
+  if (pages.length === 0 || terms.length === 0) return [];
+  const snippets: Array<{ term: string; sourcePage: number | null; text: string }> = [];
+  const seen = new Set<string>();
+
+  for (const term of terms) {
+    for (const page of pages) {
+      let fromIndex = 0;
+      const lower = page.text.toLowerCase();
+      while (snippets.length < 25) {
+        const index = lower.indexOf(term, fromIndex);
+        if (index < 0) break;
+        const snippet = boundedSnippet(page.text, index);
+        const key = `${term}:${snippet}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          snippets.push({
+            term,
+            sourcePage: page.pageNumber,
+            text: `Page ${page.pageNumber}\n${snippet}`,
+          });
+        }
+        fromIndex = index + term.length;
+      }
+      if (snippets.length >= 25) break;
+    }
+    if (snippets.length >= 25) break;
+  }
+
+  return snippets
+    .sort((a, b) => scoreSnippet(b.text, b.sourcePage) - scoreSnippet(a.text, a.sourcePage))
+    .slice(0, 5);
+}
+
+function clinicalQueryTerms(query: string): string[] {
+  const stopwords = new Set([
+    'about',
+    'last',
+    'latest',
+    'value',
+    'values',
+    'result',
+    'results',
+    'patient',
+    'what',
+    'when',
+    'where',
+    'was',
+    'were',
+    'the',
+    'this',
+    'that',
+    'show',
+    'tell',
+    'from',
+    'with',
+  ]);
+  return Array.from(
+    new Set(
+      query
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, ' ')
+        .split(/\s+/)
+        .filter((term) => term.length >= 3 && !stopwords.has(term)),
+    ),
+  ).slice(0, 6);
+}
+
+function boundedSnippet(text: string, index: number): string {
+  const start = Math.max(0, index - 280);
+  const end = Math.min(text.length, index + 950);
+  return text
+    .slice(start, end)
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+    .slice(0, 1_200);
+}
+
+function scoreSnippet(snippet: string, sourcePage: number | null): number {
+  let score = sourcePage ? sourcePage / 100 : 0;
+  if (/recent laboratory results/i.test(snippet)) score += 100;
+  if (/\b(Test|Result|Flag|Reference range|Units|Date)\b/i.test(snippet)) score += 40;
+  if (/\b(mg\/dL|g\/dL|ng\/mL|mmol\/L|K\/uL|mL\/min|%|pg\/mL|mIU\/L|IU\/mL|copies\/mL)\b/i.test(snippet)) score += 25;
+  const dates = [...snippet.matchAll(/\b(?:20\d{2}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/20\d{2})\b/g)]
+    .map((match) => Date.parse(match[0]))
+    .filter((ms) => !Number.isNaN(ms));
+  if (dates.length > 0) {
+    score += Math.max(...dates) / 10_000_000_000_000;
+  }
+  return score;
 }

@@ -18,10 +18,11 @@ Choose every layer below at the start. The combination is intentional; do not su
 | Queues | BullMQ 5 + ioredis 5 + Redis 7 | Async pipelines (transcription, AI generation, finalize, voice-id, brief) |
 | Transcription | Soniox real-time STT (model `stt-rt-v4`, BAA) | Browser-side WebSocket; ephemeral key minted server-side |
 | LLM (primary) | AWS Bedrock — Claude Sonnet 4.5 (note gen, brief, copilot) | Cross-region inference profile (`us.anthropic.claude-sonnet-4-5-...`) |
+| OCR (documents) | AWS Textract async OCR (`OCR_PROVIDER=textract`) | Whole-document OCR for scanned/image-only PDFs stored in private S3; text PDFs bypass OCR |
 | LLM (fast/fallback) | AWS Bedrock — Claude Haiku 4.5 | For lighter tasks + Sonnet fallback |
 | LLM (non-PHI dev) | OpenRouter / OpenAI (env-gated, blocked for PHI) | Dev experiments only — PHI allowlist rejects |
 | Voice ID | TitaNet 192-dim x-vector embeddings | Speaker identification post-finalization |
-| Object storage | AWS S3 | Audio segments (`audio/raw/{noteId}/{segmentId}.wav`); presigned URLs only |
+| Object storage | AWS S3 | Audio segments (`audio/raw/{noteId}/{segmentId}.wav`) and ExternalContext document originals (`documents/external-context/{externalContextId}/{index}.{ext}`); presigned URLs only |
 | CDN | CloudFront | Static + media in front of S3 assets bucket |
 | Compute (app) | AWS App Runner OR ECS Fargate + ALB | Next.js standalone container |
 | Compute (workers) | AWS ECS Fargate | BullMQ worker fleet (`Dockerfile.worker`, runs `npx tsx src/workers/index.ts`) |
@@ -52,9 +53,10 @@ Each top-level folder under `src/` owns exactly one responsibility. Cross-folder
 - **`src/components/ui/`** — shadcn/ui + Base UI primitives. **Protected**: do not modify generated primitives — extend with CVA variants in sibling files.
 - **`src/services/transcription/`** — sole ingress for Soniox / batch transcription. App code never imports the Soniox SDK directly.
 - **`src/services/llm/`** — sole ingress for LLM calls. PHI guard (`assertProviderAllowedForPHI`) lives here; provider allowlist enforced at runtime.
+- **`src/services/external-context/`** — document ingestion routing, direct text/table parsers, PDF text-layer extraction, OCR-provider abstraction, AWS Textract async OCR provider, rasterization fallback, and Claude extraction orchestration. Calls LLM only through `src/services/llm/`. `OMNISCRIBE_FILE_ROUTER_V2` keeps the router V2 path feature-flagged; flag-off behavior preserves the existing Unit 52 vision path.
 - **`src/services/voice-id/`** — TitaNet embedding + matching.
 - **`src/services/brief/`** — `BriefGenerator`, `FollowupExtractor`, `BriefBuilderInput`.
-- **`src/services/copilot/`** — copilot tool registry + agent loop (Wave 5).
+- **`src/services/copilot/`** — copilot tool registry + agent loop (Wave 5). Chart-mode patient-context reference questions use chart tools for patient facts plus `lookupMedicationReference` for general medication-label facts. The medication-reference tool accepts medication names only, cites its source as `literature`, and must not receive patient identifiers.
 - **`src/services/fhir/`** — SMART OAuth2, resource cache, sync worker (Wave 4).
 - **`src/workers/`** — BullMQ entry point (`index.ts`). One process; one worker per queue; **never two fleets per Redis** (rule 18).
 - **`src/lib/authz/`** — `server.ts` (`requireFeatureAccess`), `internal-authorization.ts` (`canUseFeature`, `canAccessDivisionTemplates`), `resolvers.ts`, `types.ts` (`FeatureKey`, `OrgRole`, `Division` enums), `template-visibility.ts`.
@@ -99,6 +101,9 @@ Build the `prisma/schema.prisma` file with these models grouped by domain. Migra
 - `Patient` — demographics, MRN, DOB, sex (SAAB), insurance, division, site, `isDeleted`, `deletedAt`.
 - `PatientAddress`, `PatientCoverage`, `PatientEmergencyContact`, `PatientGuarantor`, `PatientConsent`, `PatientCommunicationPreference`.
 - `PatientDepartmentEnrollment` + `PatientDepartmentIntake` (sensitivity-level gated; `42 CFR Part 2` propagation).
+- `ExternalContext` — patient-supplied or outside-provider prior context. `mediaKind` distinguishes `PASTE`, `AUDIO`, and `DOCUMENT`. Document rows retain original S3 keys, MIME types, page count, OCR text, raw `extractionJson`, model, `extractedAt`, clinician-vetted `vettedExtractionJson`, `verifiedAt`, `verifiedByOrgUserId`, and DB-only soft-delete fields. For `DOCUMENT`, `verifiedAt IS NOT NULL` is the downstream read gate for briefs and Cleo.
+- `ExternalContextDocumentPage` — page-addressable text layer for verified uploaded documents. The extraction worker stores one row per source page from PDF text-layer extraction or OCR text, and existing verified documents can be backfilled from `ExternalContext.ocrText`. Cleo can answer page-specific requests from this table, but downstream reads still require the parent `ExternalContext.verifiedAt IS NOT NULL`.
+- `ExternalContextExtractionBatch` — Unit 52 follow-up page-batch review state for long PDFs/images. The worker processes up to 100 pages in 5-page batches. Each batch stores OCR text, raw extraction JSON, clinician-vetted extraction JSON, model, page range, and review metadata. A document may pause at `PARTIAL_EXTRACTION_REVIEW`; the next batch is not enqueued until the clinician reviews/corrects the current batch. Partial batches never feed Cleo or briefs.
 
 ### Encounter & Note
 - `Encounter` — single clinical visit; `EncounterStatus`; links to Schedule, Note, Patient, Practitioner, Room.
@@ -146,11 +151,12 @@ Build the `prisma/schema.prisma` file with these models grouped by domain. Migra
 ## Storage Model
 
 - **PostgreSQL (RDS)** — all structured data (users, orgs, notes, patients, encounters, episodes, goals, follow-ups, audit logs, templates, sessions, briefs, FHIR cache, telehealth sessions). pgvector extension for `VoiceProfile.embedding`. Multi-AZ, encrypted at rest, SSL required (`rds.force_ssl: 1`), 30-day backups, 7-year HIPAA deletion delay.
-- **Redis (ElastiCache)** — BullMQ queues only: `transcription`, `ai-generation`, `note-finalize`, `voice-id`, `note-brief`, `post-sign-artifacts`, `fhir-sync` (Wave 4). **One fleet per Redis** (rule 18). TLS in-transit, KMS at-rest, 2 replicas, automatic failover.
+- **Redis (ElastiCache)** — BullMQ queues only: `transcription`, `ai-generation`, `note-finalize`, `voice-id`, `note-brief`, `post-sign-artifacts`, `external-context-transcription`, `external-context-extraction`, `case-router`, `cleo-state`, `fhir-writeback`, `fhir-sync`. **One fleet per Redis** (rule 18). TLS in-transit, KMS at-rest, 2 replicas, automatic failover.
 - **S3** — two buckets:
   - `omniscribe-audio-{env}` — audio files; versioned, encrypted, public access blocked, presigned URLs only (rule 15), lifecycle 90 d → Glacier Instant → 365 d → Deep Archive → 2555 d → expire. **Never hard-deleted** (rule 7).
   - `omniscribe-assets-{env}` — frontend assets; CloudFront in front.
 - **Audio key convention** — `audio/raw/{noteId}/{segmentId}.wav` (derived from `AudioSegment`).
+- **ExternalContext document key convention** — `documents/external-context/{externalContextId}/{fileIndex}.{ext}`. Originals are private, existence-verified after upload, and never hard-deleted; discard is DB-only soft delete.
 - **pgvector** — `VoiceProfile.embedding` only in v1. (Future: brief embeddings — out of scope.)
 
 ## Auth & Access Model
@@ -178,6 +184,8 @@ Five BullMQ queues in v1, plus 2 in later waves. One shared Redis, one worker fl
 | `voice-id` | `match-speakers`, `compute-enrollment-embedding` | transcription worker fan-out; profile enrollment | 2, best-effort | `Note.transcriptClean` (speaker labels); `VoiceProfile.embedding` |
 | `note-brief` | `precompute-brief` | post-sign route | 3, exp backoff, idempotent jobId `note-brief:{noteId}` | `NoteBrief` row |
 | `post-sign-artifacts` | `generate-patient-instructions`, `generate-referral-letter` | post-sign route | 3, exp backoff | `NoteArtifact` row |
+| `external-context-transcription` | `transcribe-external-context-audio` | `/api/patients/[id]/external-context` audio upload | 3, exp backoff | `ExternalContext.transcriptRaw`, `transcriptClean`, `status` |
+| `external-context-extraction` | `extract-external-context-document` | `/api/patients/[id]/external-context` document upload and batch-review continuation | 3, exp backoff | `ExternalContextExtractionBatch.ocrText`, `extractionJson`, `extractionModel`, `extractedAt`, `status`; pauses `ExternalContext.status=PARTIAL_EXTRACTION_REVIEW` until clinician review; final merge writes `ExternalContext.ocrText`, `extractionJson`, `extractionModel`, `pageCount`, `extractedAt`, `status=EXTRACTED` |
 | `fhir-sync` (Wave 4) | `sync-patient-resources` | brief generator + on-demand | 3, exp backoff + rate limit | `FhirCachedResource` rows |
 
 ### LLM Abstraction (sole AI ingress — rule 6)
@@ -199,6 +207,7 @@ interface GenerateOptions {
   model?: 'sonnet' | 'haiku';  // default sonnet; haiku on retry
   jsonMode?: boolean;
   requestId?: string;
+  images?: ImageBlock[];   // Unit 52 Claude vision blocks; non-streaming only
 }
 ```
 
@@ -388,7 +397,7 @@ The build is governed by these rules from day one. Violating them causes product
 17. **Any non-dev environment processing PHI MUST set `SONIOX_BAA_ON_FILE=true`** AND have a current Soniox BAA on file.
 18. **NEVER run two BullMQ worker fleets** against the same Redis simultaneously.
 19. **After any Redis recovery event**, force a fresh ECS deployment.
-20. **Copilot reads only `Note.status ∈ {SIGNED, TRANSFERRED}`, clinician-confirmed `FollowUp` rows, and verified `FhirCachedResource`.** Never drafts. Never inferences beyond source. **Narrow carve-out (Sprint pre-sign-followup-suggest, 2026-05-24):** Cleo's pre-sign FollowupExtractor (`PresignFollowupSuggester`) MAY read DRAFT Plan content for the purpose of producing `FollowUp` rows in `status=PROPOSED`. Outputs are non-binding: PROPOSED rows never reach OPEN automatically; sign-time hook auto-DROPs any still-PROPOSED row; every transition is audited. The carve-out applies ONLY to this one extractor channel — generic Copilot tools, lookups, and Ask/Beacon agents still see SIGNED-and-confirmed surfaces only.
+20. **Copilot reads only `Note.status ∈ {SIGNED, TRANSFERRED}`, clinician-confirmed `FollowUp` rows, verified `FhirCachedResource`, and clinician-verified document ExternalContext rows (`mediaKind=DOCUMENT`, `verifiedAt IS NOT NULL`).** Never drafts. Never unverified OCR/extraction rows. Never inferences beyond source. **Narrow carve-out (Sprint pre-sign-followup-suggest, 2026-05-24):** Cleo's pre-sign FollowupExtractor (`PresignFollowupSuggester`) MAY read DRAFT Plan content for the purpose of producing `FollowUp` rows in `status=PROPOSED`. Outputs are non-binding: PROPOSED rows never reach OPEN automatically; sign-time hook auto-DROPs any still-PROPOSED row; every transition is audited. The carve-out applies ONLY to this one extractor channel — generic Copilot tools, lookups, and Ask/Beacon agents still see SIGNED-and-confirmed surfaces only.
 21. **Three-lens evaluation** — every feature passes Clinician + Medicare Compliance Officer + Insurance Auditor before merge.
 22. **No native `confirm()` or `alert()`** in clinical surfaces — use `<AlertDialog>`.
 23. **No hardcoded status colors** in clinical surfaces — use `<StatusBadge>` / `<StatusBanner>`.

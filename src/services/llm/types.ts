@@ -11,6 +11,16 @@
 
 export type Provider = 'bedrock' | 'vllm' | 'openai' | 'openrouter' | 'anthropic-direct';
 
+export type ImageBlock = {
+  mediaType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif';
+  /** Base64-encoded image bytes, without a data: URL prefix. */
+  data: string;
+  /** Optional provenance label for model-facing prompts and tests. */
+  label?: string;
+  /** 1-indexed source page when the image came from a document. */
+  sourcePage?: number;
+};
+
 export interface GenerateOptions {
   /** Marks the call as carrying PHI. Triggers assertProviderAllowedForPHI. */
   phi: boolean;
@@ -21,6 +31,8 @@ export interface GenerateOptions {
   model?: 'sonnet' | 'haiku';
   /** Hint to the provider to return strict JSON when supported. */
   jsonMode?: boolean;
+  /** Claude vision inputs. Streaming remains text-only; use generate(). */
+  images?: ImageBlock[];
   /** Correlation id surfaced in inferenceLog for traceability. */
   requestId?: string;
   /**

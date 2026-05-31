@@ -33,12 +33,55 @@ describe('loadExternalContextsForBrief', () => {
       patientId: 'pat_1',
       orgId: 'org_1',
       status: 'READY',
+      deletedAt: null,
+    });
+    expect(args.where).toMatchObject({
+      OR: [
+        { mediaKind: { not: 'DOCUMENT' } },
+        { verifiedAt: { not: null } },
+      ],
     });
     expect(args.orderBy).toEqual({ dateOfRecord: 'desc' });
     expect(args.take).toBe(MAX_BRIEF_EXTERNAL_CONTEXTS);
     expect((args.where as Record<string, unknown>).dateOfRecord).toEqual({
       lte: new Date('2026-05-18T08:00:00Z'),
     });
+  });
+
+  it('renders verified document rows from vettedExtractionJson', async () => {
+    findMany.mockResolvedValueOnce([
+      {
+        id: 'ec_doc_1',
+        dateOfRecord: new Date('2026-04-12T00:00:00Z'),
+        source: 'OUTSIDE_PROVIDER',
+        sourceLabel: 'Outside lab',
+        mediaKind: 'DOCUMENT',
+        transcriptClean: 'raw transcript should not win',
+        vettedExtractionJson: {
+          documentType: 'lab_report',
+          summary: 'Clinician-corrected lab summary.',
+          diagnoses: [],
+          medications: [],
+          allergies: [],
+          labs: [],
+          vitals: [],
+          procedures: [],
+          documentDateGuess: null,
+          extractionNotes: null,
+        },
+        addedBy: {
+          user: { name: 'Dr. Patel', email: 'patel@demo.local' },
+        },
+      },
+    ]);
+
+    const result = await loadExternalContextsForBrief({
+      patientId: 'pat_1',
+      orgId: 'org_1',
+    });
+
+    expect(result[0]?.transcriptClean).toContain('Clinician-corrected lab summary');
+    expect(result[0]?.transcriptClean).not.toBe('raw transcript should not win');
   });
 
   it('projects rows into the BriefExternalContextProjection shape', async () => {

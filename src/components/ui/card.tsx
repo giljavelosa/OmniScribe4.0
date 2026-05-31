@@ -1,15 +1,43 @@
 import * as React from "react"
+import { cva, type VariantProps } from "class-variance-authority"
 
 import { cn } from "@/lib/cn"
 
-function Card({ className, ...props }: React.ComponentProps<"div">) {
+/**
+ * cardVariants — the `default` variant is byte-identical to the original
+ * Card class string, so every existing <Card> renders unchanged. New
+ * variants add weight (elevated), de-emphasis (quiet), or whole-card
+ * interactivity (interactive) without touching callers. Colors are tokens
+ * only; per-callsite className overrides still win via the trailing cn().
+ */
+const cardVariants = cva(
+  "flex flex-col gap-6 rounded-xl border bg-card py-6 text-card-foreground shadow-sm",
+  {
+    variants: {
+      variant: {
+        default: "",
+        elevated:
+          "relative overflow-hidden shadow-md before:absolute before:inset-y-0 before:left-0 before:w-1 before:bg-primary before:content-['']",
+        quiet: "bg-muted/30 shadow-none",
+        interactive:
+          "cursor-pointer transition-colors select-none hover:border-primary/20 hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+      },
+    },
+    defaultVariants: {
+      variant: "default",
+    },
+  }
+)
+
+function Card({
+  className,
+  variant,
+  ...props
+}: React.ComponentProps<"div"> & VariantProps<typeof cardVariants>) {
   return (
     <div
       data-slot="card"
-      className={cn(
-        "flex flex-col gap-6 rounded-xl border bg-card py-6 text-card-foreground shadow-sm",
-        className
-      )}
+      className={cn(cardVariants({ variant }), className)}
       {...props}
     />
   )
@@ -83,6 +111,7 @@ function CardFooter({ className, ...props }: React.ComponentProps<"div">) {
 
 export {
   Card,
+  cardVariants,
   CardHeader,
   CardFooter,
   CardTitle,

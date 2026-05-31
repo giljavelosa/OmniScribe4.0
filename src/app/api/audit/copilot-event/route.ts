@@ -56,7 +56,8 @@ const ALLOWED_ACTIONS: ReadonlyArray<AuditAction> = [
 const bodySchema = z.object({
   action: z.enum(ALLOWED_ACTIONS as readonly string[]),
   surface: z.enum(SURFACES),
-  noteId: z.string().min(1).max(64),
+  noteId: z.string().min(1).max(64).optional(),
+  patientId: z.string().min(1).max(64).optional(),
   // Unit 25 — extended for Watch v1 FHIR-backed cards.
   cardType: z
     .enum([
@@ -74,6 +75,9 @@ const bodySchema = z.object({
   // looks identical. Reason is bounded to short tokens, no free PHI.
   check: z.enum(['mic', 'network', 'browser_compat']).optional(),
   reason: z.string().min(1).max(120).optional(),
+}).refine((value) => value.noteId || value.patientId, {
+  message: 'noteId or patientId is required',
+  path: ['noteId'],
 });
 
 /**
@@ -114,8 +118,8 @@ export async function POST(req: Request) {
     userId: session.user.id,
     orgId: session.user.orgId,
     action: parsed.data.action as AuditAction,
-    resourceType: 'Note',
-    resourceId: parsed.data.noteId,
+    resourceType: parsed.data.noteId ? 'Note' : 'Patient',
+    resourceId: parsed.data.noteId ?? parsed.data.patientId!,
     metadata: {
       surface: parsed.data.surface,
       ...(parsed.data.cardType ? { cardType: parsed.data.cardType } : {}),

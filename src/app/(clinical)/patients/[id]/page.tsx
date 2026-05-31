@@ -11,6 +11,15 @@ import type { FinalJsonShape } from '@/lib/notes/build-artifact-prompt';
 import { divisionForProfession, professionLabel } from '@/lib/professions';
 import { CopilotShell } from '@/components/copilot/copilot-shell';
 import { loadEligibleNudgesForSurface } from '@/services/copilot/load-eligible-nudges';
+import {
+  buildVerifiedAllergyFacts,
+  buildVerifiedDocumentDomainSummaries,
+  buildVerifiedLabFacts,
+  buildVerifiedMedicationFacts,
+  buildVerifiedProblemFacts,
+  buildVerifiedProcedureFacts,
+  buildVerifiedVitalFacts,
+} from '@/lib/external-context/verified-chart-facts';
 import { PatientChartTabs } from './_components/patient-chart-tabs';
 import type { FollowUpSummary } from './_components/follow-ups-sheet';
 import type { CasePanelData } from './_components/cases-panel';
@@ -30,6 +39,7 @@ export default async function PatientDetailPage({
   const { id } = await params;
   const sp = await searchParams;
   const episodeCreatedFlash = sp.episode_created === '1';
+  const initialExternalContextId = typeof sp.record === 'string' ? sp.record : null;
   const session = await auth();
   if (!session?.user?.orgId) return null;
 
@@ -137,7 +147,7 @@ export default async function PatientDetailPage({
       },
     }),
     prisma.externalContext.findMany({
-      where: { patientId: patient.id, orgId: session.user.orgId },
+      where: { patientId: patient.id, orgId: session.user.orgId, deletedAt: null },
       orderBy: { dateOfRecord: 'desc' },
       select: {
         id: true,
@@ -145,9 +155,26 @@ export default async function PatientDetailPage({
         source: true,
         sourceLabel: true,
         status: true,
+        mediaKind: true,
+        verifiedAt: true,
+        vettedExtractionJson: true,
+        pageCount: true,
         addedAt: true,
         audioFileKey: true,
         episodeOfCareId: true,
+        _count: { select: { documentPages: true } },
+        extractionBatches: {
+          orderBy: { batchIndex: 'asc' },
+          select: {
+            id: true,
+            batchIndex: true,
+            pageStart: true,
+            pageEnd: true,
+            status: true,
+            extractedAt: true,
+            reviewedAt: true,
+          },
+        },
         addedBy: {
           select: {
             id: true,
@@ -206,6 +233,7 @@ export default async function PatientDetailPage({
       assessmentSnippet: deriveAssessmentSnippet(
         (n.finalJson as unknown as FinalJsonShape) ?? null,
       ),
+      factChips: deriveVisitFactChips(n.finalJson),
       isLateEntry: n.isLateEntry,
       lateEntryDaysGap: n.lateEntryDaysGap,
       dateOfService: n.dateOfService.toISOString(),
@@ -225,12 +253,37 @@ export default async function PatientDetailPage({
     };
   });
 
+  const verifiedMedications = buildVerifiedMedicationFacts(externalContexts);
+  const verifiedAllergies = buildVerifiedAllergyFacts(externalContexts);
+  const verifiedProblems = buildVerifiedProblemFacts(externalContexts);
+  const verifiedLabs = buildVerifiedLabFacts(externalContexts);
+  const verifiedVitals = buildVerifiedVitalFacts(externalContexts);
+  const verifiedProcedures = buildVerifiedProcedureFacts(externalContexts);
+  const verifiedDocumentDomains = buildVerifiedDocumentDomainSummaries(externalContexts);
+  const verifiedDomainByContextId = new Map(
+    verifiedDocumentDomains.map((summary) => [summary.externalContextId, summary]),
+  );
+
   const externalContextItems = externalContexts.map((r) => ({
     id: r.id,
     dateOfRecord: r.dateOfRecord.toISOString(),
     source: r.source,
     sourceLabel: r.sourceLabel,
     status: r.status,
+    mediaKind: r.mediaKind,
+    verifiedAt: r.verifiedAt?.toISOString() ?? null,
+    pageCount: r.pageCount,
+    indexedPageCount: r._count.documentPages,
+    domainSummary: verifiedDomainByContextId.get(r.id) ?? null,
+    extractionBatches: r.extractionBatches.map((batch) => ({
+      id: batch.id,
+      batchIndex: batch.batchIndex,
+      pageStart: batch.pageStart,
+      pageEnd: batch.pageEnd,
+      status: batch.status,
+      extractedAt: batch.extractedAt?.toISOString() ?? null,
+      reviewedAt: batch.reviewedAt?.toISOString() ?? null,
+    })),
     addedAt: r.addedAt.toISOString(),
     hasAudio: !!r.audioFileKey,
     episodeOfCareId: r.episodeOfCareId,
@@ -447,13 +500,9 @@ export default async function PatientDetailPage({
   });
 
   // Phase 3 — anchor Miss Cleo to the patient's most-recent signed
-  // visit. The /api/copilot/ask contract requires a noteId because
-  // every audit row anchors there; reusing visits[0].id keeps the
-  // backend unchanged. Patients with zero signed notes intentionally
-  // render no beacon at all — there's nothing source-grounded for
-  // Cleo to cite from yet, so showing a broken beacon would be
-  // worse UX than no beacon. Document this here so the next agent
-  // doesn't reflexively add a "Cleo unavailable" tile.
+  // visit when one exists. Patients can now have verified uploaded
+  // documents before their first signed note, so the shell must still
+  // mount with a patient audit anchor and use verified document lookup.
   const lastSignedNoteId = visits[0]?.id ?? null;
 
   // Sprint 0.14 — Miss Cleo's per-(patient × clinician) memory. Server-
@@ -544,6 +593,12 @@ export default async function PatientDetailPage({
         snapshotStrip={snapshotStrip}
         casesForPanel={casesForPanel}
         externalContextItems={externalContextItems}
+        verifiedMedications={verifiedMedications}
+        verifiedAllergies={verifiedAllergies}
+        verifiedProblems={verifiedProblems}
+        verifiedLabs={verifiedLabs}
+        verifiedVitals={verifiedVitals}
+        verifiedProcedures={verifiedProcedures}
         visits={visits}
         followUps={followUpItems}
         activeCasesForPicker={activeCasesForPicker}
@@ -551,6 +606,7 @@ export default async function PatientDetailPage({
         startVisitSites={startVisitSites}
         startVisitDefaultSiteId={startVisitDefaultSiteId}
         canEditEpisodes={session.user.role !== 'VIEWER'}
+        canDeletePatient={session.user.role === 'ORG_ADMIN'}
         ehrPanel={
           <EhrLinkPanel
             patientId={patient.id}
@@ -564,16 +620,15 @@ export default async function PatientDetailPage({
         }
         cleoRead={cleoReadData}
         chartNudges={chartNudges}
+        initialExternalContextId={initialExternalContextId}
       />
-      {lastSignedNoteId && (
-        <CopilotShell
-          surface="patient-cockpit"
-          noteId={lastSignedNoteId}
-          patientId={patient.id}
-          clinicianName={session.user.name ?? null}
-          patientFirstName={patient.firstName}
-        />
-      )}
+      <CopilotShell
+        surface="patient-cockpit"
+        noteId={lastSignedNoteId}
+        patientId={patient.id}
+        clinicianName={session.user.name ?? null}
+        patientFirstName={patient.firstName}
+      />
     </>
   );
 }
@@ -637,4 +692,25 @@ function projectCleoReadCard(args: ProjectCleoReadArgs): CleoReadCardData {
 
 function msFor(iso: string | null | undefined): number {
   return iso ? new Date(iso).getTime() : 0;
+}
+
+function deriveVisitFactChips(finalJson: Prisma.JsonValue): string[] {
+  const text = JSON.stringify(finalJson ?? '').toLowerCase();
+  const chips: string[] = [];
+  if (/\b(bp|blood pressure|hr|heart rate|spo2|vital|gad-7|phq-9|koos|rom|mmt|tug|timed up|walk test|objective)\b/.test(text)) {
+    chips.push('Measures');
+  }
+  if (/\b(medication|medications|meds|dose|mg|tablet|insulin|sertraline|lisinopril|tacrolimus)\b/.test(text)) {
+    chips.push('Medications');
+  }
+  if (/\b(assessment|diagnosis|problem|icd|cva|diabetes|hypertension|pain|impingement|anxiety|ckd)\b/.test(text)) {
+    chips.push('Problems');
+  }
+  if (/\b(follow.?up|recheck|refer|return|next visit|coordinate|monitor)\b/.test(text)) {
+    chips.push('Follow-ups');
+  }
+  if (/\b(allerg|fall risk|safety|suicidal|homicidal|si\/hi|latex)\b/.test(text)) {
+    chips.push('Safety');
+  }
+  return chips.slice(0, 5);
 }

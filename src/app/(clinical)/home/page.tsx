@@ -76,7 +76,7 @@ export default async function HomePage({
   const dayEnd = new Date(dayStart);
   dayEnd.setDate(dayEnd.getDate() + 1);
 
-  const [schedules, drafts, followups, org] = await Promise.all([
+  const [schedules, drafts, followups, org, documentReviews, verifiedDocumentCount] = await Promise.all([
     prisma.schedule.findMany({
       where: {
         orgId,
@@ -154,6 +154,30 @@ export default async function HomePage({
     prisma.organization.findUnique({
       where: { id: orgId },
       select: { name: true, billingPlan: true },
+    }),
+    prisma.externalContext.findMany({
+      where: {
+        orgId,
+        deletedAt: null,
+        mediaKind: 'DOCUMENT',
+        status: { in: ['EXTRACTED', 'PARTIAL_EXTRACTION_REVIEW'] },
+      },
+      orderBy: { addedAt: 'desc' },
+      take: 10,
+      select: {
+        id: true,
+        status: true,
+        patient: { select: { id: true, firstName: true, lastName: true, mrn: true } },
+      },
+    }),
+    prisma.externalContext.count({
+      where: {
+        orgId,
+        deletedAt: null,
+        mediaKind: 'DOCUMENT',
+        status: 'READY',
+        verifiedAt: { not: null },
+      },
     }),
   ]);
 
@@ -287,6 +311,55 @@ export default async function HomePage({
     </Link>
   ));
 
+  const renderClinicalDataQualityCard = (id: string) => (
+    <Card id={id}>
+      <CardHeader>
+        <CardTitle className="text-md flex items-center gap-2">
+          <FileText className="h-4 w-4 text-muted-foreground" aria-hidden />
+          Clinical data quality
+          {documentReviews.length > 0 && (
+            <StatusBadge variant="warning" noIcon className="text-[10px]">
+              {documentReviews.length} review{documentReviews.length === 1 ? '' : 's'}
+            </StatusBadge>
+          )}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        <div className="flex flex-wrap gap-2 text-xs">
+          <StatusBadge variant={documentReviews.length > 0 ? 'warning' : 'success'} noIcon>
+            {documentReviews.length} document{documentReviews.length === 1 ? '' : 's'} ready for review
+          </StatusBadge>
+          <StatusBadge variant="info" noIcon>
+            {verifiedDocumentCount} verified record{verifiedDocumentCount === 1 ? '' : 's'}
+          </StatusBadge>
+          <StatusBadge variant={followups.length > 0 ? 'info' : 'success'} noIcon>
+            {followups.length} open follow-up{followups.length === 1 ? '' : 's'}
+          </StatusBadge>
+        </div>
+        {documentReviews.length > 0 ? (
+          <div className="space-y-1">
+            {documentReviews.slice(0, 3).map((doc) => (
+              <Link
+                key={doc.id}
+                href={`/patients/${doc.patient.id}`}
+                className="flex items-center justify-between rounded-md border border-border px-3 py-2 text-sm hover:bg-muted/40"
+              >
+                <span className="font-medium">
+                  {doc.patient.lastName}, {doc.patient.firstName}
+                </span>
+                <span className="text-xs text-muted-foreground">{doc.patient.mrn}</span>
+              </Link>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            No uploaded documents are waiting for review.
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+
   // Shared site pill row
   const sitePillRow = showSitePillRow ? (
     <div className="flex flex-wrap items-center gap-2 overflow-x-auto" role="tablist" aria-label="Filter by site">
@@ -416,6 +489,10 @@ export default async function HomePage({
               followups={followups.length}
             />
           </div>
+        </section>
+
+        <section className="px-4 py-3 border-b border-border">
+          {renderClinicalDataQualityCard('clinical-data-quality-mobile')}
         </section>
 
         {/* 4. Site filter pills (only when multi-site) */}
@@ -588,6 +665,8 @@ export default async function HomePage({
             drafts={drafts.length}
             followups={followups.length}
           />
+
+          {renderClinicalDataQualityCard('clinical-data-quality')}
 
           {/* Site filter pills */}
           {showSitePillRow && sitePillRow}

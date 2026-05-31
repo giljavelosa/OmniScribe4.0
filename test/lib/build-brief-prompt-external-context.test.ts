@@ -146,7 +146,9 @@ describe('buildBriefUserMessage — external context block', () => {
 describe('BRIEF_SYSTEM_PROMPT — external context block', () => {
   it('includes the EXTERNAL CONTEXT system rules', () => {
     expect(BRIEF_SYSTEM_PROMPT).toContain('EXTERNAL CONTEXT');
-    expect(BRIEF_SYSTEM_PROMPT).toContain('LOWER-CONFIDENCE THAN SIGNED NOTES');
+    expect(BRIEF_SYSTEM_PROMPT).toContain('Clinician-verified uploaded records are attested');
+    expect(BRIEF_SYSTEM_PROMPT).toContain('SOURCE HIERARCHY');
+    expect(BRIEF_SYSTEM_PROMPT).toContain('per verified outside record dated');
     expect(BRIEF_SYSTEM_PROMPT).toContain('per outside provider note dated');
     expect(BRIEF_SYSTEM_PROMPT).toContain('MUST NOT pull plan items');
     expect(BRIEF_SYSTEM_PROMPT).toContain('from external context');

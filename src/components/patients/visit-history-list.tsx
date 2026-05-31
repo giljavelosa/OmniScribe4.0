@@ -48,6 +48,8 @@ export type VisitHistoryRow = {
   /** `ACTIVE` | `CLOSED` | `CANCELLED` | `PENDING_ROUTER` — used by the
    *  "By case" view to flag pending-router cases distinctly. */
   caseManagementStatus?: string | null;
+  /** Clinically relevant signed-note facts this visit contributed to chart context. */
+  factChips?: string[];
 };
 
 type ViewMode = 'episode' | 'case' | 'clinician' | 'division' | 'chronological';
@@ -511,6 +513,15 @@ function VisitRow({ v }: { v: VisitHistoryRow }) {
           <p className="text-sm text-muted-foreground line-clamp-2">
             {v.assessmentSnippet}
           </p>
+        )}
+        {v.factChips && v.factChips.length > 0 && (
+          <div className="flex flex-wrap gap-1 pt-0.5">
+            {v.factChips.map((chip) => (
+              <StatusBadge key={chip} variant="neutral" noIcon className="text-[10px] normal-case">
+                {chip}
+              </StatusBadge>
+            ))}
+          </div>
         )}
       </Link>
     </li>

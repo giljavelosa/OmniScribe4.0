@@ -14,6 +14,7 @@
 import { mintEphemeralKey, sonioxConfig } from '../src/services/transcription/SonioxService';
 import { S3Client, HeadBucketCommand, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { getOcrProvider } from '../src/services/external-context/ocr-provider';
 
 type Result = { provider: string; ok: boolean; detail: string };
 
@@ -181,11 +182,40 @@ async function verifyResend(): Promise<Result> {
   }
 }
 
+async function verifyTextract(): Promise<Result> {
+  const provider = 'textract';
+  const ocrProvider = getOcrProvider();
+  if (ocrProvider.name !== 'aws-textract') {
+    return { provider, ok: false, detail: 'OCR_PROVIDER is not "textract" — scanned PDFs will not have production OCR.' };
+  }
+  if (!process.env.S3_AUDIO_BUCKET) {
+    return { provider, ok: false, detail: 'S3_AUDIO_BUCKET unset — Textract requires the uploaded document object in S3.' };
+  }
+  if ((process.env.TEXTRACT_SNS_TOPIC_ARN && !process.env.TEXTRACT_SNS_ROLE_ARN) ||
+    (!process.env.TEXTRACT_SNS_TOPIC_ARN && process.env.TEXTRACT_SNS_ROLE_ARN)) {
+    return {
+      provider,
+      ok: false,
+      detail: 'Textract SNS completion notifications require both TEXTRACT_SNS_TOPIC_ARN and TEXTRACT_SNS_ROLE_ARN.',
+    };
+  }
+  const region = process.env.TEXTRACT_REGION ?? process.env.AWS_REGION ?? 'us-east-1';
+  const notificationDetail = process.env.TEXTRACT_SNS_TOPIC_ARN
+    ? ' SNS notification channel is configured; ensure topic region matches TEXTRACT_REGION and the Textract publish role trust policy is scoped.'
+    : ' No SNS notification channel is configured; worker will poll GetDocumentTextDetection.';
+  return {
+    provider,
+    ok: true,
+    detail: `OCR_PROVIDER=textract configured in ${region}. IAM must allow textract:StartDocumentTextDetection/GetDocumentTextDetection and s3:GetObject for document keys.${notificationDetail}`,
+  };
+}
+
 async function main() {
   console.log('\n┌─ provider verification ──────────────────────────────────────────────\n');
   results.push(await verifySoniox());
   results.push(await verifyS3());
   results.push(await verifyBedrock());
+  results.push(await verifyTextract());
   results.push(await verifyResend());
 
   let pad = 0;

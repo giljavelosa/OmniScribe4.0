@@ -8,6 +8,7 @@ import { aiGenerationHandler } from './ai-generation.worker';
 import { postSignArtifactsHandler } from './post-sign-artifacts.worker';
 import { noteBriefHandler } from './note-brief.worker';
 import { externalContextHandler } from './external-context.worker';
+import { externalContextExtractionHandler } from './external-context-extraction.worker';
 import { caseRouterHandler } from './case-router.worker';
 import { cleoStateHandler } from './cleo-state.worker';
 import { fhirWritebackHandler } from './fhir-writeback.worker';
@@ -39,6 +40,7 @@ const workers = [
   new Worker(QUEUE_NAMES.noteBrief, noteBriefHandler, baseOptions),
   new Worker(QUEUE_NAMES.postSignArtifacts, postSignArtifactsHandler, baseOptions),
   new Worker(QUEUE_NAMES.externalContextTranscription, externalContextHandler, baseOptions),
+  new Worker(QUEUE_NAMES.externalContextExtraction, externalContextExtractionHandler, baseOptions),
   new Worker(QUEUE_NAMES.caseRouter, caseRouterHandler, baseOptions),
   new Worker(QUEUE_NAMES.cleoState, cleoStateHandler, baseOptions),
   // Sprint 0.17 — FHIR Phase D₃ write-back. Conservative concurrency

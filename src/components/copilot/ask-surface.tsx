@@ -46,6 +46,7 @@ type SourceKind =
   | 'goal'
   | 'patient'
   | 'fhir'
+  | 'document'
   | 'literature'
   /** Phase 1B — defensive parity with research-surface. Chart mode
    *  must never produce this kind (agent gates with
@@ -111,7 +112,7 @@ export function AskSurface({
   greetedRef,
 }: {
   patientId: string;
-  noteId: string;
+  noteId?: string | null;
   /** Unit 42 — used in the first-open greeting bubble + empty-state
    *  intro. Optional so legacy mount sites still render the surface;
    *  the persona module falls back to "Hi there" when absent. */
@@ -244,7 +245,7 @@ export function AskSurface({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             patientId,
-            noteId,
+            noteId: noteId ?? undefined,
             question: trimmed,
           }),
         });
@@ -424,7 +425,7 @@ function MessageBubble({
 }: {
   message: ChatMessage;
   patientId: string;
-  noteId: string;
+  noteId?: string | null;
   /** The text of the user turn immediately preceding this assistant
    *  message. Used only for the follow-up-action fallback hint — when
    *  the user asked something like "create a follow-up plan" but the
@@ -492,7 +493,7 @@ function MessageBubble({
           {message.sources && message.sources.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-1">
               {message.sources.map((s, i) => (
-                <SourceChip key={`${s.kind}-${s.id}-${i}`} source={s} />
+                <SourceChip key={`${s.kind}-${s.id}-${i}`} source={s} patientId={patientId} />
               ))}
             </div>
           )}
@@ -579,7 +580,7 @@ function MessageBubble({
       )}
       {/* Unit 30 — drafts ride beneath the assistant bubble. Each card is
           self-contained (owns its own pending/confirmed/discarded state). */}
-      {!isUser && message.drafts && message.drafts.length > 0 && (
+      {!isUser && noteId && message.drafts && message.drafts.length > 0 && (
         <div className="w-full max-w-[95%] space-y-2">
           {message.drafts.map((d) => (
             <DraftCard
@@ -598,6 +599,7 @@ function MessageBubble({
           but the agent returned a clarification with no drafts. Point them
           to the explicit /review entry point so they're never stuck. */}
       {!isUser &&
+        noteId &&
         message.isClarification &&
         (!message.drafts || message.drafts.length === 0) &&
         priorUserText &&
@@ -617,12 +619,23 @@ function MessageBubble({
   );
 }
 
-function SourceChip({ source }: { source: Source }) {
+function SourceChip({ source, patientId }: { source: Source; patientId: string }) {
   const label = `${source.kind} · ${source.label}`;
   if (source.kind === 'note') {
     return (
       <Link
         href={`/review/${source.id}`}
+        className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground hover:text-foreground hover:underline"
+      >
+        <span aria-hidden>↗</span>
+        <span>{label}</span>
+      </Link>
+    );
+  }
+  if (source.kind === 'document') {
+    return (
+      <Link
+        href={`/patients/${patientId}?record=${encodeURIComponent(source.id)}`}
         className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground hover:text-foreground hover:underline"
       >
         <span aria-hidden>↗</span>
@@ -645,7 +658,7 @@ function EmptyState({ onPick, disabled }: { onPick: (q: string) => void; disable
   const examples = [
     'What was the plan from her last visit?',
     'Are there any open follow-ups for this patient?',
-    'What were her last blood pressure readings?',
+    'Given this patient context, what is usual losartan dosing?',
   ];
   return (
     <div className="space-y-3 py-2">

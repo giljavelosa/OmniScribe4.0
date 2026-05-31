@@ -23,7 +23,7 @@ const turnSchema = z.object({
 
 const bodySchema = z.object({
   patientId: z.string().min(1).max(64),
-  noteId: z.string().min(1).max(64),
+  noteId: z.string().min(1).max(64).optional(),
   question: z.string().min(1).max(2000),
   /**
    * Sprint 0.14 — `history` is OPTIONAL now. When present, the client is
@@ -75,14 +75,6 @@ export async function POST(req: Request) {
   }
   const { patientId, noteId, question } = parsed.data;
 
-  // Org scope check before spending any LLM tokens.
-  const note = await prisma.note.findFirst({
-    where: { id: noteId, orgId: authorizationUser.orgId },
-    select: { id: true, orgId: true, encounter: { select: { episodeOfCareId: true } } },
-  });
-  if (!note) return NextResponse.json({ error: { code: 'note_not_found' } }, { status: 404 });
-  assertOrgScoped(note.orgId, authorizationUser.orgId);
-
   const patient = await prisma.patient.findFirst({
     where: { id: patientId, orgId: authorizationUser.orgId },
     select: { id: true },
@@ -90,6 +82,32 @@ export async function POST(req: Request) {
   if (!patient) {
     return NextResponse.json({ error: { code: 'patient_not_found' } }, { status: 404 });
   }
+
+  // Org scope check before spending any LLM tokens. Patient-cockpit Cleo
+  // can operate before the first signed note exists, so noteId is optional
+  // and audit anchors to Patient when absent.
+  const note = noteId
+    ? await prisma.note.findFirst({
+        where: { id: noteId, orgId: authorizationUser.orgId },
+        select: {
+          id: true,
+          orgId: true,
+          patientId: true,
+          encounter: { select: { episodeOfCareId: true } },
+        },
+      })
+    : null;
+  if (noteId && !note) return NextResponse.json({ error: { code: 'note_not_found' } }, { status: 404 });
+  if (note) {
+    assertOrgScoped(note.orgId, authorizationUser.orgId);
+    if (note.patientId !== patientId) {
+      return NextResponse.json({ error: { code: 'note_patient_mismatch' } }, { status: 409 });
+    }
+  }
+
+  const auditResource = note
+    ? ({ resourceType: 'Note', resourceId: note.id } as const)
+    : ({ resourceType: 'Patient', resourceId: patientId } as const);
 
   // Sprint 0.14 — load (or create) the persistent CHART conversation for
   // this (patient × clinician). Audit CLEO_CONVERSATION_OPENED exactly
@@ -123,16 +141,16 @@ export async function POST(req: Request) {
     userId: user.id,
     orgId: authorizationUser.orgId,
     action: 'COPILOT_ASK_QUERY',
-    resourceType: 'Note',
-    resourceId: noteId,
+    resourceType: auditResource.resourceType,
+    resourceId: auditResource.resourceId,
     metadata: { questionLength: question.length, historyTurns: history.length },
   });
 
   const result = await runAgent(
     {
       patientId,
-      noteId,
-      episodeId: note.encounter?.episodeOfCareId ?? null,
+      noteId: note?.id ?? null,
+      episodeId: note?.encounter?.episodeOfCareId ?? null,
       history: history as AgentTurn[],
       question,
     },
@@ -163,8 +181,8 @@ export async function POST(req: Request) {
       userId: user.id,
       orgId: authorizationUser.orgId,
       action: 'COPILOT_TOOL_CALL',
-      resourceType: 'Note',
-      resourceId: noteId,
+      resourceType: auditResource.resourceType,
+      resourceId: auditResource.resourceId,
       metadata: { tool: call.tool, rowCount: call.rowCount, resultOk: call.resultOk },
     });
   }
@@ -177,8 +195,8 @@ export async function POST(req: Request) {
       userId: user.id,
       orgId: authorizationUser.orgId,
       action: 'COPILOT_DRAFT_PROPOSED',
-      resourceType: 'Note',
-      resourceId: noteId,
+      resourceType: auditResource.resourceType,
+      resourceId: auditResource.resourceId,
       metadata: {
         draftId: draft.draftId,
         kind: draft.kind,
@@ -196,8 +214,8 @@ export async function POST(req: Request) {
       userId: user.id,
       orgId: authorizationUser.orgId,
       action: 'COPILOT_REASONING_STEP',
-      resourceType: 'Note',
-      resourceId: noteId,
+      resourceType: auditResource.resourceType,
+      resourceId: auditResource.resourceId,
       metadata: {
         stepIndex: step.index,
         summaryLength: step.summary.length,
@@ -209,8 +227,8 @@ export async function POST(req: Request) {
     userId: user.id,
     orgId: authorizationUser.orgId,
     action: 'COPILOT_ASK_ANSWERED',
-    resourceType: 'Note',
-    resourceId: noteId,
+    resourceType: auditResource.resourceType,
+    resourceId: auditResource.resourceId,
     metadata: {
       sourceCount: result.answer.sources.length,
       iterations: result.iterations,

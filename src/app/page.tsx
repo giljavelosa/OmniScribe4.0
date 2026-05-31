@@ -7,7 +7,7 @@ import { BrandWordmark } from '@/components/brand-wordmark';
 export const metadata: Metadata = {
   title: 'OmniScribe — clinical AI scribe + agentic copilot',
   description:
-    'HIPAA-grade medical AI scribe with an integrated agentic clinical copilot. Self-serve org provisioning; per-visit ambient capture; signed-note compliance trail.',
+    'HIPAA-grade medical AI scribe with an integrated agentic clinical copilot. Self-serve org registration; per-visit ambient capture; signed-note compliance trail; strict audited platform-owner workflows for validated registration and tenant-database deletion requests.',
 };
 
 /**
@@ -86,7 +86,7 @@ export default function LandingPage() {
           <Feature
             Icon={Lock}
             title="HIPAA + BAA throughout"
-            body="Bedrock + Soniox BAAs in place. Per-org audit retention; PHI fences at every layer."
+            body="Bedrock + Soniox BAAs in place. Per-org audit retention, PHI fences, and audited deletion-request workflows."
           />
           <Feature
             Icon={FileSignature}

@@ -1,0 +1,133 @@
+%PDF-1.4
+% Synthetic text-layer PDF fixture for OmniScribe tests only.
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R 5 0 R 7 0 R 9 0 R 11 0 R 13 0 R] /Count 6 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /Contents 4 0 R >>
+endobj
+4 0 obj
+<< /Length 1360 >>
+stream
+BT
+(Page 1) Tj
+(OmniScribe 4.0 synthetic outside medical record packet) Tj
+(Patient Morgan Vale MRN MOCK-2780 DOB 02-12-1962 Male) Tj
+(This packet is synthetic test data only and contains no real PHI.) Tj
+(Release period 01-03-2026 through 05-29-2026.) Tj
+(Demographics show a 64 year old male living with spouse and using English as preferred language.) Tj
+(Safety banner lists penicillin allergy with anaphylaxis and throat tightness.) Tj
+(Safety banner lists bee stings and hymenoptera venom allergy with anaphylaxis and hypotension.) Tj
+(Safety banner lists latex allergy with contact dermatitis rash and reported wheezing.) Tj
+(Visit precautions include latex free supplies, epinephrine auto injector availability, infection screening, fall precautions, and transplant medication review.) Tj
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /Contents 6 0 R >>
+endobj
+6 0 obj
+<< /Length 1512 >>
+stream
+BT
+(Page 2) Tj
+(Active Problem List and Current Medication Summary) Tj
+(Heart transplant recipient status post orthotopic heart transplant on 02/07/2026 is active.) Tj
+(Immunosuppression due to tacrolimus mycophenolate and prednisone is active.) Tj
+(Hypertension is active with outpatient blood pressure monitoring.) Tj
+(History of right MCA ischemic CVA on 04-18-2025 is historical with residual left sided weakness.) Tj
+(Type 2 diabetes mellitus with steroid related hyperglycemia is active.) Tj
+(Chronic kidney disease stage 3a is active with creatinine and eGFR monitoring.) Tj
+(Hyperlipidemia is active.) Tj
+(Deconditioning and high fall risk are active and followed by outpatient rehabilitation.) Tj
+(Obstructive sleep apnea is active and patient uses CPAP.) Tj
+(Benign prostatic hyperplasia is active and stable.) Tj
+(Coding caution page in this synthetic packet is test data only and is not a claim recommendation.) Tj
+ET
+endstream
+endobj
+7 0 obj
+<< /Type /Page /Parent 2 0 R /Contents 8 0 R >>
+endobj
+8 0 obj
+<< /Length 1592 >>
+stream
+BT
+(Page 3) Tj
+(Medication list as reconciled 05-21-2026) Tj
+(Tacrolimus 2 mg PO every morning and 1.5 mg PO every evening for transplant immunosuppression. Target trough 8 to 12 ng per mL.) Tj
+(Mycophenolate mofetil 1000 mg PO twice daily for transplant immunosuppression. Monitor CBC and GI tolerance.) Tj
+(Prednisone 10 mg PO daily for post transplant steroid taper.) Tj
+(Valganciclovir 450 mg PO daily for CMV prophylaxis.) Tj
+(TMP-SMX SS one tablet PO Monday Wednesday Friday for PJP prophylaxis.) Tj
+(Aspirin 81 mg PO daily for cardiac allograft vasculopathy prophylaxis.) Tj
+(Pravastatin 20 mg PO nightly for lipid control and allograft vasculopathy prophylaxis.) Tj
+(Amlodipine 10 mg PO daily for hypertension.) Tj
+(Insulin glargine 14 units SQ nightly for diabetes and steroid hyperglycemia.) Tj
+(Metformin XR 500 mg PO with evening meal for type 2 diabetes.) Tj
+ET
+endstream
+endobj
+9 0 obj
+<< /Type /Page /Parent 2 0 R /Contents 10 0 R >>
+endobj
+10 0 obj
+<< /Length 1508 >>
+stream
+BT
+(Page 4) Tj
+(Recent Laboratory Results collected 05-21-2026) Tj
+(Creatinine 1.42 H reference range 0.70 to 1.30 mg per dL. CKD stage 3a stable versus transplant clinic.) Tj
+(eGFR 53 L reference range greater than 60 mL per min per 1.73 m2. Dose medications by renal function.) Tj
+(Hemoglobin 11.8 L reference range 13.5 to 17.5 g per dL. Improving post operative anemia.) Tj
+(Magnesium 1.6 L reference range 1.7 to 2.4 mg per dL. Patient takes magnesium oxide.) Tj
+(Hemoglobin A1c 7.6 H reference target less than 7.0 percent individualized. Steroid effect noted.) Tj
+(Tacrolimus trough 10.2 target range 8 to 12 ng per mL. Drawn before morning dose.) Tj
+(LDL cholesterol 72 near goal. Triglycerides 189 H. CMV PCR not detected.) Tj
+ET
+endstream
+endobj
+11 0 obj
+<< /Type /Page /Parent 2 0 R /Contents 12 0 R >>
+endobj
+12 0 obj
+<< /Length 1320 >>
+stream
+BT
+(Page 5) Tj
+(Imaging Procedure and Transplant Surveillance Reports) Tj
+(Orthotopic heart transplant was performed on 02/07/2026 after cardiogenic shock from end stage ischemic cardiomyopathy.) Tj
+(Endomyocardial biopsy on 05-10-2026 showed ISHLT 0R and pAMR0 with no acute rejection.) Tj
+(Transthoracic echocardiogram on 05-10-2026 showed normal left ventricular size and EF 63 percent.) Tj
+(Chest X-ray on 05-21-2026 showed no acute cardiopulmonary abnormality and stable post transplant changes.) Tj
+(Brain MRI from 04-19-2025 showed acute or subacute right MCA territory infarcts without hemorrhagic transformation.) Tj
+(CT head on 04-02-2026 showed chronic right MCA territory encephalomalacia and no acute hemorrhage.) Tj
+ET
+endstream
+endobj
+13 0 obj
+<< /Type /Page /Parent 2 0 R /Contents 14 0 R >>
+endobj
+14 0 obj
+<< /Length 1490 >>
+stream
+BT
+(Page 6) Tj
+(Rehabilitation and Functional Status) Tj
+(Physical therapy initial evaluation on 04-15-2026 documented Timed Up and Go 18.6 seconds with single point cane.) Tj
+(Physical therapy progress note on 05-24-2026 documented Timed Up and Go improved to 14.8 seconds with cane.) Tj
+(6 Minute Walk Test improved from 720 feet to 910 feet.) Tj
+(Berg Balance improved from 41 of 56 to 46 of 56.) Tj
+(Occupational therapy documented left grip strength improved from 32 lb to 39 lb.) Tj
+(OT medication management task improved from spouse full management to patient filling one week mock box with one cue.) Tj
+(Continued skilled PT and OT were recommended for gait endurance balance left upper extremity coordination medication management safety and fall risk reduction.) Tj
+(End of synthetic medical record packet. No real PHI.) Tj
+ET
+endstream
+endobj
+trailer
+<< /Root 1 0 R >>
+%%EOF

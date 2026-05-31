@@ -14,7 +14,7 @@ import {
   InvokeModelCommand,
   InvokeModelWithResponseStreamCommand,
 } from '@aws-sdk/client-bedrock-runtime';
-import type { GenerateChunk, GenerateOptions, GenerateResult, LLMService } from './types';
+import type { GenerateChunk, GenerateOptions, GenerateResult, ImageBlock, LLMService } from './types';
 
 const REGION = process.env.BEDROCK_REGION ?? 'us-east-1';
 const SONNET_MODEL_ID = process.env.BEDROCK_MODEL_ID ?? '';
@@ -55,7 +55,7 @@ export class BedrockService implements LLMService {
         model: modelId || 'stub',
         region: REGION,
         latencyMs: Date.now() - start,
-        tokensIn: Math.floor((systemPrompt.length + userPrompt.length) / 4),
+        tokensIn: Math.floor((systemPrompt.length + userPrompt.length) / 4) + imageTokenEstimate(opts.images),
         tokensOut: Math.floor(text.length / 4),
         stub: true,
       };
@@ -67,7 +67,7 @@ export class BedrockService implements LLMService {
       max_tokens: opts.maxTokens ?? 4096,
       temperature: opts.temperature ?? 0,
       system: systemPrompt,
-      messages: [{ role: 'user', content: userPrompt }],
+      messages: [{ role: 'user', content: buildUserContent(userPrompt, opts.images) }],
     });
 
     const cmd = new InvokeModelCommand({ modelId, body });
@@ -137,8 +137,68 @@ export class BedrockService implements LLMService {
   }
 }
 
+type AnthropicUserContent =
+  | string
+  | Array<
+      | { type: 'text'; text: string }
+      | {
+          type: 'image';
+          source: { type: 'base64'; media_type: ImageBlock['mediaType']; data: string };
+        }
+    >;
+
+function buildUserContent(userPrompt: string, images: ImageBlock[] | undefined): AnthropicUserContent {
+  if (!images?.length) return userPrompt;
+  return [
+    { type: 'text', text: userPrompt },
+    ...images.map((image) => ({
+      type: 'image' as const,
+      source: {
+        type: 'base64' as const,
+        media_type: image.mediaType,
+        data: image.data,
+      },
+    })),
+  ];
+}
+
+function imageTokenEstimate(images: ImageBlock[] | undefined): number {
+  if (!images?.length) return 0;
+  return images.reduce((sum, image) => sum + Math.ceil(image.data.length / 4), 0);
+}
+
 function stubResponse(systemPrompt: string, userPrompt: string, opts?: GenerateOptions): string {
   const jsonMode = opts?.jsonMode === true;
+  if (jsonMode && opts?.images?.length) {
+    return JSON.stringify({
+      ocrText:
+        'Bedrock stub OCR from uploaded document image. Configure AWS_BEARER_TOKEN_BEDROCK for live Claude vision extraction.',
+      extraction: {
+        documentType: 'other',
+        summary: `Stub extraction from ${opts.images.length} image page${opts.images.length === 1 ? '' : 's'}.`,
+        diagnoses: [],
+        medications: [],
+        allergies: [],
+        labs: [
+          {
+            name: 'Stub lab value',
+            value: '1.0',
+            unit: null,
+            referenceRange: null,
+            abnormalFlag: 'unknown',
+            collectedDate: null,
+            sourcePage: opts.images[0]?.sourcePage ?? 1,
+            confidence: 'low',
+            verbatim: 'Bedrock stub OCR from uploaded document image.',
+          },
+        ],
+        vitals: [],
+        procedures: [],
+        documentDateGuess: null,
+        extractionNotes: 'Stub-mode extraction envelope for local Unit 52 testing.',
+      },
+    });
+  }
   if (jsonMode) {
     return JSON.stringify({
       stub: true,

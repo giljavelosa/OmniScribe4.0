@@ -4,6 +4,7 @@ import { AlertTriangle } from 'lucide-react';
 
 import { StatusBadge } from '@/components/ui/status-badge';
 import { cn } from '@/lib/cn';
+import type { VerifiedAllergyFact } from '@/lib/external-context/verified-chart-facts';
 
 const MAX_VISIBLE_PROBLEMS = 2;
 const MAX_LABEL_CHARS = 42;
@@ -11,11 +12,17 @@ const MAX_LABEL_CHARS = 42;
 export type ProblemRow = {
   id: string;
   label: string; // "Diagnosis (body part)" or just "Diagnosis"
+  sourceKind?: 'active_case' | 'signed_visit' | 'verified_uploaded_record' | 'clinician_entered';
+  sourceLabel?: string | null;
+  sourceDate?: string | null;
+  pageNumber?: number | null;
 };
 
 type Props = {
   /** Active + RECERT_DUE episode problems, pre-derived by the parent. */
   activeProblems: ProblemRow[];
+  /** Clinician-verified uploaded document allergy facts. */
+  verifiedAllergies?: VerifiedAllergyFact[];
   /** Called when the clinician taps the "+N more" overflow button. */
   onOpenProblems: () => void;
 };
@@ -29,20 +36,39 @@ function truncateLabel(label: string): string {
  * SafetyBand — Tier-1 safety strip rendered inside the sticky patient
  * mini-header (Sprint 0.9).  Persists across all four chart tabs.
  *
- * - Allergies: Phase 1 always renders as "Allergies not recorded" (warning).
- *   The absence of data must be visible — silent omission is a patient-safety
- *   risk. FHIR wire-up in Phase 2.
- * - Active problems: episode-derived diagnoses (ACTIVE + RECERT_DUE).
+ * - Allergies: verified uploaded records can satisfy the safety banner
+ *   before an EHR is linked. The absence of data stays visible.
+ * - Active problems: episode-derived diagnoses plus verified uploaded
+ *   document diagnoses.
  *   Truncated to 2 with "+N more" that opens the ProblemsSheet.
  *
  * One compact row on desktop; wraps gracefully on mobile.
  */
-export function SafetyBand({ activeProblems, onOpenProblems }: Props) {
+export function SafetyBand({
+  activeProblems,
+  verifiedAllergies = [],
+  onOpenProblems,
+}: Props) {
   const visible = activeProblems.slice(0, MAX_VISIBLE_PROBLEMS);
   const overflow = activeProblems.length - MAX_VISIBLE_PROBLEMS;
+  const visibleAllergyNames = verifiedAllergies.slice(0, 3).map((allergy) => allergy.substance);
+  const allergyOverflow = Math.max(0, verifiedAllergies.length - visibleAllergyNames.length);
+  const allergyLabel = visibleAllergyNames.length > 0
+    ? `${visibleAllergyNames.join(' · ')}${allergyOverflow > 0 ? ` +${allergyOverflow} more` : ''}`
+    : 'Allergies not recorded';
+  const allergyTitle = verifiedAllergies.length > 0
+    ? verifiedAllergies
+        .map((allergy) => {
+          const reaction = allergy.reaction ? `: ${allergy.reaction}` : '';
+          const severity = allergy.severity ? ` (${allergy.severity})` : '';
+          return `${allergy.substance}${reaction}${severity} — ${allergy.sourceLabel ?? allergy.documentType}, page ${allergy.sourcePage}`;
+        })
+        .join('\n')
+    : undefined;
 
   return (
     <div
+      data-testid="safety-band"
       className={cn(
         'mt-2 rounded-lg border px-3 py-2',
         'border-[var(--status-warning-border)] bg-[var(--status-warning-bg)]/40',
@@ -58,8 +84,12 @@ export function SafetyBand({ activeProblems, onOpenProblems }: Props) {
             Safety
           </p>
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs leading-snug">
-            <StatusBadge variant="warning" className="text-2xs shrink-0">
-              Allergies not recorded
+            <StatusBadge
+              variant={verifiedAllergies.length > 0 ? 'success' : 'warning'}
+              className="text-2xs shrink-0"
+              title={allergyTitle}
+            >
+              {allergyLabel}
             </StatusBadge>
 
             {activeProblems.length > 0 ? (

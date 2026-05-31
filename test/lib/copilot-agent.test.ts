@@ -264,6 +264,38 @@ describe('runAgent', () => {
     expect(out.answer.sources[0]?.kind).toBe('literature');
   });
 
+  it('allows chart mode to call the medication-reference tool and cite it as literature', async () => {
+    const llm = scriptedLlm([
+      JSON.stringify({
+        action: 'tool',
+        tool: 'lookupMedicationReference',
+        args: { medicationName: 'losartan' },
+      }),
+      JSON.stringify({
+        action: 'answer',
+        text: 'General reference guidance for adult hypertension lists losartan 50 mg once daily, with lower-start considerations for volume depletion or hepatic impairment.',
+        sources: [
+          { kind: 'literature', id: 'dailymed:losartan-potassium', label: 'DailyMed losartan potassium label' },
+          { kind: 'patient', id: 'pat-1', label: 'Patient context' },
+        ],
+      }),
+    ]);
+
+    const out = await runAgent(
+      { ...baseInput, mode: 'chart', question: 'losartan adult hypertension reference?' },
+      ctx,
+      llm,
+    );
+
+    expect(out.toolCalls).toHaveLength(1);
+    expect(out.toolCalls[0]).toMatchObject({
+      tool: 'lookupMedicationReference',
+      resultOk: true,
+      rowCount: 1,
+    });
+    expect(out.answer.sources.map((source) => source.kind)).toEqual(['literature', 'patient']);
+  });
+
   // ──────────────────────────────────────────────────────────────────
   // Unit 31 — clinical reasoning chains
   // ──────────────────────────────────────────────────────────────────

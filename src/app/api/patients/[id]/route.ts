@@ -213,6 +213,10 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   if ('error' in guard) return guard.error;
   const { user, authorizationUser } = guard;
 
+  if (authorizationUser.role !== 'ORG_ADMIN') {
+    return NextResponse.json({ error: { code: 'forbidden' } }, { status: 403 });
+  }
+
   const { id } = await params;
   const patient = await prisma.patient.findFirst({
     where: { id, orgId: authorizationUser.orgId, isDeleted: false },

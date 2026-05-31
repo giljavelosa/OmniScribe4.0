@@ -88,6 +88,7 @@ export { bedrockConfig } from './bedrock';
 export type {
   Provider,
   GenerateOptions,
+  ImageBlock,
   GenerateChunk,
   GenerateResult,
   LLMService,

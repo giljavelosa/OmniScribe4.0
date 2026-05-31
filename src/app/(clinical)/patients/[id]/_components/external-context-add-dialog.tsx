@@ -22,10 +22,14 @@ const SOURCE_OPTIONS: Array<{ value: ExternalContextSource; label: string }> = [
 
 const MAX_TRANSCRIPT_BYTES = 200 * 1024; // 200 KB — server is source of truth, this is a UI hint
 const MAX_AUDIO_MB = 200;
+const MAX_DOCUMENT_MB = 25;
+const MAX_DOCUMENT_FILES = 5;
 const NONE_EPISODE = '__none__';
+export type ExternalContextAddMode = 'paste' | 'upload' | 'document';
 
 /**
- * Add-prior-context modal. Two tabs: paste transcript / upload audio.
+ * Add outside records modal. Three tabs: paste transcript / upload audio /
+ * upload document.
  * Common header carries date + source + optional source-label + optional
  * episode link. Submits to POST /api/patients/[id]/external-context.
  *
@@ -41,16 +45,18 @@ export function ExternalContextAddDialog({
   open,
   onOpenChange,
   onAdded,
+  initialMode = 'document',
 }: {
   patientId: string;
   episodeChoices: EpisodeChoice[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onAdded: () => void;
+  initialMode?: ExternalContextAddMode;
 }) {
   const todayIso = useMemo(() => new Date().toISOString().slice(0, 10), []);
 
-  const [mode, setMode] = useState<'paste' | 'upload'>('paste');
+  const [mode, setMode] = useState<ExternalContextAddMode>(initialMode);
   const [dateOfRecord, setDateOfRecord] = useState(todayIso);
   const [source, setSource] = useState<ExternalContextSource>('OUTSIDE_PROVIDER');
   const [sourceLabel, setSourceLabel] = useState('');
@@ -58,18 +64,20 @@ export function ExternalContextAddDialog({
 
   const [transcript, setTranscript] = useState('');
   const [audioFile, setAudioFile] = useState<File | null>(null);
+  const [documentFiles, setDocumentFiles] = useState<File[]>([]);
 
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
   function reset() {
-    setMode('paste');
+    setMode(initialMode);
     setDateOfRecord(todayIso);
     setSource('OUTSIDE_PROVIDER');
     setSourceLabel('');
     setEpisodeId(NONE_EPISODE);
     setTranscript('');
     setAudioFile(null);
+    setDocumentFiles([]);
     setError(null);
   }
 
@@ -94,13 +102,26 @@ export function ExternalContextAddDialog({
         setError('Transcript is too long. Keep it under 200 KB.');
         return;
       }
-    } else {
+    } else if (mode === 'upload') {
       if (!audioFile) {
         setError('Pick an audio file (.wav / .mp3 / .m4a) or switch to the paste tab.');
         return;
       }
       if (audioFile.size > MAX_AUDIO_MB * 1024 * 1024) {
         setError(`Audio file is too large. Maximum ${MAX_AUDIO_MB} MB.`);
+        return;
+      }
+    } else {
+      if (documentFiles.length === 0) {
+        setError('Pick a PDF or image, or use the camera capture control.');
+        return;
+      }
+      if (documentFiles.length > MAX_DOCUMENT_FILES) {
+        setError(`Upload at most ${MAX_DOCUMENT_FILES} document files at a time.`);
+        return;
+      }
+      if (documentFiles.some((file) => file.size > MAX_DOCUMENT_MB * 1024 * 1024)) {
+        setError(`Each document must be smaller than ${MAX_DOCUMENT_MB} MB.`);
         return;
       }
     }
@@ -121,13 +142,27 @@ export function ExternalContextAddDialog({
               transcript,
             }),
           });
-        } else {
+        } else if (mode === 'upload') {
           const fd = new FormData();
           fd.set('dateOfRecord', dateOfRecord);
           fd.set('source', source);
           if (sourceLabel.trim()) fd.set('sourceLabel', sourceLabel.trim());
           if (episodeId !== NONE_EPISODE) fd.set('episodeOfCareId', episodeId);
           fd.set('audio', audioFile as Blob, (audioFile as File).name);
+          res = await fetch(`/api/patients/${patientId}/external-context`, {
+            method: 'POST',
+            body: fd,
+          });
+        } else {
+          const fd = new FormData();
+          fd.set('mode', 'document');
+          fd.set('dateOfRecord', dateOfRecord);
+          fd.set('source', source);
+          if (sourceLabel.trim()) fd.set('sourceLabel', sourceLabel.trim());
+          if (episodeId !== NONE_EPISODE) fd.set('episodeOfCareId', episodeId);
+          for (const file of documentFiles) {
+            fd.append('documents', file, file.name);
+          }
           res = await fetch(`/api/patients/${patientId}/external-context`, {
             method: 'POST',
             body: fd,
@@ -152,9 +187,9 @@ export function ExternalContextAddDialog({
     <Sheet open={open} onOpenChange={handleClose}>
       <SheetContent side="right" className="w-full sm:max-w-lg flex flex-col gap-0">
         <SheetHeader className="border-b border-border">
-          <SheetTitle>Add prior context</SheetTitle>
+          <SheetTitle>Add outside record</SheetTitle>
           <SheetDescription>
-            Reference material for this patient. Not part of any visit note.
+            Upload PDFs, images, referral notes, labs, or audio. These records stay separate from visit notes.
           </SheetDescription>
         </SheetHeader>
 
@@ -220,10 +255,11 @@ export function ExternalContextAddDialog({
             </div>
           ) : null}
 
-          <Tabs value={mode} onValueChange={(v) => setMode(v as 'paste' | 'upload')} className="pt-2">
+          <Tabs value={mode} onValueChange={(v) => setMode(v as 'paste' | 'upload' | 'document')} className="pt-2">
             <TabsList>
               <TabsTrigger value="paste">Paste transcript</TabsTrigger>
               <TabsTrigger value="upload">Upload audio</TabsTrigger>
+              <TabsTrigger value="document">Upload document</TabsTrigger>
             </TabsList>
             <TabsContent value="paste" className="space-y-2">
               <Label htmlFor="ec-transcript" className="sr-only">
@@ -231,7 +267,7 @@ export function ExternalContextAddDialog({
               </Label>
               <Textarea
                 id="ec-transcript"
-                placeholder="Paste the transcript, referral letter, or your recollection. Up to 200 KB."
+                placeholder="Paste a transcript, referral letter, outside note, or patient-supplied text. Up to 200 KB."
                 value={transcript}
                 onChange={(e) => setTranscript(e.target.value)}
                 rows={12}
@@ -262,6 +298,22 @@ export function ExternalContextAddDialog({
                 </p>
               )}
             </TabsContent>
+            <TabsContent value="document" className="space-y-3">
+              <DocumentDropZone
+                files={documentFiles}
+                onFilesChange={setDocumentFiles}
+              />
+              <div className="space-y-2">
+                <Label htmlFor="ec-camera">Tablet camera capture</Label>
+                <Input
+                  id="ec-camera"
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  onChange={(e) => setDocumentFiles(Array.from(e.target.files ?? []))}
+                />
+              </div>
+            </TabsContent>
           </Tabs>
 
           {error ? <StatusBanner variant="danger">{error}</StatusBanner> : null}
@@ -273,11 +325,58 @@ export function ExternalContextAddDialog({
               Cancel
             </Button>
             <Button className="flex-1" onClick={submit} disabled={pending}>
-              {pending ? 'Saving…' : 'Add to chart'}
+              {pending ? 'Saving…' : mode === 'document' ? 'Upload document' : 'Add to chart'}
             </Button>
           </div>
         </SheetFooter>
       </SheetContent>
     </Sheet>
+  );
+}
+
+function DocumentDropZone({
+  files,
+  onFilesChange,
+}: {
+  files: File[];
+  onFilesChange: (files: File[]) => void;
+}) {
+  function addFiles(list: FileList | File[]) {
+    onFilesChange(Array.from(list).slice(0, MAX_DOCUMENT_FILES));
+  }
+
+  return (
+    <div
+      className="rounded-lg border border-dashed border-border bg-muted/30 p-4"
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={(e) => {
+        e.preventDefault();
+        addFiles(e.dataTransfer.files);
+      }}
+    >
+      <div className="space-y-2">
+        <Label htmlFor="ec-document">Upload PDF or image files</Label>
+        <Input
+          id="ec-document"
+          type="file"
+          multiple
+          accept=".pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/png,image/jpeg,image/webp"
+          onChange={(e) => addFiles(e.target.files ?? [])}
+        />
+        {files.length > 0 ? (
+          <ul className="space-y-1 text-xs text-muted-foreground">
+            {files.map((file) => (
+              <li key={`${file.name}-${file.size}`}>
+                {file.name} · {(file.size / (1024 * 1024)).toFixed(1)} MB
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            Drop up to {MAX_DOCUMENT_FILES} files here. Outside records are extracted in the background, then require review before they can inform briefs or Cleo.
+          </p>
+        )}
+      </div>
+    </div>
   );
 }

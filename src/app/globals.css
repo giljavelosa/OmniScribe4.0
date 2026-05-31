@@ -39,6 +39,14 @@
   /* Touch target (Apple HIG minimum) */
   --touch-min: 2.75rem;
 
+  /* Patient-chart dashboard layout (no color — geometry only).
+     --chart-rail-top keeps the sticky intelligence rail clear of the
+     sticky chart header; the reserved card min-heights stop empty↔
+     populated swaps from shifting layout (anti-CLS contract). */
+  --chart-rail-top: 6.5rem;
+  --min-card-h-rail: 7rem;
+  --min-card-h-board: 13rem;
+
   /* Map Tailwind color tokens → CSS vars so `bg-background`, `text-foreground`,
      `border-border`, `bg-primary`, etc. resolve correctly. */
   --color-background: var(--background);

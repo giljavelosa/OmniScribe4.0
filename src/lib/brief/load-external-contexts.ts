@@ -1,7 +1,9 @@
-import { ExternalContextStatus } from '@prisma/client';
+import { ExternalContextMediaKind, ExternalContextStatus } from '@prisma/client';
 
 import { prisma } from '@/lib/prisma';
 import type { BriefExternalContextProjection } from '@/lib/notes/build-brief-prompt';
+import { buildVerifiedDocumentTranscript } from '@/lib/external-context/document-transcript';
+import { ExtractionJsonSchema } from '@/types/external-context-extraction';
 
 export const MAX_BRIEF_EXTERNAL_CONTEXTS = 5;
 
@@ -30,6 +32,11 @@ export async function loadExternalContextsForBrief(args: {
       patientId: args.patientId,
       orgId: args.orgId,
       status: ExternalContextStatus.READY,
+      deletedAt: null,
+      OR: [
+        { mediaKind: { not: ExternalContextMediaKind.DOCUMENT } },
+        { verifiedAt: { not: null } },
+      ],
       dateOfRecord: { lte: cutoff },
     },
     orderBy: { dateOfRecord: 'desc' },
@@ -43,12 +50,18 @@ export async function loadExternalContextsForBrief(args: {
     },
   });
 
-  return rows.map((r) => ({
-    externalContextId: r.id,
-    dateOfRecordIso: r.dateOfRecord.toISOString(),
-    source: r.source,
-    sourceLabel: r.sourceLabel,
-    addedByName: r.addedBy.user.name ?? r.addedBy.user.email,
-    transcriptClean: r.transcriptClean,
-  }));
+  return rows.map((r) => {
+    const transcriptClean =
+      r.mediaKind === ExternalContextMediaKind.DOCUMENT && r.vettedExtractionJson
+        ? buildVerifiedDocumentTranscript(ExtractionJsonSchema.parse(r.vettedExtractionJson))
+        : r.transcriptClean;
+    return {
+      externalContextId: r.id,
+      dateOfRecordIso: r.dateOfRecord.toISOString(),
+      source: r.source,
+      sourceLabel: r.sourceLabel,
+      addedByName: r.addedBy.user.name ?? r.addedBy.user.email,
+      transcriptClean,
+    };
+  });
 }

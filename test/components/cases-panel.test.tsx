@@ -145,6 +145,21 @@ describe('CasesPanel — "Start visit on this case" affordance', () => {
     expect(screen.queryByRole('button', { name: /continue this case in a new visit/i })).not.toBeInTheDocument();
   });
 
+  it('distinguishes unlinked visits from no clinical activity', () => {
+    render(
+      <CasesPanel
+        patientId="pat_1"
+        cases={[secondary]}
+        viewingProfession={Profession.PT}
+        canEdit
+      />,
+    );
+
+    expect(screen.getByText(/No medical visits linked to this case/i)).toBeInTheDocument();
+    expect(screen.getByText(/No behavioral-health visits linked to this case/i)).toBeInTheDocument();
+    expect(screen.queryByText(/No medical activity/i)).not.toBeInTheDocument();
+  });
+
   it('does NOT double-render inside the hero card (chrome="bare" suppresses it)', () => {
     render(
       <CasesPanel

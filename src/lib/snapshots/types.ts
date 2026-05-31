@@ -18,6 +18,11 @@ export type SnapshotMeasure = {
   value: string;
   /** Trend vs the prior reading: improving / stable / worsening / unknown. */
   trend: 'improving' | 'stable' | 'worsening' | 'unknown';
+  /** Optional numeric history (oldest→newest, inclusive of the current
+   *  value) for a sparkline. Real data only — derived from the brief's
+   *  recorded prior values; omitted (or < 2 points) when unavailable so
+   *  the UI never fabricates a trend line. */
+  series?: number[];
   source: SnapshotSource;
   /** When source='extracted', the source note id. */
   extractedFromNoteId?: string;

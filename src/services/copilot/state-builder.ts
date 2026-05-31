@@ -50,8 +50,11 @@ import type { PriorContextBriefContent } from '@/types/brief';
  * detection itself is cheap (one indexed query) and PHI-free. The
  * version bump forces a re-rebuild on existing v3 rows so the new
  * kind picks up across the active patient cohort.
+ *
+ * v5 (Unit 52): `conversationFactsJson` can cite clinician-verified
+ * uploaded document ExternalContext rows via `sourceDocumentId`.
  */
-export const CLEO_STATE_GENERATOR_VERSION = 'cleo-state-v4';
+export const CLEO_STATE_GENERATOR_VERSION = 'cleo-state-v5';
 
 // =============================================================================
 // Zod schemas — caseAwarenessJson / observedPatternsJson / conversationFactsJson
@@ -149,6 +152,7 @@ const ConversationFactSchema = z.object({
   sourceFollowUpId: z.string().min(1).optional(),
   sourceGoalId: z.string().min(1).optional(),
   sourceConditionId: z.string().min(1).optional(),
+  sourceDocumentId: z.string().min(1).optional(),
   citedAt: z.string().min(1),
 });
 
@@ -225,6 +229,7 @@ type Tx = Pick<
   // Sprint 0.18 — surface non-transient write-back failures as the
   // `fhir_writeback_failed_permanent` observed pattern.
   | 'fhirWriteBackProposal'
+  | 'externalContext'
 >;
 
 /**
@@ -484,6 +489,25 @@ export async function buildStateProjections(
     },
   });
 
+  const verifiedDocuments = await client.externalContext.findMany({
+    where: {
+      orgId,
+      patientId,
+      mediaKind: 'DOCUMENT',
+      status: 'READY',
+      verifiedAt: { not: null },
+      deletedAt: null,
+    },
+    orderBy: { dateOfRecord: 'desc' },
+    take: 5,
+    select: {
+      id: true,
+      sourceLabel: true,
+      dateOfRecord: true,
+      vettedExtractionJson: true,
+    },
+  });
+
   // ---- Observed patterns ----
   const patterns: ObservedPattern[] = [];
 
@@ -501,6 +525,18 @@ export async function buildStateProjections(
 
   // ---- Conversation facts (distilled from prior assistant turns) ----
   const facts: ConversationFact[] = [];
+  for (const doc of verifiedDocuments) {
+    const extraction = doc.vettedExtractionJson as { summary?: unknown; documentType?: unknown } | null;
+    const documentType = typeof extraction?.documentType === 'string' ? extraction.documentType : 'document';
+    const summary = typeof extraction?.summary === 'string'
+      ? extraction.summary
+      : doc.sourceLabel ?? `Verified ${documentType}`;
+    facts.push({
+      summary: `${documentType.replaceAll('_', ' ')}: ${truncateLabel(summary, 220)}`,
+      sourceDocumentId: doc.id,
+      citedAt: doc.dateOfRecord.toISOString(),
+    });
+  }
   for (const msg of assistantMessages) {
     const sources = parseSources(msg.sourcesJson);
     for (const s of sources) {
@@ -868,7 +904,7 @@ function truncateLabel(s: string, max: number): string {
 }
 
 type AssistantSource = {
-  kind: 'note' | 'follow-up' | 'goal' | 'patient' | 'fhir' | 'literature' | 'llm-intrinsic';
+  kind: 'note' | 'follow-up' | 'goal' | 'patient' | 'fhir' | 'document' | 'literature' | 'llm-intrinsic';
   id: string;
   label: string;
 };
@@ -886,6 +922,7 @@ function parseSources(json: Prisma.JsonValue | null): AssistantSource[] {
         s.kind === 'goal' ||
         s.kind === 'patient' ||
         s.kind === 'fhir' ||
+        s.kind === 'document' ||
         s.kind === 'literature' ||
         s.kind === 'llm-intrinsic') &&
       typeof s.id === 'string' &&
@@ -914,6 +951,9 @@ function sourceToFact(s: AssistantSource, citedAt: Date): ConversationFact | nul
   if (s.kind === 'fhir') {
     return { summary: s.label, sourceConditionId: s.id, citedAt: at };
   }
+  if (s.kind === 'document') {
+    return { summary: s.label, sourceDocumentId: s.id, citedAt: at };
+  }
   return null;
 }
 
@@ -922,5 +962,6 @@ function factKey(f: ConversationFact): string {
   if (f.sourceFollowUpId) return `followup:${f.sourceFollowUpId}`;
   if (f.sourceGoalId) return `goal:${f.sourceGoalId}`;
   if (f.sourceConditionId) return `fhir:${f.sourceConditionId}`;
+  if (f.sourceDocumentId) return `document:${f.sourceDocumentId}`;
   return `summary:${f.summary}`;
 }

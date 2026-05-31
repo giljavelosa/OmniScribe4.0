@@ -38,6 +38,8 @@ beforeEach(async () => {
 afterAll(async () => {
   if (!hasDb) return;
   await prisma.llmCallLog.deleteMany({ where: { orgId: ORG_ID } });
+  await prisma.orgUsageDaily.deleteMany({ where: { orgId: ORG_ID } });
+  await prisma.orgLlmCostDaily.deleteMany({ where: { orgId: ORG_ID } });
   await prisma.organization.deleteMany({ where: { id: ORG_ID } });
   await prisma.$disconnect();
 });

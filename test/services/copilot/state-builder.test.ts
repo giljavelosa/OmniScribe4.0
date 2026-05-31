@@ -346,6 +346,11 @@ describe('Zod schemas — projection shapes', () => {
             sourceFollowUpId: 'fu_abc',
             citedAt: '2026-05-22T00:00:00Z',
           },
+          {
+            summary: 'outside lab report verified',
+            sourceDocumentId: 'ec_doc',
+            citedAt: '2026-05-22T00:00:00Z',
+          },
         ],
       }).success,
     ).toBe(true);

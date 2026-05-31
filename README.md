@@ -1,6 +1,6 @@
 # OmniScribe
 
-> HIPAA-grade medical AI scribe with an integrated agentic clinical copilot.
+> HIPAA-grade medical AI scribe with an integrated agentic clinical copilot, self-serve registration, and strict audited platform-owner workflows for validated registration and tenant-database deletion requests, subject to HIPAA, BAA, retention, and legal-hold requirements.
 
 ## Implementation status
 
@@ -47,7 +47,7 @@ Open `KickOffPrompts.md`. Prompt B is the canonical "start the next unit" prompt
 
 # Greenfield Implementation Kit (handoff document below)
 
-> A self-contained handoff kit for a senior engineer and implementation team to build **OmniScribe** — a HIPAA-grade medical AI scribe with an integrated agentic clinical copilot — **from a clean slate**. No prior codebase required, no inherited bugs, no migration baggage.
+> A self-contained handoff kit for a senior engineer and implementation team to build **OmniScribe** — a HIPAA-grade medical AI scribe with an integrated agentic clinical copilot, self-serve registration, and strict audited platform-owner workflows for validated registration and tenant-database deletion requests, subject to HIPAA, BAA, retention, and legal-hold requirements — **from a clean slate**. No prior codebase required, no inherited bugs, no migration baggage.
 
 This kit describes OmniScribe as a finished, polished, real-life application. Every screen, every interaction, every behind-the-scenes data flow is documented. The implementation team builds *toward* this description.
 

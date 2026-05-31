@@ -11,7 +11,7 @@
  * account just to test Unit 03 locally.
  */
 
-import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -40,7 +40,7 @@ export type PutAudioInput = {
   contentType: string;
 };
 
-export async function putAudio(input: PutAudioInput) {
+export async function putPrivateObject(input: PutAudioInput) {
   const client = getClient();
   if (!client) {
     // Stub mode — write under ./tmp/audio/.
@@ -61,7 +61,25 @@ export async function putAudio(input: PutAudioInput) {
   );
 }
 
+export async function putAudio(input: PutAudioInput) {
+  return putPrivateObject(input);
+}
+
+export async function verifyObjectExists(key: string): Promise<void> {
+  const client = getClient();
+  if (!client) {
+    const full = path.join(LOCAL_STUB_ROOT, key);
+    if (!existsSync(full)) throw new Error(`S3 stub object missing after upload: ${key}`);
+    return;
+  }
+  await client.send(new HeadObjectCommand({ Bucket: BUCKET, Key: key }));
+}
+
 export async function getPresignedAudioUrl(key: string, ttlSeconds = 300) {
+  return getPresignedObjectUrl(key, ttlSeconds);
+}
+
+export async function getPresignedObjectUrl(key: string, ttlSeconds = 300) {
   const client = getClient();
   if (!client) {
     return `file://${path.join(LOCAL_STUB_ROOT, key)}`;
@@ -82,6 +100,10 @@ export async function getPresignedAudioUrl(key: string, ttlSeconds = 300) {
  * long-term storage + voice-id windowing.
  */
 export async function getAudioBytes(key: string): Promise<Buffer> {
+  return getObjectBytes(key);
+}
+
+export async function getObjectBytes(key: string): Promise<Buffer> {
   const client = getClient();
   if (!client) {
     const full = path.join(LOCAL_STUB_ROOT, key);
@@ -111,4 +133,15 @@ export function externalContextAudioKeyFor(externalContextId: string, ext: strin
   return `audio/external-context/${externalContextId}.${safeExt}`;
 }
 
+export function externalContextDocumentKeyFor(externalContextId: string, fileIndex: number, ext: string) {
+  const safeExt = ext.replace(/[^a-z0-9]/gi, '').toLowerCase() || 'bin';
+  return `documents/external-context/${externalContextId}/${fileIndex}.${safeExt}`;
+}
+
 export const isS3StubMode = !BUCKET;
+
+export const s3Config = {
+  bucket: BUCKET,
+  region: REGION,
+  isStubMode: !BUCKET,
+};

@@ -29,7 +29,8 @@ export const metadata: Metadata = {
     default: 'OmniScribe',
     template: '%s · OmniScribe',
   },
-  description: 'HIPAA-grade medical AI scribe with an integrated agentic clinical copilot.',
+  description:
+    'HIPAA-grade medical AI scribe with an integrated agentic clinical copilot, self-serve registration, and strict audited platform-owner workflows for validated registration and tenant-database deletion requests, subject to HIPAA, BAA, retention, and legal-hold requirements.',
   applicationName: 'OmniScribe',
   formatDetection: { telephone: false },
   // Unit 36 — PWA manifest reference. Static file at public/manifest.json;

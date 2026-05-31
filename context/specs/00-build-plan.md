@@ -194,6 +194,18 @@ Per [`references/encounter-copilot-spec.md`](../../references/encounter-copilot-
 
 **Scope discipline:** v1 ships the rule + parallel-case routing + three Cleo touchpoints. Out of scope for v1: cross-division case re-routing (forbidden under the rule — answer is "close + open new in target division," manual), admin UI for editing `IcdProfessionEligibility` rows (PR3 seeds only; CRUD UI is a follow-on), multi-division co-managed single-case schema with `permittedDivisions[]` (rejected at design time — dilutes the rule, complicates billing trail), Cleo-authored addendum text (clinician authors all clinical text — Cleo opens the draft only), push/email/SMS biller advisory notifications (in-app only), per-clinician biller-advisor tuning sliders. Each is its own follow-on consideration.
 
+## Wave 1 follow-on — Document ingestion + vetted patient context (unit 52)
+
+> **Extension of shipped ExternalContext + Unit 06 brief + Miss Cleo source model.** Not Wave 7/8 polish-gate work. Spec'd 2026-05-29 after the product decision to ingest PDFs/images/tablet photos via Claude vision, but only expose clinician-verified extraction downstream.
+
+| # | Name | Builds | Depends on | Spec | Status |
+|---|---|---|---|---|---|
+| 52 | **Document Upload + OCR Extraction + Clinician Vetting** | `ExternalContextMediaKind`, document S3 keys, Claude vision OCR/extraction through `src/services/llm/`, batch extraction worker with clinician page-batch review, final vetting endpoint/UI, verified-document Cleo tool/source, brief safety filter | 06, 27, 28 | [`52-document-ingestion.md`](52-document-ingestion.md) | complete (2026-05-29) |
+
+**Sequencing:** Shipped as the full PR1–PR7 scope in one end-to-end pass on 2026-05-29: schema/types/seed, LLM image support, upload route/queue/S3, extraction worker, vetting endpoint/brief filter, Cleo integration/docs, UI/e2e. Follow-up batch review upgrades long documents to 100-page capped extraction in 5-page clinician-reviewed batches; each batch must be approved/corrected before the next batch runs, and final `verifiedAt` remains the only downstream read gate. Router V2 follow-up is feature-flagged by `OMNISCRIBE_FILE_ROUTER_V2` and routes text-based PDFs/structured files through direct text extraction while preserving single-image/lab uploads on the existing fast path. Sparse/scanned PDFs use the OCR-provider abstraction and can run AWS Textract async OCR in deployed environments with `OCR_PROVIDER=textract`, using the existing private S3 document object and worker IAM role.
+
+**Scope discipline:** v1 is context-only. No web research, no EHR dependency, no auto-population of snapshot strip/problems/follow-ups, no change to live-note `priorContext`, and no direct writes into signed-note content.
+
 ---
 
 ## Polish — Waves 0–6 (gate before Wave 7 & 8)

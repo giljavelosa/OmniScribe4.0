@@ -107,6 +107,7 @@ describe('POST /api/copilot/ask — conversation persistence', () => {
     noteFindFirst.mockResolvedValueOnce({
       id: 'note_1',
       orgId: 'org_1',
+      patientId: 'pat_1',
       encounter: { episodeOfCareId: null },
     });
     patientFindFirst.mockResolvedValueOnce({ id: 'pat_1' });
@@ -165,6 +166,7 @@ describe('POST /api/copilot/ask — conversation persistence', () => {
     noteFindFirst.mockResolvedValueOnce({
       id: 'note_1',
       orgId: 'org_1',
+      patientId: 'pat_1',
       encounter: { episodeOfCareId: null },
     });
     patientFindFirst.mockResolvedValueOnce({ id: 'pat_1' });

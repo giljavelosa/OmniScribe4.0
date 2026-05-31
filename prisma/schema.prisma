@@ -391,6 +391,9 @@ model OrgUser {
   practitionerProfile    PractitionerProfile?
   fhirIdentities         FhirIdentity[]        @relation("FhirIdentityClinician")
   externalContextsAdded  ExternalContext[]     @relation("ExternalContextAddedBy")
+  // Unit 52 — clinician-verified ExternalContext documents.
+  externalContextsVerified ExternalContext[]      @relation("ExternalContextVerifiedBy")
+  externalContextBatchesReviewed ExternalContextExtractionBatch[] @relation("ExternalContextBatchReviewedBy")
   siteEnrollments        OrgUserSite[]         @relation("OrgUserSiteMember")
   siteEnrollmentsCreated OrgUserSite[]         @relation("OrgUserSiteEnroller")
   voiceProfile           VoiceProfile?
@@ -2333,6 +2336,24 @@ enum ExternalContextStatus {
   PENDING_TRANSCRIPTION // audio uploaded, batch job queued
   READY // transcript + (optional) audio stored
   FAILED // transcription failed; transcript not available
+  PENDING_EXTRACTION // document bytes in S3, extraction job queued
+  EXTRACTED // OCR + extraction complete, awaiting clinician vetting
+  EXTRACTION_FAILED // rasterization / vision extraction failed
+  PARTIAL_EXTRACTION_REVIEW // one document batch is extracted and awaiting clinician review
+}
+
+enum ExternalContextMediaKind {
+  PASTE
+  AUDIO
+  DOCUMENT
+}
+
+enum ExternalContextExtractionBatchStatus {
+  PENDING
+  PROCESSING
+  NEEDS_REVIEW
+  REVIEWED
+  FAILED
 }
 
 model ExternalContext {
@@ -2362,6 +2383,35 @@ model ExternalContext {
   /// S3 key for the source audio. Null when transcript-only.
   audioFileKey    String?
 
+  /// Unit 52 — discriminator for paste/audio/document ingestion paths.
+  mediaKind ExternalContextMediaKind @default(PASTE)
+
+  /// Unit 52 — source document files. Originals are retained in S3 and never
+  /// hard-deleted; deletedAt below is DB-only soft-delete state.
+  documentFileKeys  String[] @default([])
+  documentMimeTypes String[] @default([])
+  pageCount         Int?
+
+  /// Unit 52 — verbatim OCR + raw model output, retained for auditor
+  /// reconstruction even after the clinician edits/approves a vetted payload.
+  ocrText         String?
+  extractionJson  Json?
+  extractionModel String?
+  extractedAt     DateTime?
+
+  /// Unit 52 — clinician verification is the Cleo/brief read gate for
+  /// DOCUMENT rows. Downstream readers must require verifiedAt != null.
+  verifiedAt           DateTime?
+  verifiedByOrgUserId  String?
+  verifiedBy           OrgUser?  @relation("ExternalContextVerifiedBy", fields: [verifiedByOrgUserId], references: [id])
+  vettedExtractionJson Json?
+  extractionBatches    ExternalContextExtractionBatch[]
+  documentPages        ExternalContextDocumentPage[]
+
+  /// Unit 52 — DB-only soft-delete. S3 originals remain retained.
+  deletedAt          DateTime?
+  deletedByOrgUserId String?
+
   status ExternalContextStatus
 
   addedAt          DateTime @default(now())
@@ -2369,6 +2419,62 @@ model ExternalContext {
   addedBy          OrgUser  @relation("ExternalContextAddedBy", fields: [addedByOrgUserId], references: [id])
 
   @@index([patientId, dateOfRecord])
+  @@index([patientId, verifiedAt])
+  @@index([orgId])
+}
+
+model ExternalContextDocumentPage {
+  id                String          @id @default(cuid())
+  orgId             String
+  externalContextId String
+  externalContext   ExternalContext @relation(fields: [externalContextId], references: [id], onDelete: Cascade)
+
+  /// 0-based source file index within ExternalContext.documentFileKeys.
+  fileIndex  Int @default(0)
+  /// 1-based page number within the source file.
+  pageNumber Int
+  text       String
+  textHash   String
+
+  extractedAt DateTime?
+  verifiedAt  DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([externalContextId, fileIndex, pageNumber])
+  @@index([externalContextId, pageNumber])
+  @@index([orgId])
+}
+
+model ExternalContextExtractionBatch {
+  id                String                        @id @default(cuid())
+  orgId             String
+  externalContextId String
+  externalContext   ExternalContext               @relation(fields: [externalContextId], references: [id], onDelete: Cascade)
+
+  batchIndex Int
+  pageStart  Int
+  pageEnd    Int
+  status     ExternalContextExtractionBatchStatus @default(PENDING)
+
+  ocrText              String?
+  extractionJson       Json?
+  vettedExtractionJson Json?
+  extractionModel      String?
+  extractedAt          DateTime?
+
+  reviewedAt          DateTime?
+  reviewedByOrgUserId String?
+  reviewedBy          OrgUser? @relation("ExternalContextBatchReviewedBy", fields: [reviewedByOrgUserId], references: [id])
+
+  errorClass   String?
+  errorMessage String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([externalContextId, batchIndex])
+  @@index([externalContextId, status])
   @@index([orgId])
 }
 

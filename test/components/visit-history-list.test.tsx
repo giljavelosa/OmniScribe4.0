@@ -188,4 +188,21 @@ describe('VisitHistoryList — By case view', () => {
       'false',
     );
   });
+
+  it('shows signed-note fact contribution chips on visit rows', () => {
+    render(
+      <VisitHistoryList
+        visits={[
+          {
+            ...baseRow,
+            factChips: ['Measures', 'Medications', 'Follow-ups'],
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByText('Measures')).toBeInTheDocument();
+    expect(screen.getByText('Medications')).toBeInTheDocument();
+    expect(screen.getByText('Follow-ups')).toBeInTheDocument();
+  });
 });

@@ -83,6 +83,21 @@ export default async function PatientsPage({
           take: 1,
           select: { id: true },
         },
+        caseManagements: {
+          where: { status: 'ACTIVE' },
+          take: 1,
+          select: { id: true },
+        },
+        followUps: {
+          where: { status: 'OPEN' },
+          take: 1,
+          select: { id: true },
+        },
+        externalContexts: {
+          where: { deletedAt: null, mediaKind: 'DOCUMENT' },
+          take: 5,
+          select: { status: true, verifiedAt: true },
+        },
       },
     }),
     prisma.site.findMany({
@@ -171,6 +186,11 @@ export default async function PatientsPage({
             patients.map((p) => {
               const age = ageInYears(p.dob);
               const isActive = p.episodes.length > 0;
+              const hasVerifiedRecords = p.externalContexts.some((r) => r.status === 'READY' && r.verifiedAt);
+              const hasDocumentReview = p.externalContexts.some((r) =>
+                r.status === 'EXTRACTED' || r.status === 'PARTIAL_EXTRACTION_REVIEW'
+              );
+              const hasOpenFollowUps = p.followUps.length > 0;
               const lastVisit = p.encounters[0]?.startedAt
                 ? p.encounters[0].startedAt.toLocaleDateString()
                 : '—';
@@ -196,9 +216,20 @@ export default async function PatientsPage({
                           Active
                         </StatusBadge>
                       )}
+                      {hasVerifiedRecords && (
+                        <StatusBadge variant="info" noIcon className="text-[10px] shrink-0">
+                          Records
+                        </StatusBadge>
+                      )}
+                      {hasDocumentReview && (
+                        <StatusBadge variant="warning" noIcon className="text-[10px] shrink-0">
+                          Review
+                        </StatusBadge>
+                      )}
                     </div>
                     <p className="text-xs text-muted-foreground truncate">
                       {age}y {p.sex} · MRN {p.mrn ?? '—'} · Last visit {lastVisit}
+                      {hasOpenFollowUps ? ' · open follow-ups' : ''}
                     </p>
                   </div>
                   <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
@@ -233,6 +264,11 @@ export default async function PatientsPage({
                     {patients.map((p) => {
                       const age = ageInYears(p.dob);
                       const isActive = p.episodes.length > 0;
+                      const hasVerifiedRecords = p.externalContexts.some((r) => r.status === 'READY' && r.verifiedAt);
+                      const hasDocumentReview = p.externalContexts.some((r) =>
+                        r.status === 'EXTRACTED' || r.status === 'PARTIAL_EXTRACTION_REVIEW'
+                      );
+                      const hasOpenFollowUps = p.followUps.length > 0;
                       const lastVisit = p.encounters[0]?.startedAt
                         ? p.encounters[0].startedAt.toLocaleDateString()
                         : '—';
@@ -251,11 +287,23 @@ export default async function PatientsPage({
                           <td className="px-4 py-3 text-muted-foreground">{lastVisit}</td>
                           <td className="px-4 py-3 text-muted-foreground">{p.site?.name ?? '—'}</td>
                           <td className="px-4 py-3">
-                            {isActive ? (
-                              <StatusBadge variant="success" noIcon className="text-[10px]">Active</StatusBadge>
-                            ) : (
-                              <span className="text-xs text-muted-foreground">—</span>
-                            )}
+                            <div className="flex flex-wrap gap-1">
+                              {isActive || p.caseManagements.length > 0 ? (
+                                <StatusBadge variant="success" noIcon className="text-[10px]">Active case</StatusBadge>
+                              ) : null}
+                              {hasVerifiedRecords ? (
+                                <StatusBadge variant="info" noIcon className="text-[10px]">Records</StatusBadge>
+                              ) : null}
+                              {hasDocumentReview ? (
+                                <StatusBadge variant="warning" noIcon className="text-[10px]">Review</StatusBadge>
+                              ) : null}
+                              {hasOpenFollowUps ? (
+                                <StatusBadge variant="info" noIcon className="text-[10px]">Follow-ups</StatusBadge>
+                              ) : null}
+                              {!isActive && p.caseManagements.length === 0 && !hasVerifiedRecords && !hasDocumentReview && !hasOpenFollowUps ? (
+                                <span className="text-xs text-muted-foreground">—</span>
+                              ) : null}
+                            </div>
                           </td>
                         </tr>
                       );

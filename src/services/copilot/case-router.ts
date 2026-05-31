@@ -35,12 +35,17 @@ import {
 // Output schema — Zod-validated proposal shape.
 // =============================================================================
 
+const NullableOptionalStringSchema = z.preprocess(
+  (value) => (value === null ? undefined : value),
+  z.string().optional(),
+);
+
 const NewCaseSchema = z.object({
   /** ICD-10 when the model is confident; null when "Needs coding". */
   primaryIcd: z.string().nullable(),
   primaryIcdLabel: z.string().min(1).max(280),
-  secondaryIcd: z.string().optional(),
-  secondaryIcdLabel: z.string().optional(),
+  secondaryIcd: NullableOptionalStringSchema,
+  secondaryIcdLabel: NullableOptionalStringSchema,
 });
 
 const SecondaryIcdAdditionSchema = z.object({
@@ -127,7 +132,7 @@ const AlternativeSchema = z.object({
   // too, so the LOW-confidence fallback view can offer both "attach to
   // existing native case" AND "open new from EHR diagnosis."
   action: z.enum(['attach', 'open-new', 'open-new-from-condition']),
-  caseManagementId: z.string().optional(),
+  caseManagementId: NullableOptionalStringSchema,
   newCase: z
     .object({
       primaryIcd: z.string().nullable(),
